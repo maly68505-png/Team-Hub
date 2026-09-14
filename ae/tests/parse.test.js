@@ -1,5 +1,7 @@
 var fs = require('fs');
-var src = fs.readFileSync(require('path').join(__dirname, '..', 'PersonReplacer.jsx'), 'utf8');
+var path = require('path');
+var AE = path.join(__dirname, '..');
+var src = fs.readFileSync(path.join(AE, 'lib', 'core.jsxinc'), 'utf8');
 
 // slice out the pure-logic block (utils -> end of parseScript / matchScore)
 var start = src.indexOf('    function trim(s)');
@@ -92,6 +94,14 @@ eq('two warnings raised', warn2.length, 2);
 console.log('\n-- timecode formatting round-trip --');
 eq('fmt 12.6s @25', sandbox.secondsToTC(12.6, 25), '00:00:12:15');
 eq('fmt 3661s @24', sandbox.secondsToTC(3661, 24), '01:01:01:00');
+
+
+console.log('\n-- build outputs carry the shared core verbatim --');
+var coreRaw = fs.readFileSync(path.join(AE, 'lib', 'core.jsxinc'), 'utf8').replace(/\s+$/, '');
+['PersonReplacer.jsx', 'PersonReplacer_Auto.jsx'].forEach(function (name) {
+  var built = fs.readFileSync(path.join(AE, name), 'utf8');
+  eq('core embedded in ' + name, built.indexOf(coreRaw) !== -1, true);
+});
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -7,11 +7,32 @@ The layer is never recreated. Its masks, effects, transforms and keyframes all
 survive — this is an automated "replace footage", not a re-comp.
 
 ```
-ae/PersonReplacer.jsx        the panel (this is the tool)
-ae/tests/parse.test.js       logic tests for the parser and matcher
+ae/PersonReplacer_Auto.jsx   zero-setup version - finds everything itself  <- start here
+ae/PersonReplacer.jsx        full panel - browse for folder, comp and script
+ae/lib/                      shared source both are built from
+ae/build.js                  rebuilds both .jsx files from ae/lib
+ae/tests/                    logic tests (parser, matcher, auto-discovery)
 examples/example_script.srt  a sample timecode script
 docs/WORKFLOW.md             folder layout + step-by-step
+docs/QUICKSTART-AR.md        دليل التشغيل السريع بالعربي
 ```
+
+## Which file do I use?
+
+**`PersonReplacer_Auto.jsx`** — nothing to configure. Save your project, open
+your comp, then **File → Scripts → Run Script File…** and pick it. It finds the
+comp, the videos folder and the timecode script on its own, shows you exactly
+what it found and what it plans to do, and changes nothing until you press
+**Replace now**. If it cannot find something, one button lets you point at it.
+
+**`PersonReplacer.jsx`** — the full dockable panel, for when you want to choose
+the folder, the comp and the script by hand (different comps in one project,
+media stored far from the .aep, and so on).
+
+Both share the same engine, so they behave identically once running.
+
+> **Neither file is imported.** `File → Import` is for footage only — it will
+> reject a `.jsx` and a `.srt` alike. Scripts run from `File → Scripts`.
 
 ## Install
 
@@ -112,13 +133,34 @@ every mask count, every skipped segment and why.
 - Layers created by the tool are tagged in their comment and excluded from
   future targeting, so re-running is safe.
 
+## Building
+
+The two `.jsx` files are generated so their shared logic cannot drift apart:
+
+```
+node ae/build.js
+```
+
+Edit `ae/lib/core.jsxinc` (engine) or `ae/lib/ui-panel.jsxinc` /
+`ae/lib/ui-auto.jsxinc` (interfaces), then rebuild. Do not edit the generated
+`.jsx` files directly. Each output stays a single self-contained file — the
+user copies one file and nothing else.
+
 ## Tests
 
 ```
-node ae/tests/parse.test.js
+node ae/tests/parse.test.js       # 41 assertions
+node ae/tests/discovery.test.js   # 11 assertions
 ```
 
-Covers timecode parsing across all accepted formats, range and person-line
-extraction, filename matching, full-script parsing, and malformed input
-handling. The AE-API parts (layer targeting, source replacement, matte setup)
-need After Effects and are not covered here.
+`parse.test.js` covers timecode parsing across every accepted format, range and
+person-line extraction, filename matching, full-script parsing, malformed
+input, and that both built files still embed the shared core verbatim.
+
+`discovery.test.js` stubs the ExtendScript `File`/`Folder` API and runs the
+auto-discovery against simulated project trees: the expected layout, nested and
+oddly-named folders, decoy `.txt` files, loose clips, an empty project, and the
+tool's own log file.
+
+The AE-API parts — layer targeting, `replaceSource`, layer splitting, matte
+setup — need a running After Effects and are **not** covered by these tests.

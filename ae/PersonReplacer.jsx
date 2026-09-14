@@ -14,6 +14,9 @@
  *
  * Requires: Preferences > Scripting & Expressions > "Allow Scripts to Write
  * Files and Access Network" (for the log file only).
+ *
+ * GENERATED FILE - do not edit directly.
+ * Edit ae/lib/core.jsxinc or ae/lib/ui-*.jsxinc, then run: node ae/build.js
  */
 
 (function personReplacer(thisObj) {
@@ -428,8 +431,6 @@
             log.push("    note: scale compensation failed: " + e.toString());
         }
     }
-
-    // ------------------------------------------------------------------- UI
 
     function build(thisObj) {
         var win = (thisObj instanceof Panel)
