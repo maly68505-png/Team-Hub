@@ -1,0 +1,24 @@
+# Person Replacer - example timecode script
+# Lines starting with # or // are ignored.
+# The person name is matched against the FILENAMES in your videos folder,
+# so "PERSON_B" picks up videos/PERSON_B_take3.mp4 (or any subfolder).
+
+1
+00:00:00:00 --> 00:00:05:00
+PERSON_A
+
+2
+00:00:05:00 --> 00:00:12:12
+PERSON_B: and then I told them the whole thing
+
+3
+00:00:12:12 --> 00:00:20:00
+[PERSON_A]
+
+# force one exact clip instead of letting the matcher choose:
+4
+00:00:20:00 --> 00:00:28:00
+PERSON_B | PERSON_B_take4.mp4
+
+# one-line form works too, and milliseconds are accepted:
+00:00:28,000 --> 00:00:35,500  sarah
