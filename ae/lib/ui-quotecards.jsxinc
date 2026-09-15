@@ -28,8 +28,11 @@
             btn.preferredSize.width = 70;
             btn.onClick = function () {
                 var picked = isFolder ? Folder.selectDialog(prompt) : File.openDialog(prompt);
-                if (picked) { txt.text = picked.fsName; }
+                if (!picked) { return; }
+                txt.text = picked.fsName;
+                maybeScan();          // setting .text from code fires no onChange
             };
+            txt.onChange = function () { maybeScan(); };
             return txt;
         }
 
@@ -80,7 +83,8 @@
         list.alignment = ["fill", "fill"];
 
         var status = win.add("statictext", undefined,
-            "Pick the template comp, the clips folder and the quote list, then Scan.");
+            "Pick the template comp, the clips folder and the quote list - " +
+            "the plan below fills in by itself.");
         status.alignment = ["fill", "top"];
 
         var buttons = win.add("group");
@@ -128,16 +132,27 @@
             if (videoLayers.length) { videoDrop.selection = 0; }
             else { videoDrop.add("item", "-- no footage layer in this comp --"); videoDrop.selection = 0; }
 
-            textDrop.add("item", "(leave the text alone)");
             textLayers = listTextLayers(comp);
+            textDrop.add("item", textLayers.length
+                ? "(leave the text alone)"
+                : "-- no text layer in this comp --");
             for (var k = 0; k < textLayers.length; k++) {
                 textDrop.add("item", textLayers[k].index + ": " + textLayers[k].name);
             }
             textDrop.selection = textLayers.length ? 1 : 0;
         }
 
-        tplDrop.onChange = refreshLayers;
-        refreshBtn.onClick = refreshComps;
+        /** Everything needed is filled in, so show the plan without being asked. */
+        function maybeScan() {
+            if (!template()) { return; }
+            if (trim(videosTxt.text) === "" || trim(quotesTxt.text) === "") { return; }
+            doScan();
+        }
+
+        tplDrop.onChange = function () { refreshLayers(); maybeScan(); };
+        videoDrop.onChange = function () { maybeScan(); };
+        textDrop.onChange = function () { maybeScan(); };
+        refreshBtn.onClick = function () { refreshComps(); maybeScan(); };
 
         function selectedVideoLayer() {
             if (!videoLayers.length || !videoDrop.selection) { return null; }
@@ -204,11 +219,20 @@
             var ready = 0;
             for (var r = 0; r < plan.length; r++) { if (plan[r].ok) { ready++; } }
             goBtn.enabled = ready > 0;
+
+            var note = "";
+            if (textLayers.length === 0) {
+                note = "  |  NO TEXT LAYER in \"" + comp.name + "\" - the quotes will NOT be " +
+                       "written. Is the text inside a precomp, or a shape layer?";
+            } else if (!selectedTextLayer()) {
+                note = "  |  text layer set to \"leave alone\" - the quotes will not be written";
+            }
+
             setStatus(ready + " card(s) ready out of " + plan.length + " quote(s)  |  " +
                       files.length + " clip(s) in the folder" +
                       (files.length > quotes.length
-                        ? "  |  " + (files.length - quotes.length) + " clip(s) will go unused"
-                        : ""));
+                        ? "  |  " + (files.length - quotes.length) + " clip(s) unused"
+                        : "") + note);
         }
 
         function doCreate() {

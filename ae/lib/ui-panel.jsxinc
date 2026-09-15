@@ -23,8 +23,11 @@
                 var picked = isFolder
                     ? Folder.selectDialog("Choose the folder with the person videos")
                     : File.openDialog("Choose the timecode script (.srt / .txt)");
-                if (picked) { txt.text = picked.fsName; }
+                if (!picked) { return; }
+                txt.text = picked.fsName;
+                maybeScan();          // setting .text from code fires no onChange
             };
+            txt.onChange = function () { maybeScan(); };
             return txt;
         }
 
@@ -54,7 +57,15 @@
             }
             if (compList.length > 0) { compDrop.selection = activeIdx; }
         }
-        refreshBtn.onClick = refreshComps;
+        /** Everything needed is filled in, so show the plan without being asked. */
+        function maybeScan() {
+            if (!currentComp()) { return; }
+            if (trim(videosTxt.text) === "" || trim(scriptTxt.text) === "") { return; }
+            doScan();
+        }
+
+        refreshBtn.onClick = function () { refreshComps(); maybeScan(); };
+        compDrop.onChange = function () { maybeScan(); };
 
         var opts = win.add("panel", undefined, "Options");
         opts.orientation = "column";
@@ -88,7 +99,8 @@
         list.preferredSize.height = 200;
         list.alignment = ["fill", "fill"];
 
-        var status = win.add("statictext", undefined, "Pick a videos folder and a script file, then Scan.");
+        var status = win.add("statictext", undefined,
+            "Pick a videos folder and a script file - the plan below fills in by itself.");
         status.alignment = ["fill", "top"];
 
         var buttons = win.add("group");
