@@ -807,18 +807,46 @@
         }
     }
 
-    /** Makes an imported clip's alpha actually count when it has one. */
-    function honourAlpha(item, log) {
+    /**
+     * How a clip's alpha channel is read. Forcing STRAIGHT on a clip that was
+     * exported premultiplied is what puts a white fringe around the guest, so
+     * the default is to let After Effects work it out.
+     *
+     *   "auto"          - AE guesses (only touched when it imported as Ignore)
+     *   "straight"      - unmatted alpha
+     *   "premul-white"  - matted with white  (a white halo means this one)
+     *   "premul-black"  - matted with black  (a dark halo means this one)
+     */
+    function applyAlphaMode(item, choice, log) {
         try {
             var ms = item.mainSource;
             if (!ms.hasAlpha) { return false; }
-            if (ms.alphaMode === AlphaMode.IGNORE) {
+            var before = alphaModeName(ms.alphaMode);
+
+            if (choice === "straight") {
                 ms.alphaMode = AlphaMode.STRAIGHT;
-                log.push("    alpha was set to IGNORE on import - switched to STRAIGHT");
+            } else if (choice === "premul-white") {
+                ms.alphaMode = AlphaMode.PREMULTIPLIED;
+                ms.premulColor = [1, 1, 1];
+            } else if (choice === "premul-black") {
+                ms.alphaMode = AlphaMode.PREMULTIPLIED;
+                ms.premulColor = [0, 0, 0];
+            } else {
+                if (ms.alphaMode !== AlphaMode.IGNORE) { return false; }
+                try { ms.guessAlphaMode(); }
+                catch (eg) { ms.alphaMode = AlphaMode.STRAIGHT; }
+            }
+
+            var after = alphaModeName(ms.alphaMode);
+            if (after !== before) {
+                log.push("    alpha interpretation: " + before + "  ->  " + after);
                 return true;
             }
-        } catch (e) {}
-        return false;
+            return false;
+        } catch (e) {
+            log.push("    note: could not set the alpha interpretation: " + e.toString());
+            return false;
+        }
     }
 
 

@@ -805,18 +805,46 @@
         }
     }
 
-    /** Makes an imported clip's alpha actually count when it has one. */
-    function honourAlpha(item, log) {
+    /**
+     * How a clip's alpha channel is read. Forcing STRAIGHT on a clip that was
+     * exported premultiplied is what puts a white fringe around the guest, so
+     * the default is to let After Effects work it out.
+     *
+     *   "auto"          - AE guesses (only touched when it imported as Ignore)
+     *   "straight"      - unmatted alpha
+     *   "premul-white"  - matted with white  (a white halo means this one)
+     *   "premul-black"  - matted with black  (a dark halo means this one)
+     */
+    function applyAlphaMode(item, choice, log) {
         try {
             var ms = item.mainSource;
             if (!ms.hasAlpha) { return false; }
-            if (ms.alphaMode === AlphaMode.IGNORE) {
+            var before = alphaModeName(ms.alphaMode);
+
+            if (choice === "straight") {
                 ms.alphaMode = AlphaMode.STRAIGHT;
-                log.push("    alpha was set to IGNORE on import - switched to STRAIGHT");
+            } else if (choice === "premul-white") {
+                ms.alphaMode = AlphaMode.PREMULTIPLIED;
+                ms.premulColor = [1, 1, 1];
+            } else if (choice === "premul-black") {
+                ms.alphaMode = AlphaMode.PREMULTIPLIED;
+                ms.premulColor = [0, 0, 0];
+            } else {
+                if (ms.alphaMode !== AlphaMode.IGNORE) { return false; }
+                try { ms.guessAlphaMode(); }
+                catch (eg) { ms.alphaMode = AlphaMode.STRAIGHT; }
+            }
+
+            var after = alphaModeName(ms.alphaMode);
+            if (after !== before) {
+                log.push("    alpha interpretation: " + before + "  ->  " + after);
                 return true;
             }
-        } catch (e) {}
-        return false;
+            return false;
+        } catch (e) {
+            log.push("    note: could not set the alpha interpretation: " + e.toString());
+            return false;
+        }
     }
 
 
@@ -1101,9 +1129,22 @@
         var cbFit = opts.add("checkbox", undefined,
             "Fit the clip to its comp frame (a 1080p clip fills a 4K slot)");
         cbFit.value = true;
-        var cbAlphaMode = opts.add("checkbox", undefined,
-            "Use a clip's alpha channel when it has one (AE sometimes imports it as Ignore)");
-        cbAlphaMode.value = true;
+        var alphaModeRow = opts.add("group");
+        alphaModeRow.orientation = "row";
+        alphaModeRow.alignChildren = ["left", "center"];
+        alphaModeRow.add("statictext", undefined, "Read a clip's alpha as:");
+        var alphaModeDrop = alphaModeRow.add("dropdownlist", undefined, [
+            "let After Effects decide",
+            "Straight",
+            "Premultiplied - matted with WHITE  (pick this if you see a white halo)",
+            "Premultiplied - matted with BLACK  (pick this if you see a dark halo)"
+        ]);
+        alphaModeDrop.selection = 0;
+
+        function alphaChoice() {
+            var i = alphaModeDrop.selection ? alphaModeDrop.selection.index : 0;
+            return ["auto", "straight", "premul-white", "premul-black"][i];
+        }
         var cbFitText = opts.add("checkbox", undefined,
             "Shrink the type until the quote fits its text box");
         cbFitText.value = true;
@@ -1447,7 +1488,7 @@
 
                     var footage = importFootage(row.file, cache, planWarnings);
                     if (!footage) { log.push(tag + " SKIPPED (import failed)"); skipped++; continue; }
-                    if (cbAlphaMode.value) { honourAlpha(footage, log); }
+                    applyAlphaMode(footage, alphaChoice(), log);
 
                     var suffix = pad(row.index, 2);
                     var mapping = {};
@@ -1477,7 +1518,7 @@
                     if (aTarget && row.alpha) {
                         var alphaFootage = importFootage(row.alpha, cache, planWarnings);
                         if (alphaFootage) {
-                            if (cbAlphaMode.value) { honourAlpha(alphaFootage, log); }
+                            applyAlphaMode(alphaFootage, alphaChoice(), log);
                             var aLayer = mapping[aTarget.comp.id].layer(aTarget.index);
                             aLayer.replaceSource(alphaFootage, false);
                             log.push("    alpha: " + row.alpha.name);
