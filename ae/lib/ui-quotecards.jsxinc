@@ -325,7 +325,11 @@
             }
 
             var note = "";
-            if (alphaSlot !== "" && !aTarget) {
+            if (af !== "" && !aTarget) {
+                note += "  |  you gave an Alpha clips folder but \"Alpha layer\" is still " +
+                        "\"(no separate alpha layer)\" - those clips will NOT be used. Open that " +
+                        "list and pick the cut-out layer.";
+            } else if (alphaSlot !== "" && !aTarget) {
                 note += "  |  THIS TEMPLATE HAS A CUT-OUT SLOT that is not being filled: \"" +
                         alphaSlot + "\". Pick it under \"Alpha layer\" and give it a folder of " +
                         "pre-keyed clips, or the guest keeps their background.";
@@ -371,16 +375,18 @@
                     break;
                 }
             }
-            if (slot !== "" && (!aTarget || alphaFiles.length === 0)) {
+            var gaveAlphaFolder = trim(alphaTxt.text) !== "";
+            if ((slot !== "" || gaveAlphaFolder) && (!aTarget || alphaFiles.length === 0)) {
                 var why = !aTarget
                     ? "no layer is chosen under \"Alpha layer\""
                     : "the \"Alpha clips\" folder has no clips in it";
                 if (!confirm("The cut-out will NOT be replaced.\n\n" +
-                             "This template has a cut-out slot:\n    " + slot + "\n\n" +
+                             (slot !== "" ? "This template has a cut-out slot:\n    " + slot + "\n\n"
+                                          : "You gave a folder of cut-out clips.\n\n") +
                              "but " + why + ", so every card will keep the guest's own\n" +
                              "background instead of being cut out.\n\n" +
                              "Build the cards anyway?", true)) {
-                    setStatus("Stopped: fill in \"Alpha layer\" and \"Alpha clips\", then try again.");
+                    setStatus("Stopped: pick the cut-out layer under \"Alpha layer\", then try again.");
                     return;
                 }
             }
