@@ -364,11 +364,47 @@
     }
 
     /**
+     * normalize() keeps only a-z0-9, so it flattens any Arabic string to "" -
+     * and indexOf("") matches everything. Header and layer names here are
+     * routinely Arabic, so they get a plain case-insensitive substring test.
+     */
+    function looseHas(text, needle) {
+        needle = trim(needle);
+        if (needle === "") { return false; }
+        return String(text).toLowerCase().indexOf(needle.toLowerCase()) !== -1;
+    }
+
+    var SPEAKER_HINTS = "المتحدث,متحدث,الضيف,ضيف,الاسم,اسم,speaker,name,guest,person";
+    var ROLE_HINTS = "الصفة,صفة,الوظيفة,وظيفة,المنصب,منصب,title,role,job,position,subtitle";
+
+    /**
+     * The column holding the speaker's name (or their job title), identified
+     * by its HEADER only. Guessing from the values instead would cheerfully
+     * write a timecode or a row number across the card, so an unlabelled
+     * column is left alone and the panel says the names were not touched.
+     * Returns -1 when no header names one.
+     */
+    function pickLabelledColumn(rows, hintCSV, skip) {
+        if (rows.length < 2) { return -1; }
+        var hints = hintCSV.split(",");
+        for (var h = 0; h < hints.length; h++) {
+            for (var c = 0; c < rows[0].length; c++) {
+                if (c === skip) { continue; }
+                if (looseHas(trim(rows[0][c]), hints[h])) { return c; }
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Reads the quote list. Accepts:
      *   .csv  - the wordiest column is taken as the quote text
      *   .srt  - the "# ..." comment carried under each timecode block
      *   .txt  - one quote per paragraph, or per line when there are no blanks
-     * Returns [{ index, text }].
+     * A .csv can also carry the speaker's name and job title in their own
+     * labelled columns; without them every card keeps the name the template
+     * was mocked up with.
+     * Returns [{ index, text, speaker, role, speakerColumn }].
      */
     function parseQuotesFile(file, warnings) {
         if (!file.open("r")) {
@@ -379,7 +415,7 @@
         file.close();
         raw = raw.replace(/^\uFEFF/, "");
 
-        var texts = [], i;
+        var texts = [], speakers = [], roles = [], speakerHeader = "", i;
         var ext = extOf(file.name);
 
         if (ext === "csv" || ext === "tsv") {
@@ -396,10 +432,23 @@
             if (head !== "" && avg > 0 && head.length >= avg * 0.6) {
                 start = 0;                                   // no header after all
             }
+            var speakerCol = -1, roleCol = -1;
+            if (start === 1) {                               // only a real header can name them
+                speakerCol = pickLabelledColumn(rows, SPEAKER_HINTS, col);
+                roleCol = pickLabelledColumn(rows, ROLE_HINTS, col);
+                if (roleCol === speakerCol) { roleCol = -1; }
+                if (speakerCol >= 0) { speakerHeader = trim(rows[0][speakerCol]); }
+            }
             for (i = start; i < rows.length; i++) {
                 if (rows[i].length > col) {
                     var v = trim(rows[i][col]);
-                    if (v !== "") { texts.push(v); }
+                    if (v !== "") {
+                        texts.push(v);
+                        speakers.push(speakerCol >= 0 && rows[i].length > speakerCol
+                            ? trim(rows[i][speakerCol]) : "");
+                        roles.push(roleCol >= 0 && rows[i].length > roleCol
+                            ? trim(rows[i][roleCol]) : "");
+                    }
                 }
             }
         } else if (ext === "srt") {
@@ -431,7 +480,13 @@
 
         var quotes = [];
         for (i = 0; i < texts.length; i++) {
-            quotes.push({ index: i + 1, text: texts[i] });
+            quotes.push({
+                index: i + 1,
+                text: texts[i],
+                speaker: speakers[i] || "",
+                role: roles[i] || "",
+                speakerColumn: speakerHeader
+            });
         }
         return quotes;
     }
@@ -716,7 +771,17 @@
             var p = layer.property(groupName).property(propName);
             var v = p.value;
             var txt = (v instanceof Array) ? "[" + v.join(", ") + "]" : String(v);
-            return txt + (p.numKeys > 0 ? "  (" + p.numKeys + " keys)" : "");
+            var extra = (p.numKeys > 0 ? "  (" + p.numKeys + " keys)" : "");
+            // An expression reading another layer's inPoint/outPoint retimes
+            // itself per card, because each clip is a different length. That
+            // is invisible in the comp and has to show up here.
+            try {
+                if (p.expressionEnabled && trim(p.expression) !== "") {
+                    var ex = trim(p.expression).replace(/[\r\n]+/g, " ");
+                    extra += "  (expr: " + (ex.length > 90 ? ex.substring(0, 90) + "..." : ex) + ")";
+                }
+            } catch (eEx) {}
+            return txt + extra;
         } catch (e) {
             return "-";
         }

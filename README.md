@@ -24,7 +24,10 @@ docs/QUOTECARDS-AR.md        دليل مولّد كروت الاقتباسات �
 **`QuoteCards.jsx`** — you have one card design and a list of quotes, and you
 want a card per quote. It duplicates your template comp once per quote, swaps
 in the speaker clip and sets the quote text, keeping the masks, effects and
-type styling. Templates that hide the guest and the quote inside precomps
+type styling. A card usually carries three pieces of text - the quote, the
+guest's name and their job title - and each one is pointed at its own layer,
+so the name changes with the guest instead of staying on whoever the template
+was mocked up with. Templates that hide the guest and the quote inside precomps
 (`REPLACE-FOOTAGE`, `REPLACE-PARAGRAPH`) work: layers are found through the
 whole comp tree, and those precomps are copied per card so the cards stay
 independent of each other. Clip order decides who appears: 1st clip to quote 1, 2nd to

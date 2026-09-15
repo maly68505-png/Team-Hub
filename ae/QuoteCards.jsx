@@ -362,11 +362,47 @@
     }
 
     /**
+     * normalize() keeps only a-z0-9, so it flattens any Arabic string to "" -
+     * and indexOf("") matches everything. Header and layer names here are
+     * routinely Arabic, so they get a plain case-insensitive substring test.
+     */
+    function looseHas(text, needle) {
+        needle = trim(needle);
+        if (needle === "") { return false; }
+        return String(text).toLowerCase().indexOf(needle.toLowerCase()) !== -1;
+    }
+
+    var SPEAKER_HINTS = "المتحدث,متحدث,الضيف,ضيف,الاسم,اسم,speaker,name,guest,person";
+    var ROLE_HINTS = "الصفة,صفة,الوظيفة,وظيفة,المنصب,منصب,title,role,job,position,subtitle";
+
+    /**
+     * The column holding the speaker's name (or their job title), identified
+     * by its HEADER only. Guessing from the values instead would cheerfully
+     * write a timecode or a row number across the card, so an unlabelled
+     * column is left alone and the panel says the names were not touched.
+     * Returns -1 when no header names one.
+     */
+    function pickLabelledColumn(rows, hintCSV, skip) {
+        if (rows.length < 2) { return -1; }
+        var hints = hintCSV.split(",");
+        for (var h = 0; h < hints.length; h++) {
+            for (var c = 0; c < rows[0].length; c++) {
+                if (c === skip) { continue; }
+                if (looseHas(trim(rows[0][c]), hints[h])) { return c; }
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Reads the quote list. Accepts:
      *   .csv  - the wordiest column is taken as the quote text
      *   .srt  - the "# ..." comment carried under each timecode block
      *   .txt  - one quote per paragraph, or per line when there are no blanks
-     * Returns [{ index, text }].
+     * A .csv can also carry the speaker's name and job title in their own
+     * labelled columns; without them every card keeps the name the template
+     * was mocked up with.
+     * Returns [{ index, text, speaker, role, speakerColumn }].
      */
     function parseQuotesFile(file, warnings) {
         if (!file.open("r")) {
@@ -377,7 +413,7 @@
         file.close();
         raw = raw.replace(/^\uFEFF/, "");
 
-        var texts = [], i;
+        var texts = [], speakers = [], roles = [], speakerHeader = "", i;
         var ext = extOf(file.name);
 
         if (ext === "csv" || ext === "tsv") {
@@ -394,10 +430,23 @@
             if (head !== "" && avg > 0 && head.length >= avg * 0.6) {
                 start = 0;                                   // no header after all
             }
+            var speakerCol = -1, roleCol = -1;
+            if (start === 1) {                               // only a real header can name them
+                speakerCol = pickLabelledColumn(rows, SPEAKER_HINTS, col);
+                roleCol = pickLabelledColumn(rows, ROLE_HINTS, col);
+                if (roleCol === speakerCol) { roleCol = -1; }
+                if (speakerCol >= 0) { speakerHeader = trim(rows[0][speakerCol]); }
+            }
             for (i = start; i < rows.length; i++) {
                 if (rows[i].length > col) {
                     var v = trim(rows[i][col]);
-                    if (v !== "") { texts.push(v); }
+                    if (v !== "") {
+                        texts.push(v);
+                        speakers.push(speakerCol >= 0 && rows[i].length > speakerCol
+                            ? trim(rows[i][speakerCol]) : "");
+                        roles.push(roleCol >= 0 && rows[i].length > roleCol
+                            ? trim(rows[i][roleCol]) : "");
+                    }
                 }
             }
         } else if (ext === "srt") {
@@ -429,7 +478,13 @@
 
         var quotes = [];
         for (i = 0; i < texts.length; i++) {
-            quotes.push({ index: i + 1, text: texts[i] });
+            quotes.push({
+                index: i + 1,
+                text: texts[i],
+                speaker: speakers[i] || "",
+                role: roles[i] || "",
+                speakerColumn: speakerHeader
+            });
         }
         return quotes;
     }
@@ -714,7 +769,17 @@
             var p = layer.property(groupName).property(propName);
             var v = p.value;
             var txt = (v instanceof Array) ? "[" + v.join(", ") + "]" : String(v);
-            return txt + (p.numKeys > 0 ? "  (" + p.numKeys + " keys)" : "");
+            var extra = (p.numKeys > 0 ? "  (" + p.numKeys + " keys)" : "");
+            // An expression reading another layer's inPoint/outPoint retimes
+            // itself per card, because each clip is a different length. That
+            // is invisible in the comp and has to show up here.
+            try {
+                if (p.expressionEnabled && trim(p.expression) !== "") {
+                    var ex = trim(p.expression).replace(/[\r\n]+/g, " ");
+                    extra += "  (expr: " + (ex.length > 90 ? ex.substring(0, 90) + "..." : ex) + ")";
+                }
+            } catch (eEx) {}
+            return txt + extra;
         } catch (e) {
             return "-";
         }
@@ -1209,6 +1274,14 @@
         var textDrop = textGroup.add("dropdownlist", undefined, []);
         textDrop.alignment = ["fill", "center"];
 
+        var nameGroup = row("Name layer:");
+        var nameDrop = nameGroup.add("dropdownlist", undefined, []);
+        nameDrop.alignment = ["fill", "center"];
+
+        var roleGroup = row("Title layer:");
+        var roleDrop = roleGroup.add("dropdownlist", undefined, []);
+        roleDrop.alignment = ["fill", "center"];
+
         var opts = win.add("panel", undefined, "Options");
         opts.orientation = "column";
         opts.alignChildren = ["left", "top"];
@@ -1256,9 +1329,9 @@
         cbFolder.value = true;
 
         var list = win.add("listbox", undefined, [], {
-            numberOfColumns: 4, showHeaders: true,
-            columnTitles: ["#", "Clip", "Alpha", "Quote"],
-            columnWidths: [30, 170, 170, 300]
+            numberOfColumns: 5, showHeaders: true,
+            columnTitles: ["#", "Clip", "Alpha", "Name", "Quote"],
+            columnWidths: [30, 150, 150, 130, 240]
         });
         list.preferredSize.height = 190;
         list.alignment = ["fill", "fill"];
@@ -1335,7 +1408,46 @@
             for (var k = 0; k < textTargets.length; k++) {
                 textDrop.add("item", textTargets[k].label);
             }
-            textDrop.selection = textTargets.length ? bestTextGuess(textTargets) + 1 : 0;
+            var quoteIdx = textTargets.length ? bestTextGuess(textTargets) : -1;
+            textDrop.selection = textTargets.length ? quoteIdx + 1 : 0;
+
+            // The name and the title are only auto-picked when a layer is
+            // actually named for them. Guessing by length would land the
+            // speaker's name on the job title as often as not, and writing
+            // over the wrong line of a template is worse than doing nothing.
+            fillSideDrop(nameDrop, "(leave the name alone)", NAME_LAYER_HINTS, quoteIdx);
+            fillSideDrop(roleDrop, "(leave the title alone)", ROLE_LAYER_HINTS, quoteIdx);
+        }
+
+        var NAME_LAYER_HINTS = "المتحدث,متحدث,الضيف,ضيف,الاسم,اسم,speaker,name,guest";
+        var ROLE_LAYER_HINTS = "الصفة,صفة,الوظيفة,وظيفة,المنصب,منصب,title,role,job,position,subtitle";
+
+        function fillSideDrop(drop, leaveLabel, hintCSV, skipIndex) {
+            drop.removeAll();
+            drop.add("item", textTargets.length
+                ? leaveLabel
+                : "-- no text layer anywhere in this comp --");
+            for (var i = 0; i < textTargets.length; i++) {
+                drop.add("item", textTargets[i].label);
+            }
+            var hit = textTargets.length ? looseGuessIndex(textTargets, hintCSV, skipIndex) : -1;
+            drop.selection = (hit >= 0) ? hit + 1 : 0;
+        }
+
+        /**
+         * Matches on the LAYER NAME with a plain substring test, so an Arabic
+         * layer name still matches - normalize() would flatten it to "" and
+         * then match the first layer in the list.
+         */
+        function looseGuessIndex(targets, hintCSV, skipIndex) {
+            var hints = hintCSV.split(",");
+            for (var h = 0; h < hints.length; h++) {
+                for (var i = 0; i < targets.length; i++) {
+                    if (i === skipIndex || !targets[i].layer) { continue; }
+                    if (looseHas(targets[i].layer.name, hints[h])) { return i; }
+                }
+            }
+            return -1;
         }
 
         /** Everything needed is filled in, so show the plan without being asked. */
@@ -1386,6 +1498,8 @@
         videoDrop.onChange = function () { maybeScan(); };
         alphaDrop.onChange = function () { maybeScan(); };
         textDrop.onChange = function () { maybeScan(); };
+        nameDrop.onChange = function () { maybeScan(); };
+        roleDrop.onChange = function () { maybeScan(); };
         refreshBtn.onClick = function () { refreshComps(); maybeScan(); };
 
         function selectedVideoTarget() {
@@ -1401,6 +1515,16 @@
         function selectedTextTarget() {
             if (!textDrop.selection || textDrop.selection.index === 0) { return null; }
             return textTargets[textDrop.selection.index - 1] || null;
+        }
+
+        function selectedNameTarget() {
+            if (!nameDrop.selection || nameDrop.selection.index === 0) { return null; }
+            return textTargets[nameDrop.selection.index - 1] || null;
+        }
+
+        function selectedRoleTarget() {
+            if (!roleDrop.selection || roleDrop.selection.index === 0) { return null; }
+            return textTargets[roleDrop.selection.index - 1] || null;
         }
 
         function doScan() {
@@ -1467,7 +1591,10 @@
                 it.subItems[0].text = clip ? clip.name : "-- no clip --";
                 it.subItems[1].text = alphaClip ? alphaClip.name
                     : (aTarget && af !== "" ? "-- none --" : "");
-                it.subItems[2].text = quotes[i].text.length > 80
+                it.subItems[2].text = trim(quotes[i].speaker) !== ""
+                    ? quotes[i].speaker
+                    : (selectedNameTarget() ? "-- no name --" : "");
+                it.subItems[3].text = quotes[i].text.length > 80
                     ? quotes[i].text.substring(0, 80) + "..."
                     : quotes[i].text;
             }
@@ -1508,6 +1635,42 @@
                 note = "  |  text layer set to \"leave alone\" - the quotes will not be written";
             }
 
+            // One guest's name sitting on all nine cards is the quietest way
+            // for this to go wrong: the quote body changes, so the cards look
+            // built, and only the name gives it away.
+            var withSpeaker = 0;
+            for (var sp = 0; sp < quotes.length; sp++) {
+                if (trim(quotes[sp].speaker) !== "") { withSpeaker++; }
+            }
+            var nTarget = selectedNameTarget();
+
+            // Two slots aimed at one layer means the second write silently
+            // wipes the first - the quote replaced by a name, say.
+            var rTarget = selectedRoleTarget();
+            var quoteTarget = selectedTextTarget();
+            var clash = "";
+            if (nTarget && nTarget === quoteTarget) { clash = "\"Name layer\" and \"Text layer\""; }
+            else if (rTarget && rTarget === quoteTarget) { clash = "\"Title layer\" and \"Text layer\""; }
+            else if (nTarget && rTarget && nTarget === rTarget) { clash = "\"Name layer\" and \"Title layer\""; }
+            if (clash !== "") {
+                note += "  |  " + clash + " are the SAME layer - one would overwrite the " +
+                        "other. Point them at different layers.";
+            }
+
+            if (nTarget && withSpeaker === 0) {
+                note += "  |  THE NAMES WILL NOT CHANGE: " +
+                        (trim(quotes[0].speakerColumn) !== ""
+                            ? "the column \"" + quotes[0].speakerColumn + "\" in your quote " +
+                              "file is empty - type a name into every row"
+                            : "your quote file has no speaker column - add one headed " +
+                              "\"المتحدث\" or \"Speaker\"") +
+                        ", so every card keeps the template's name.";
+            } else if (!nTarget && withSpeaker > 0) {
+                note += "  |  your file has " + withSpeaker + " speaker name(s) but \"Name layer\" " +
+                        "is \"(leave the name alone)\" - pick the name layer, or every card keeps " +
+                        "the template's name.";
+            }
+
             setStatus(ready + " card(s) ready out of " + plan.length + " quote(s)  |  " +
                       files.length + " clip(s) in the folder" +
                       (files.length > quotes.length
@@ -1521,6 +1684,8 @@
 
             var vTarget = selectedVideoTarget();
             var tTarget = selectedTextTarget();
+            var nTarget = selectedNameTarget();
+            var rTarget = selectedRoleTarget();
             if (!vTarget) { setStatus("No footage layer to swap."); return; }
 
             // Only the comps on the way down to the guest and the quote get a
@@ -1559,6 +1724,8 @@
             targetIds[vTarget.comp.id] = true;
             if (tTarget) { targetIds[tTarget.comp.id] = true; }
             if (aTarget) { targetIds[aTarget.comp.id] = true; }
+            if (nTarget) { targetIds[nTarget.comp.id] = true; }
+            if (rTarget) { targetIds[rTarget.comp.id] = true; }
             var cloneIds = compsLeadingTo(comp, targetIds);
 
             var log = [];
@@ -1567,6 +1734,8 @@
             log.push("Video layer: " + vTarget.label + "   (in comp \"" + vTarget.comp.name + "\")");
             log.push("Alpha layer: " + (aTarget ? aTarget.label + "   (in comp \"" + aTarget.comp.name + "\")" : "none"));
             log.push("Text layer:  " + (tTarget ? tTarget.label + "   (in comp \"" + tTarget.comp.name + "\")" : "none"));
+            log.push("Name layer:  " + (nTarget ? nTarget.label + "   (in comp \"" + nTarget.comp.name + "\")" : "none"));
+            log.push("Title layer: " + (rTarget ? rTarget.label + "   (in comp \"" + rTarget.comp.name + "\")" : "none"));
             var cloneNames = [];
             for (var ci = 1; ci <= app.project.numItems; ci++) {
                 var it = app.project.item(ci);
@@ -1665,6 +1834,9 @@
                             if (cbFitText.value) { fitTextToBox(textLayer, log); }
                         }
                     }
+                    writeSideText(nTarget, "name", row.quote.speaker, mapping, log);
+                    writeSideText(rTarget, "title", row.quote.role, mapping, log);
+
                     if (cbMatte.value) {
                         var matte = buildMatteSetup(target, log);
                         log.push("    matte layer: " + matte.name);
@@ -1705,7 +1877,10 @@
                           "   (" + alphaFiles.length + " clip(s))"
                         : "NOT SWAPPED - no alpha layer chosen, so the cut-out is " +
                           "whatever the template already had") + "\n" +
-                  "Text    -> " + (tTarget ? tTarget.comp.name + " / " + tTarget.layer.name : "not touched") +
+                  "Text    -> " + (tTarget ? tTarget.comp.name + " / " + tTarget.layer.name : "not touched") + "\n" +
+                  "Name    -> " + (nTarget ? nTarget.comp.name + " / " + nTarget.layer.name : "not touched") +
+                  "\n" +
+                  "Title   -> " + (rTarget ? rTarget.comp.name + " / " + rTarget.layer.name : "not touched") +
                   (planWarnings.length
                         ? "\n\nWarnings: " + planWarnings.length + "\n" +
                           planWarnings.slice(0, 4).join("\n") +
@@ -1713,6 +1888,25 @@
                         : "") +
                   (logPath ? "\n\nDetails:\n" + logPath : "") +
                   "\n\nOne Ctrl/Cmd+Z undoes all of it.");
+        }
+
+        /**
+         * Writes the speaker's name, or their job title, onto its own layer.
+         * The quote body is not the only text on one of these cards - leaving
+         * these two alone is exactly what puts one guest's name on all nine.
+         */
+        function writeSideText(target, what, value, mapping, log) {
+            if (!target) { return; }
+            if (trim(value || "") === "") {
+                log.push("    note: no " + what + " for this card, the template's " +
+                         what + " is kept as it was");
+                return;
+            }
+            var layer = mapping[target.comp.id].layer(target.index);
+            if (setLayerText(layer, value, log)) {
+                log.push("    " + what + " set: \"" + value + "\" on " + layer.name);
+                if (cbFitText.value) { fitTextToBox(layer, log); }
+            }
         }
 
         function doReport() {
@@ -1728,6 +1922,8 @@
             out.push("Chosen video layer: " + (selectedVideoTarget() ? selectedVideoTarget().label : "none"));
             out.push("Chosen alpha layer: " + (selectedAlphaTarget() ? selectedAlphaTarget().label : "none"));
             out.push("Chosen text layer:  " + (selectedTextTarget() ? selectedTextTarget().label : "none"));
+            out.push("Chosen name layer:  " + (selectedNameTarget() ? selectedNameTarget().label : "none"));
+            out.push("Chosen title layer: " + (selectedRoleTarget() ? selectedRoleTarget().label : "none"));
             out.push("");
             out.push("Clips folder: " + trim(videosTxt.text));
             out.push("Alpha folder: " + (trim(alphaTxt.text) || "(none)"));
@@ -1803,6 +1999,12 @@
                 "     .csv  the wordiest column is taken as the quote text\n" +
                 "     .txt  one quote per paragraph (or per line)\n" +
                 "     .srt  the \"# ...\" comment under each timecode block\n\n" +
+                "   A .csv can also name the guest. Head one column \"Speaker\"\n" +
+                "   (or \"المتحدث\") and another \"Title\" (or \"الصفة\"), then point\n" +
+                "   \"Name layer\" and \"Title layer\" at the lines on the card. Leave\n" +
+                "   either on \"leave alone\" and that line keeps whatever the\n" +
+                "   template said - which is how one guest's name ends up on\n" +
+                "   every card while the quotes all change correctly.\n\n" +
                 "5. Scan shows each quote next to the clip it will get.\n" +
                 "   Nothing is created yet.\n\n" +
                 "6. Create cards duplicates the template once per quote, swaps\n" +
