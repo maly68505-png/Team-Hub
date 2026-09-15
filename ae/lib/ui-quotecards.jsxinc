@@ -475,7 +475,27 @@
                             applyAlphaMode(alphaFootage, alphaChoice(), log);
                             var aLayer = placeClip(aTarget, mapping[aTarget.comp.id],
                                                    alphaFootage, log);
-                            log.push("    alpha: " + row.alpha.name);
+                            var aHasAlpha = false, aDesc = "";
+                            try {
+                                aHasAlpha = alphaFootage.mainSource.hasAlpha;
+                                aDesc = alphaFootage.width + "x" + alphaFootage.height +
+                                        "  " + alphaFootage.duration.toFixed(2) + "s" +
+                                        "  hasAlpha=" + aHasAlpha +
+                                        "  alphaMode=" + alphaModeName(alphaFootage.mainSource.alphaMode);
+                            } catch (eA) {}
+                            log.push("    alpha: " + row.alpha.name + "   " + aDesc);
+
+                            // A cut-out clip with no alpha channel is just the
+                            // original again - the guest keeps their background
+                            // and nothing on screen explains why.
+                            if (!aHasAlpha) {
+                                var msg = "Card " + pad(row.index, 2) + ": the cut-out clip \"" +
+                                          row.alpha.name + "\" has NO alpha channel, so this " +
+                                          "guest keeps their background. Re-export it with " +
+                                          "transparency (ProRes 4444 or similar).";
+                                planWarnings.push(msg);
+                                log.push("    *** " + msg);
+                            }
                             if (cbReset.value) { resetClipTiming(aLayer, mapping[aTarget.comp.id], log); }
                             if (cbFit.value) { fitToComp(aLayer, mapping[aTarget.comp.id], log); }
                             if (cbAlphaPath.value) {
@@ -539,7 +559,11 @@
                         : "NOT SWAPPED - no alpha layer chosen, so the cut-out is " +
                           "whatever the template already had") + "\n" +
                   "Text    -> " + (tTarget ? tTarget.comp.name + " / " + tTarget.layer.name : "not touched") +
-                  (planWarnings.length ? "\n\nWarnings: " + planWarnings.length : "") +
+                  (planWarnings.length
+                        ? "\n\nWarnings: " + planWarnings.length + "\n" +
+                          planWarnings.slice(0, 4).join("\n") +
+                          (planWarnings.length > 4 ? "\n..." : "")
+                        : "") +
                   (logPath ? "\n\nDetails:\n" + logPath : "") +
                   "\n\nOne Ctrl/Cmd+Z undoes all of it.");
         }
