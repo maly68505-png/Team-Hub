@@ -910,6 +910,72 @@
         return layer;
     }
 
+
+    // ------------------------------------------- switching to the alpha path
+
+    /**
+     * Roto Brush (internally "Samurai") holds strokes painted onto one
+     * specific clip. Swap the footage and the strokes are meaningless, so a
+     * template that cuts its guest out this way cannot follow a new clip.
+     * Nothing can script that - the strokes have to be turned off and a
+     * ready-made cut-out used instead.
+     */
+    var ROTO_HINTS = "samurai,roto";
+
+    function disableRotoEffects(layer, log) {
+        var n = 0;
+        try {
+            var fx = layer.property("ADBE Effect Parade");
+            for (var i = 1; i <= fx.numProperties; i++) {
+                var e = fx.property(i);
+                var mn = "", nm = "";
+                try { mn = normalize(e.matchName); } catch (x1) {}
+                try { nm = normalize(e.name); } catch (x2) {}
+                var hits = ROTO_HINTS.split(",");
+                var match = false;
+                for (var h = 0; h < hits.length; h++) {
+                    var want = normalize(hits[h]);
+                    if (mn.indexOf(want) !== -1 || nm.indexOf(want) !== -1) { match = true; break; }
+                }
+                if (!match && nm.indexOf("objectmatte") !== -1) { match = true; }
+                if (match && e.enabled) {
+                    e.enabled = false;
+                    n++;
+                    log.push("    turned off \"" + e.name + "\" - its Roto Brush strokes were " +
+                             "painted on the template's own clip and mean nothing on yours");
+                }
+            }
+        } catch (e2) {
+            log.push("    note: could not check for Roto Brush: " + e2.toString());
+        }
+        return n;
+    }
+
+    /**
+     * A template usually ships its alpha route switched off. Once a cut-out
+     * clip is dropped in, the layers showing it have to be turned back on or
+     * nothing changes on screen.
+     */
+    function enableLayersShowing(root, targetComp, log) {
+        var count = 0, seen = {};
+        walk(root, 0);
+        if (count > 0) {
+            log.push("    switched on " + count + " layer(s) showing \"" + targetComp.name + "\"");
+        }
+        return count;
+
+        function walk(comp, depth) {
+            if (!comp || seen[comp.id] || depth > 8) { return; }
+            seen[comp.id] = true;
+            for (var i = 1; i <= comp.numLayers; i++) {
+                var L = comp.layer(i);
+                var src = layerSource(L);
+                if (src === targetComp && !L.enabled) { L.enabled = true; count++; }
+                if (src instanceof CompItem) { walk(src, depth + 1); }
+            }
+        }
+    }
+
     // ------------------------------------------------------------ AE helpers
 
     function listComps() {
@@ -1178,6 +1244,10 @@
             var i = alphaModeDrop.selection ? alphaModeDrop.selection.index : 0;
             return ["auto", "straight", "premul-white", "premul-black"][i];
         }
+        var cbAlphaPath = opts.add("checkbox", undefined,
+            "Switch the template over to the cut-out clip (turn its alpha layers on, and turn " +
+            "off Roto Brush that was painted on the template's own footage)");
+        cbAlphaPath.value = true;
         var cbFitText = opts.add("checkbox", undefined,
             "Shrink the type until the quote fits its text box");
         cbFitText.value = true;
@@ -1555,6 +1625,10 @@
                             log.push("    alpha: " + row.alpha.name);
                             if (cbReset.value) { resetClipTiming(aLayer, mapping[aTarget.comp.id], log); }
                             if (cbFit.value) { fitToComp(aLayer, mapping[aTarget.comp.id], log); }
+                            if (cbAlphaPath.value) {
+                                enableLayersShowing(card, mapping[aTarget.comp.id], log);
+                                disableRotoEffects(target, log);
+                            }
                         }
                     } else if (aTarget && !row.alpha) {
                         log.push("    note: no alpha clip for this card, template alpha kept");
@@ -1712,6 +1786,10 @@
                 "   and alignment you already set, shrinking the type if the quote\n" +
                 "   is longer than the box it lands in.\n\n" +
                 "Masks and effects survive: the layer is reused, not rebuilt.\n\n" +
+                "If your template cuts the guest out with Roto Brush, those strokes\n" +
+                "belong to the clip they were painted on and cannot follow a new one -\n" +
+                "no script can repaint them. Supply cut-out clips instead and let the\n" +
+                "last option switch the template over to them.\n\n" +
                 "If a card comes out BLACK, the placeholder it replaced was trimmed\n" +
                 "out of a long recording, so the layer was reading past the end of\n" +
                 "your clip. \"Start each clip at its own beginning\" fixes that.\n\n" +

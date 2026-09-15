@@ -97,6 +97,10 @@
             var i = alphaModeDrop.selection ? alphaModeDrop.selection.index : 0;
             return ["auto", "straight", "premul-white", "premul-black"][i];
         }
+        var cbAlphaPath = opts.add("checkbox", undefined,
+            "Switch the template over to the cut-out clip (turn its alpha layers on, and turn " +
+            "off Roto Brush that was painted on the template's own footage)");
+        cbAlphaPath.value = true;
         var cbFitText = opts.add("checkbox", undefined,
             "Shrink the type until the quote fits its text box");
         cbFitText.value = true;
@@ -474,6 +478,10 @@
                             log.push("    alpha: " + row.alpha.name);
                             if (cbReset.value) { resetClipTiming(aLayer, mapping[aTarget.comp.id], log); }
                             if (cbFit.value) { fitToComp(aLayer, mapping[aTarget.comp.id], log); }
+                            if (cbAlphaPath.value) {
+                                enableLayersShowing(card, mapping[aTarget.comp.id], log);
+                                disableRotoEffects(target, log);
+                            }
                         }
                     } else if (aTarget && !row.alpha) {
                         log.push("    note: no alpha clip for this card, template alpha kept");
@@ -631,6 +639,10 @@
                 "   and alignment you already set, shrinking the type if the quote\n" +
                 "   is longer than the box it lands in.\n\n" +
                 "Masks and effects survive: the layer is reused, not rebuilt.\n\n" +
+                "If your template cuts the guest out with Roto Brush, those strokes\n" +
+                "belong to the clip they were painted on and cannot follow a new one -\n" +
+                "no script can repaint them. Supply cut-out clips instead and let the\n" +
+                "last option switch the template over to them.\n\n" +
                 "If a card comes out BLACK, the placeholder it replaced was trimmed\n" +
                 "out of a long recording, so the layer was reading past the end of\n" +
                 "your clip. \"Start each clip at its own beginning\" fixes that.\n\n" +

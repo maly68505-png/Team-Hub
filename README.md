@@ -173,6 +173,7 @@ node ae/tests/timing.test.js      # 16 assertions
 node ae/tests/text.test.js        # 20 assertions
 node ae/tests/alpha.test.js       # 26 assertions
 node ae/tests/write.test.js       # 10 assertions
+node ae/tests/roto.test.js        # 16 assertions
 ```
 
 `parse.test.js` covers timecode parsing across every accepted format, range and
@@ -207,6 +208,14 @@ keyframed layers alone, and scaling a clip to cover its frame.
 `text.test.js` covers choosing the quote body over the speaker-name line, and
 shrinking the type until a real quote fits its box — leaving point text and
 animated type alone, and never going below 6pt.
+
+`roto.test.js` covers the one thing a script fundamentally cannot do: a
+template that cuts its subject out with Roto Brush holds strokes painted on
+one particular clip, which cannot follow a replacement and cannot be
+repainted from script. It asserts those effects are recognised by match name
+or by whatever they were renamed to, that ordinary effects are left alone,
+and that the template's disabled alpha route gets switched back on once a
+cut-out clip is supplied.
 
 The AE-API parts — layer targeting, `replaceSource`, layer splitting, matte
 setup — need a running After Effects and are **not** covered by these tests.
