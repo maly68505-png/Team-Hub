@@ -63,6 +63,27 @@
         return i < 0 ? "" : String(name).substring(i + 1).toLowerCase();
     }
 
+    /**
+     * The timecode script has to be plain text. Picking a PDF or a Word file
+     * is an easy mistake to make, and "no segments parsed" does not explain
+     * it - so name the real problem and say what to do about it.
+     */
+    var BINARY_DOC_EXT = "pdf,doc,docx,rtf,pages,odt,xls,xlsx,numbers,key,ppt,pptx";
+
+    function scriptFileProblem(file) {
+        var ext = extOf(file.name);
+        if ((","+ BINARY_DOC_EXT + ",").indexOf("," + ext + ",") !== -1) {
+            return "\"" + file.name + "\" is a " + ext.toUpperCase() + " file, which cannot be " +
+                   "read as text.\n\nOpen it, then save or export the timecodes as a plain " +
+                   "text file (.txt) or a subtitle file (.srt), and pick that instead.";
+        }
+        if ((","+ VIDEO_EXT + ",").indexOf("," + ext + ",") !== -1) {
+            return "\"" + file.name + "\" is a video file, not the timecode script.\n\n" +
+                   "The script file is the text file that says who should appear when.";
+        }
+        return null;
+    }
+
     function isVideoFile(f) {
         return (","+ VIDEO_EXT + ",").indexOf("," + extOf(f.name) + ",") !== -1;
     }
@@ -767,7 +788,10 @@
                  (!ctx.folder ? "the videos folder" : "the timecode script")) +
                 " near your project. Use the buttons below to point at them once.";
         } else {
-            msg.text = ready + " of " + ctx.plan.length + " segments are ready to replace." +
+            msg.text = (ctx.plan.length === 0
+                ? "No timecode lines found in \"" + ctx.script.name + "\". Press \"Script file...\" " +
+                  "and pick the plain-text (.txt / .srt) file with your timecodes."
+                : ready + " of " + ctx.plan.length + " segments are ready to replace.") +
                 (ready < ctx.plan.length ? "  The rest will be skipped and listed in the log." : "");
         }
 
@@ -795,7 +819,11 @@
         };
         pickScriptBtn.onClick = function () {
             var f = File.openDialog("Where is the timecode script?");
-            if (f) { ctx.script = f; refresh(); }
+            if (!f) { return; }
+            var problem = scriptFileProblem(f);
+            if (problem) { alert(problem); return; }
+            ctx.script = f;
+            refresh();
         };
         goBtn.onClick = function () {
             ctx.options = { split: cbSplit.value, matte: cbMatte.value, scale: cbScale.value };

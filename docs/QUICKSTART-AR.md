@@ -75,6 +75,8 @@ OK   Script file:    .../Project AE/script.srt
 
 | المشكلة | السبب والحل |
 |---|---|
+| زرار **Apply** مقفول (رمادي) | معناه إن عدد المقاطع اللي اتقرأت = صفر. شوف السطر اللي تحت الجدول، هيقولك السبب |
+| اخترت ملف **PDF** أو **Word** كـ Script file | الأداة بتقرأ نصوص عادية بس. افتح الملف، وانسخ التوقيتات في ملف `.txt` أو `.srt` |
 | `Can't import file... unsupported filetype` | إنت استخدمت **File ← Import**. استخدم **File ← Scripts ← Run Script File…** |
 | مش لاقي **Run Script File** في القائمة | تأكد إنك في After Effects نفسه مش Media Encoder، والقائمة تحت `File` مباشرة |
 | `Videos folder: not found` | فولدر الفيديوهات بعيد عن ملف المشروع. اضغط زرار **Videos folder…** وحدّده |

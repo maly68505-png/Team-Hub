@@ -13,7 +13,7 @@ var MIN_MATCH_SCORE = 2;
 var TOL = 0.0005;
 function Folder(){}
 var sandbox = new Function('VIDEO_EXT','MIN_MATCH_SCORE','TOL','Folder',
-  block + '\nreturn {tcToSeconds:tcToSeconds, parseRangeLine:parseRangeLine, parsePersonText:parsePersonText, parseScript:parseScript, matchScore:matchScore, pickFile:pickFile, secondsToTC:secondsToTC, normalize:normalize};'
+  block + '\nreturn {tcToSeconds:tcToSeconds, parseRangeLine:parseRangeLine, parsePersonText:parsePersonText, parseScript:parseScript, matchScore:matchScore, scriptFileProblem:scriptFileProblem, pickFile:pickFile, secondsToTC:secondsToTC, normalize:normalize};'
 )(VIDEO_EXT, MIN_MATCH_SCORE, TOL, Folder);
 
 var pass = 0, fail = 0;
@@ -95,6 +95,15 @@ console.log('\n-- timecode formatting round-trip --');
 eq('fmt 12.6s @25', sandbox.secondsToTC(12.6, 25), '00:00:12:15');
 eq('fmt 3661s @24', sandbox.secondsToTC(3661, 24), '01:01:01:00');
 
+
+
+console.log('\n-- wrong file type is named clearly --');
+function FF(n) { return { name: n }; }
+eq('pdf rejected',  /PDF file, which cannot be/.test(sandbox.scriptFileProblem(FF('form.pdf'))), true);
+eq('docx rejected', /DOCX file, which cannot be/.test(sandbox.scriptFileProblem(FF('notes.docx'))), true);
+eq('mp4 rejected',  /is a video file/.test(sandbox.scriptFileProblem(FF('clip.mp4'))), true);
+eq('srt accepted',  sandbox.scriptFileProblem(FF('script.srt')), null);
+eq('txt accepted',  sandbox.scriptFileProblem(FF('script.txt')), null);
 
 console.log('\n-- build outputs carry the shared core verbatim --');
 var coreRaw = fs.readFileSync(path.join(AE, 'lib', 'core.jsxinc'), 'utf8').replace(/\s+$/, '');

@@ -151,6 +151,13 @@
             var scriptFile = new File(sf);
             if (!scriptFile.exists) { setStatus("Script file not found: " + sf); return; }
 
+            var problem = scriptFileProblem(scriptFile);
+            if (problem) {
+                setStatus("Wrong kind of file - see the message.");
+                alert(problem);
+                return;
+            }
+
             var files = [];
             scanVideos(folder, files, 0);
             if (files.length === 0) {
@@ -160,7 +167,8 @@
 
             var segments = parseScript(scriptFile, comp.frameRate, planWarnings);
             if (segments.length === 0) {
-                setStatus("No timecode segments parsed. Check the script format (Help).");
+                setStatus("No timecode lines found in \"" + scriptFile.name +
+                          "\". It must be plain text - press Help for the format.");
                 return;
             }
 

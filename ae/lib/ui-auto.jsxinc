@@ -329,7 +329,10 @@
                  (!ctx.folder ? "the videos folder" : "the timecode script")) +
                 " near your project. Use the buttons below to point at them once.";
         } else {
-            msg.text = ready + " of " + ctx.plan.length + " segments are ready to replace." +
+            msg.text = (ctx.plan.length === 0
+                ? "No timecode lines found in \"" + ctx.script.name + "\". Press \"Script file...\" " +
+                  "and pick the plain-text (.txt / .srt) file with your timecodes."
+                : ready + " of " + ctx.plan.length + " segments are ready to replace.") +
                 (ready < ctx.plan.length ? "  The rest will be skipped and listed in the log." : "");
         }
 
@@ -357,7 +360,11 @@
         };
         pickScriptBtn.onClick = function () {
             var f = File.openDialog("Where is the timecode script?");
-            if (f) { ctx.script = f; refresh(); }
+            if (!f) { return; }
+            var problem = scriptFileProblem(f);
+            if (problem) { alert(problem); return; }
+            ctx.script = f;
+            refresh();
         };
         goBtn.onClick = function () {
             ctx.options = { split: cbSplit.value, matte: cbMatte.value, scale: cbScale.value };

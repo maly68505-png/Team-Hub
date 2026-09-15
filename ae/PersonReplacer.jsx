@@ -59,6 +59,27 @@
         return i < 0 ? "" : String(name).substring(i + 1).toLowerCase();
     }
 
+    /**
+     * The timecode script has to be plain text. Picking a PDF or a Word file
+     * is an easy mistake to make, and "no segments parsed" does not explain
+     * it - so name the real problem and say what to do about it.
+     */
+    var BINARY_DOC_EXT = "pdf,doc,docx,rtf,pages,odt,xls,xlsx,numbers,key,ppt,pptx";
+
+    function scriptFileProblem(file) {
+        var ext = extOf(file.name);
+        if ((","+ BINARY_DOC_EXT + ",").indexOf("," + ext + ",") !== -1) {
+            return "\"" + file.name + "\" is a " + ext.toUpperCase() + " file, which cannot be " +
+                   "read as text.\n\nOpen it, then save or export the timecodes as a plain " +
+                   "text file (.txt) or a subtitle file (.srt), and pick that instead.";
+        }
+        if ((","+ VIDEO_EXT + ",").indexOf("," + ext + ",") !== -1) {
+            return "\"" + file.name + "\" is a video file, not the timecode script.\n\n" +
+                   "The script file is the text file that says who should appear when.";
+        }
+        return null;
+    }
+
     function isVideoFile(f) {
         return (","+ VIDEO_EXT + ",").indexOf("," + extOf(f.name) + ",") !== -1;
     }
@@ -585,6 +606,13 @@
             var scriptFile = new File(sf);
             if (!scriptFile.exists) { setStatus("Script file not found: " + sf); return; }
 
+            var problem = scriptFileProblem(scriptFile);
+            if (problem) {
+                setStatus("Wrong kind of file - see the message.");
+                alert(problem);
+                return;
+            }
+
             var files = [];
             scanVideos(folder, files, 0);
             if (files.length === 0) {
@@ -594,7 +622,8 @@
 
             var segments = parseScript(scriptFile, comp.frameRate, planWarnings);
             if (segments.length === 0) {
-                setStatus("No timecode segments parsed. Check the script format (Help).");
+                setStatus("No timecode lines found in \"" + scriptFile.name +
+                          "\". It must be plain text - press Help for the format.");
                 return;
             }
 

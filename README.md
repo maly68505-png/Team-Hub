@@ -74,6 +74,10 @@ Everything runs inside a single undo group — one Ctrl/Cmd+Z reverts the lot.
 PERSON_B
 ```
 
+The file must be **plain text** — a `.srt` or `.txt`. A PDF, a Word document
+or a spreadsheet cannot be read; open it and save the timecodes as text first.
+The tool now says so by name instead of reporting an empty result.
+
 Accepted timecodes: `00:00:12:00` (frames, uses the comp frame rate),
 `00:00:12,500` and `00:00:12.500` (milliseconds), `00:00:12;15` (drop-frame
 flavour), `00:01:05` (whole seconds), `12.5` (bare seconds).
