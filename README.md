@@ -172,6 +172,7 @@ node ae/tests/nested.test.js      # 34 assertions
 node ae/tests/timing.test.js      # 16 assertions
 node ae/tests/text.test.js        # 20 assertions
 node ae/tests/alpha.test.js       # 15 assertions
+node ae/tests/write.test.js       # 10 assertions
 ```
 
 `parse.test.js` covers timecode parsing across every accepted format, range and

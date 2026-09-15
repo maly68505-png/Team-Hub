@@ -817,6 +817,36 @@
         return false;
     }
 
+
+    /**
+     * Writes a text file and confirms something actually landed in it. With
+     * "Allow Scripts to Write Files" off, After Effects creates the file and
+     * then writes nothing - handing back an empty file that looks like a
+     * successful run. Returns the path, or "" with the reason pushed onto
+     * `problems`.
+     */
+    function writeTextFile(file, text, problems) {
+        try {
+            if (!file.open("w")) {
+                problems.push("Could not create " + file.fsName);
+                return "";
+            }
+            file.encoding = "UTF-8";
+            file.write(text);
+            file.close();
+            if (file.length === 0 && text.length > 0) {
+                problems.push("Nothing could be written to " + file.name + ". Turn on " +
+                              "Preferences (Settings) > Scripting & Expressions > " +
+                              "\"Allow Scripts to Write Files and Access Network\", then run again.");
+                return "";
+            }
+            return file.fsName;
+        } catch (e) {
+            problems.push("Could not write " + file.name + ": " + e.toString());
+            return "";
+        }
+    }
+
     // ------------------------------------------------------------ AE helpers
 
     function listComps() {

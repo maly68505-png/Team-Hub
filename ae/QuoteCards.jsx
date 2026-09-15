@@ -819,6 +819,36 @@
         return false;
     }
 
+
+    /**
+     * Writes a text file and confirms something actually landed in it. With
+     * "Allow Scripts to Write Files" off, After Effects creates the file and
+     * then writes nothing - handing back an empty file that looks like a
+     * successful run. Returns the path, or "" with the reason pushed onto
+     * `problems`.
+     */
+    function writeTextFile(file, text, problems) {
+        try {
+            if (!file.open("w")) {
+                problems.push("Could not create " + file.fsName);
+                return "";
+            }
+            file.encoding = "UTF-8";
+            file.write(text);
+            file.close();
+            if (file.length === 0 && text.length > 0) {
+                problems.push("Nothing could be written to " + file.name + ". Turn on " +
+                              "Preferences (Settings) > Scripting & Expressions > " +
+                              "\"Allow Scripts to Write Files and Access Network\", then run again.");
+                return "";
+            }
+            return file.fsName;
+        } catch (e) {
+            problems.push("Could not write " + file.name + ": " + e.toString());
+            return "";
+        }
+    }
+
     // ------------------------------------------------------------ AE helpers
 
     function listComps() {
@@ -1493,8 +1523,8 @@
             try {
                 var qf2 = new File(trim(quotesTxt.text));
                 var out = new File(qf2.parent.fsName + "/" + baseName(qf2.name) + "_cards_log.txt");
-                if (out.open("w")) { out.write(log.join("\n")); out.close(); logPath = out.fsName; }
-            } catch (e2) {}
+                logPath = writeTextFile(out, log.join("\n"), planWarnings);
+            } catch (e2) { planWarnings.push("Could not write the log: " + e2.toString()); }
 
             if (created.length) { created[0].openInViewer(); }
 
@@ -1558,19 +1588,20 @@
                 var base = app.project.file ? app.project.file.parent
                                             : new File(trim(quotesTxt.text)).parent;
                 target = new File(base.fsName + "/QuoteCards_report.txt");
-                if (!target.open("w")) { target = null; }
             } catch (e) { target = null; }
 
-            if (target) {
-                target.write(out.join("\n"));
-                target.close();
-                setStatus("Report written: " + target.fsName);
-                alert("Template report written to:\n\n" + target.fsName +
+            var problems = [];
+            var written = target ? writeTextFile(target, out.join("\n"), problems) : "";
+            if (written !== "") {
+                setStatus("Report written: " + written);
+                alert("Template report written to:\n\n" + written +
                       "\n\nSend this file on - it says exactly what the tool sees.");
             } else {
-                setStatus("Could not write the report file.");
-                alert("Could not write the report.\n\nTurn on Preferences > Scripting & " +
-                      "Expressions > Allow Scripts to Write Files and Access Network, " +
+                setStatus("Could not write the report - see the message.");
+                alert("Could not write the report.\n\n" +
+                      (problems.length ? problems.join("\n\n") + "\n\n" : "") +
+                      "In After Effects: Settings (or Preferences) > Scripting & Expressions >\n" +
+                      "tick \"Allow Scripts to Write Files and Access Network\",\n" +
                       "then press Report again.");
             }
         }
