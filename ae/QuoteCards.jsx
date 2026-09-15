@@ -669,6 +669,156 @@
         }
     }
 
+
+    // ---------------------------------------------------------- diagnostics
+
+    function alphaModeName(mode) {
+        try {
+            if (mode === AlphaMode.IGNORE) { return "IGNORE (alpha thrown away)"; }
+            if (mode === AlphaMode.STRAIGHT) { return "STRAIGHT"; }
+            if (mode === AlphaMode.PREMULTIPLIED) { return "PREMULTIPLIED"; }
+        } catch (e) {}
+        return "unknown";
+    }
+
+    function layerKind(L) {
+        try {
+            if (L instanceof TextLayer) { return "TEXT"; }
+            if (L instanceof ShapeLayer) { return "SHAPE"; }
+            if (L instanceof CameraLayer) { return "CAMERA"; }
+            if (L instanceof LightLayer) { return "LIGHT"; }
+            if (L.nullLayer) { return "NULL"; }
+            if (L.adjustmentLayer) { return "ADJUSTMENT"; }
+            if (L instanceof AVLayer) { return "AV"; }
+        } catch (e) {}
+        return "?";
+    }
+
+    function propText(layer, groupName, propName) {
+        try {
+            var p = layer.property(groupName).property(propName);
+            var v = p.value;
+            var txt = (v instanceof Array) ? "[" + v.join(", ") + "]" : String(v);
+            return txt + (p.numKeys > 0 ? "  (" + p.numKeys + " keys)" : "");
+        } catch (e) {
+            return "-";
+        }
+    }
+
+    function effectNames(layer) {
+        try {
+            var fx = layer.property("ADBE Effect Parade"), names = [];
+            for (var i = 1; i <= fx.numProperties; i++) { names.push(fx.property(i).name); }
+            return names.length ? names.join(", ") : "none";
+        } catch (e) {
+            return "none";
+        }
+    }
+
+    function matteName(layer) {
+        try {
+            if (!layer.trackMatteType || layer.trackMatteType === TrackMatteType.NO_TRACK_MATTE) {
+                return "none";
+            }
+            var t = layer.trackMatteType;
+            if (t === TrackMatteType.ALPHA) { return "ALPHA"; }
+            if (t === TrackMatteType.ALPHA_INVERTED) { return "ALPHA INVERTED"; }
+            if (t === TrackMatteType.LUMA) { return "LUMA"; }
+            if (t === TrackMatteType.LUMA_INVERTED) { return "LUMA INVERTED"; }
+            return "set";
+        } catch (e) {
+            return "none";
+        }
+    }
+
+    /**
+     * Writes out everything about a comp tree that could explain a card coming
+     * out black or uncut: layer timing, source dimensions, how each clip's
+     * alpha is interpreted, masks, effects and track mattes.
+     */
+    function describeTree(root, out, depth, seen) {
+        var pad4 = "";
+        for (var d = 0; d < depth; d++) { pad4 += "    "; }
+        if (seen[root.id]) {
+            out.push(pad4 + "COMP \"" + root.name + "\"  (already described above)");
+            return;
+        }
+        seen[root.id] = true;
+
+        out.push(pad4 + "COMP \"" + root.name + "\"   " + root.width + "x" + root.height +
+                 "   " + root.duration.toFixed(2) + "s @ " + root.frameRate + "fps   " +
+                 root.numLayers + " layers");
+
+        for (var i = 1; i <= root.numLayers; i++) {
+            var L = root.layer(i);
+            var kind = layerKind(L);
+            var head = pad4 + "  [" + L.index + "] " + kind + "  \"" + L.name + "\"" +
+                       (L.enabled ? "" : "   (EYE OFF)");
+            out.push(head);
+
+            var src = layerSource(L);
+            if (src instanceof CompItem) {
+                out.push(pad4 + "      source: comp \"" + src.name + "\"");
+            } else if (src) {
+                var line = pad4 + "      source: " + src.name + "   " + src.width + "x" + src.height;
+                try { line += "   " + src.duration.toFixed(2) + "s"; } catch (e) {}
+                out.push(line);
+                try {
+                    var ms = src.mainSource;
+                    out.push(pad4 + "      alpha:  hasAlpha=" + ms.hasAlpha +
+                             "   mode=" + alphaModeName(ms.alphaMode) +
+                             "   inverted=" + ms.invertAlpha);
+                } catch (e2) {
+                    out.push(pad4 + "      alpha:  (not a file source)");
+                }
+            }
+
+            if (kind === "AV" || kind === "TEXT" || kind === "SHAPE" || kind === "ADJUSTMENT") {
+                try {
+                    out.push(pad4 + "      time:   start=" + L.startTime.toFixed(2) +
+                             "  in=" + L.inPoint.toFixed(2) + "  out=" + L.outPoint.toFixed(2) +
+                             "  remap=" + (L.timeRemapEnabled ? "ON" : "off"));
+                } catch (e3) {}
+                out.push(pad4 + "      xform:  pos=" + propText(L, "ADBE Transform Group", "ADBE Position") +
+                         "  scale=" + propText(L, "ADBE Transform Group", "ADBE Scale") +
+                         "  opacity=" + propText(L, "ADBE Transform Group", "ADBE Opacity"));
+                out.push(pad4 + "      masks=" + countMasks(L) +
+                         "   trackMatte=" + matteName(L) +
+                         "   effects: " + effectNames(L));
+                if (kind === "TEXT") {
+                    var words = layerTextValue(L);
+                    var boxInfo = "";
+                    try {
+                        var doc = L.property("ADBE Text Properties").property("ADBE Text Document").value;
+                        boxInfo = "   " + (doc.boxText
+                            ? "BOX " + doc.boxTextSize[0] + "x" + doc.boxTextSize[1]
+                            : "POINT TEXT (cannot auto-fit)") + "   size=" + doc.fontSize;
+                    } catch (e4) {}
+                    out.push(pad4 + "      text:   \"" +
+                             (words.length > 60 ? words.substring(0, 60) + "..." : words) +
+                             "\"" + boxInfo);
+                }
+            }
+            try { if (L.parent) { out.push(pad4 + "      parent: " + L.parent.index + " " + L.parent.name); } } catch (e5) {}
+
+            if (src instanceof CompItem && depth < 6) { describeTree(src, out, depth + 2, seen); }
+        }
+    }
+
+    /** Makes an imported clip's alpha actually count when it has one. */
+    function honourAlpha(item, log) {
+        try {
+            var ms = item.mainSource;
+            if (!ms.hasAlpha) { return false; }
+            if (ms.alphaMode === AlphaMode.IGNORE) {
+                ms.alphaMode = AlphaMode.STRAIGHT;
+                log.push("    alpha was set to IGNORE on import - switched to STRAIGHT");
+                return true;
+            }
+        } catch (e) {}
+        return false;
+    }
+
     // ------------------------------------------------------------ AE helpers
 
     function listComps() {
@@ -921,6 +1071,9 @@
         var cbFit = opts.add("checkbox", undefined,
             "Fit the clip to its comp frame (a 1080p clip fills a 4K slot)");
         cbFit.value = true;
+        var cbAlphaMode = opts.add("checkbox", undefined,
+            "Use a clip's alpha channel when it has one (AE sometimes imports it as Ignore)");
+        cbAlphaMode.value = true;
         var cbFitText = opts.add("checkbox", undefined,
             "Shrink the type until the quote fits its text box");
         cbFitText.value = true;
@@ -946,6 +1099,7 @@
         buttons.alignment = ["fill", "bottom"];
         var scanBtn = buttons.add("button", undefined, "Scan");
         var goBtn = buttons.add("button", undefined, "Create cards");
+        var reportBtn = buttons.add("button", undefined, "Report");
         var helpBtn = buttons.add("button", undefined, "Help");
         goBtn.enabled = false;
 
@@ -1200,6 +1354,7 @@
 
                     var footage = importFootage(row.file, cache, planWarnings);
                     if (!footage) { log.push(tag + " SKIPPED (import failed)"); skipped++; continue; }
+                    if (cbAlphaMode.value) { honourAlpha(footage, log); }
 
                     var suffix = pad(row.index, 2);
                     var mapping = {};
@@ -1213,6 +1368,12 @@
                     var maskCount = countMasks(target);
 
                     target.replaceSource(footage, false);
+                    try {
+                        log.push("    clip is " + footage.width + "x" + footage.height +
+                                 "  " + footage.duration.toFixed(2) + "s" +
+                                 "  hasAlpha=" + footage.mainSource.hasAlpha +
+                                 "  alphaMode=" + alphaModeName(footage.mainSource.alphaMode));
+                    } catch (eLog) {}
                     log.push(tag + " " + card.name + "   clip: " + row.file.name +
                              "   masks kept: " + maskCount +
                              "   comps copied: " + clones.length);
@@ -1223,6 +1384,7 @@
                     if (aTarget && row.alpha) {
                         var alphaFootage = importFootage(row.alpha, cache, planWarnings);
                         if (alphaFootage) {
+                            if (cbAlphaMode.value) { honourAlpha(alphaFootage, log); }
                             var aLayer = mapping[aTarget.comp.id].layer(aTarget.index);
                             aLayer.replaceSource(alphaFootage, false);
                             log.push("    alpha: " + row.alpha.name);
@@ -1278,7 +1440,68 @@
                   "\n\nOne Ctrl/Cmd+Z undoes all of it.");
         }
 
+        function doReport() {
+            var comp = template();
+            if (!comp) { setStatus("Pick a template comp first."); return; }
+
+            var out = [];
+            out.push("Quote Cards - template report");
+            out.push(new Date().toString());
+            out.push("After Effects " + app.version);
+            out.push("Project: " + (app.project.file ? app.project.file.fsName : "(unsaved)"));
+            out.push("");
+            out.push("Chosen video layer: " + (selectedVideoTarget() ? selectedVideoTarget().label : "none"));
+            out.push("Chosen alpha layer: " + (selectedAlphaTarget() ? selectedAlphaTarget().label : "none"));
+            out.push("Chosen text layer:  " + (selectedTextTarget() ? selectedTextTarget().label : "none"));
+            out.push("");
+            out.push("Clips folder: " + trim(videosTxt.text));
+            out.push("Alpha folder: " + (trim(alphaTxt.text) || "(none)"));
+            out.push("Quotes file:  " + trim(quotesTxt.text));
+            out.push("");
+
+            var files = [];
+            var vf = trim(videosTxt.text);
+            if (vf !== "") {
+                var folder = new Folder(vf);
+                if (folder.exists) {
+                    scanVideos(folder, files, 0);
+                    sortFilesNaturally(files);
+                    out.push("Clips found, in the order they will be used:");
+                    for (var i = 0; i < files.length; i++) {
+                        out.push("  " + (i + 1) + ". " + files[i].name);
+                    }
+                    out.push("");
+                }
+            }
+
+            out.push(new Array(70).join("="));
+            out.push("");
+            describeTree(comp, out, 0, {});
+
+            var target = null;
+            try {
+                var base = app.project.file ? app.project.file.parent
+                                            : new File(trim(quotesTxt.text)).parent;
+                target = new File(base.fsName + "/QuoteCards_report.txt");
+                if (!target.open("w")) { target = null; }
+            } catch (e) { target = null; }
+
+            if (target) {
+                target.write(out.join("\n"));
+                target.close();
+                setStatus("Report written: " + target.fsName);
+                alert("Template report written to:\n\n" + target.fsName +
+                      "\n\nSend this file on - it says exactly what the tool sees.");
+            } else {
+                setStatus("Could not write the report file.");
+                alert("Could not write the report.\n\nTurn on Preferences > Scripting & " +
+                      "Expressions > Allow Scripts to Write Files and Access Network, " +
+                      "then press Report again.");
+            }
+        }
+
         scanBtn.onClick = doScan;
+        reportBtn.onClick = doReport;
         goBtn.onClick = doCreate;
         helpBtn.onClick = function () {
             alert(

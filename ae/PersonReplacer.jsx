@@ -667,6 +667,156 @@
         }
     }
 
+
+    // ---------------------------------------------------------- diagnostics
+
+    function alphaModeName(mode) {
+        try {
+            if (mode === AlphaMode.IGNORE) { return "IGNORE (alpha thrown away)"; }
+            if (mode === AlphaMode.STRAIGHT) { return "STRAIGHT"; }
+            if (mode === AlphaMode.PREMULTIPLIED) { return "PREMULTIPLIED"; }
+        } catch (e) {}
+        return "unknown";
+    }
+
+    function layerKind(L) {
+        try {
+            if (L instanceof TextLayer) { return "TEXT"; }
+            if (L instanceof ShapeLayer) { return "SHAPE"; }
+            if (L instanceof CameraLayer) { return "CAMERA"; }
+            if (L instanceof LightLayer) { return "LIGHT"; }
+            if (L.nullLayer) { return "NULL"; }
+            if (L.adjustmentLayer) { return "ADJUSTMENT"; }
+            if (L instanceof AVLayer) { return "AV"; }
+        } catch (e) {}
+        return "?";
+    }
+
+    function propText(layer, groupName, propName) {
+        try {
+            var p = layer.property(groupName).property(propName);
+            var v = p.value;
+            var txt = (v instanceof Array) ? "[" + v.join(", ") + "]" : String(v);
+            return txt + (p.numKeys > 0 ? "  (" + p.numKeys + " keys)" : "");
+        } catch (e) {
+            return "-";
+        }
+    }
+
+    function effectNames(layer) {
+        try {
+            var fx = layer.property("ADBE Effect Parade"), names = [];
+            for (var i = 1; i <= fx.numProperties; i++) { names.push(fx.property(i).name); }
+            return names.length ? names.join(", ") : "none";
+        } catch (e) {
+            return "none";
+        }
+    }
+
+    function matteName(layer) {
+        try {
+            if (!layer.trackMatteType || layer.trackMatteType === TrackMatteType.NO_TRACK_MATTE) {
+                return "none";
+            }
+            var t = layer.trackMatteType;
+            if (t === TrackMatteType.ALPHA) { return "ALPHA"; }
+            if (t === TrackMatteType.ALPHA_INVERTED) { return "ALPHA INVERTED"; }
+            if (t === TrackMatteType.LUMA) { return "LUMA"; }
+            if (t === TrackMatteType.LUMA_INVERTED) { return "LUMA INVERTED"; }
+            return "set";
+        } catch (e) {
+            return "none";
+        }
+    }
+
+    /**
+     * Writes out everything about a comp tree that could explain a card coming
+     * out black or uncut: layer timing, source dimensions, how each clip's
+     * alpha is interpreted, masks, effects and track mattes.
+     */
+    function describeTree(root, out, depth, seen) {
+        var pad4 = "";
+        for (var d = 0; d < depth; d++) { pad4 += "    "; }
+        if (seen[root.id]) {
+            out.push(pad4 + "COMP \"" + root.name + "\"  (already described above)");
+            return;
+        }
+        seen[root.id] = true;
+
+        out.push(pad4 + "COMP \"" + root.name + "\"   " + root.width + "x" + root.height +
+                 "   " + root.duration.toFixed(2) + "s @ " + root.frameRate + "fps   " +
+                 root.numLayers + " layers");
+
+        for (var i = 1; i <= root.numLayers; i++) {
+            var L = root.layer(i);
+            var kind = layerKind(L);
+            var head = pad4 + "  [" + L.index + "] " + kind + "  \"" + L.name + "\"" +
+                       (L.enabled ? "" : "   (EYE OFF)");
+            out.push(head);
+
+            var src = layerSource(L);
+            if (src instanceof CompItem) {
+                out.push(pad4 + "      source: comp \"" + src.name + "\"");
+            } else if (src) {
+                var line = pad4 + "      source: " + src.name + "   " + src.width + "x" + src.height;
+                try { line += "   " + src.duration.toFixed(2) + "s"; } catch (e) {}
+                out.push(line);
+                try {
+                    var ms = src.mainSource;
+                    out.push(pad4 + "      alpha:  hasAlpha=" + ms.hasAlpha +
+                             "   mode=" + alphaModeName(ms.alphaMode) +
+                             "   inverted=" + ms.invertAlpha);
+                } catch (e2) {
+                    out.push(pad4 + "      alpha:  (not a file source)");
+                }
+            }
+
+            if (kind === "AV" || kind === "TEXT" || kind === "SHAPE" || kind === "ADJUSTMENT") {
+                try {
+                    out.push(pad4 + "      time:   start=" + L.startTime.toFixed(2) +
+                             "  in=" + L.inPoint.toFixed(2) + "  out=" + L.outPoint.toFixed(2) +
+                             "  remap=" + (L.timeRemapEnabled ? "ON" : "off"));
+                } catch (e3) {}
+                out.push(pad4 + "      xform:  pos=" + propText(L, "ADBE Transform Group", "ADBE Position") +
+                         "  scale=" + propText(L, "ADBE Transform Group", "ADBE Scale") +
+                         "  opacity=" + propText(L, "ADBE Transform Group", "ADBE Opacity"));
+                out.push(pad4 + "      masks=" + countMasks(L) +
+                         "   trackMatte=" + matteName(L) +
+                         "   effects: " + effectNames(L));
+                if (kind === "TEXT") {
+                    var words = layerTextValue(L);
+                    var boxInfo = "";
+                    try {
+                        var doc = L.property("ADBE Text Properties").property("ADBE Text Document").value;
+                        boxInfo = "   " + (doc.boxText
+                            ? "BOX " + doc.boxTextSize[0] + "x" + doc.boxTextSize[1]
+                            : "POINT TEXT (cannot auto-fit)") + "   size=" + doc.fontSize;
+                    } catch (e4) {}
+                    out.push(pad4 + "      text:   \"" +
+                             (words.length > 60 ? words.substring(0, 60) + "..." : words) +
+                             "\"" + boxInfo);
+                }
+            }
+            try { if (L.parent) { out.push(pad4 + "      parent: " + L.parent.index + " " + L.parent.name); } } catch (e5) {}
+
+            if (src instanceof CompItem && depth < 6) { describeTree(src, out, depth + 2, seen); }
+        }
+    }
+
+    /** Makes an imported clip's alpha actually count when it has one. */
+    function honourAlpha(item, log) {
+        try {
+            var ms = item.mainSource;
+            if (!ms.hasAlpha) { return false; }
+            if (ms.alphaMode === AlphaMode.IGNORE) {
+                ms.alphaMode = AlphaMode.STRAIGHT;
+                log.push("    alpha was set to IGNORE on import - switched to STRAIGHT");
+                return true;
+            }
+        } catch (e) {}
+        return false;
+    }
+
     // ------------------------------------------------------------ AE helpers
 
     function listComps() {

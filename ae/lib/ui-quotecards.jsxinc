@@ -81,6 +81,9 @@
         var cbFit = opts.add("checkbox", undefined,
             "Fit the clip to its comp frame (a 1080p clip fills a 4K slot)");
         cbFit.value = true;
+        var cbAlphaMode = opts.add("checkbox", undefined,
+            "Use a clip's alpha channel when it has one (AE sometimes imports it as Ignore)");
+        cbAlphaMode.value = true;
         var cbFitText = opts.add("checkbox", undefined,
             "Shrink the type until the quote fits its text box");
         cbFitText.value = true;
@@ -106,6 +109,7 @@
         buttons.alignment = ["fill", "bottom"];
         var scanBtn = buttons.add("button", undefined, "Scan");
         var goBtn = buttons.add("button", undefined, "Create cards");
+        var reportBtn = buttons.add("button", undefined, "Report");
         var helpBtn = buttons.add("button", undefined, "Help");
         goBtn.enabled = false;
 
@@ -360,6 +364,7 @@
 
                     var footage = importFootage(row.file, cache, planWarnings);
                     if (!footage) { log.push(tag + " SKIPPED (import failed)"); skipped++; continue; }
+                    if (cbAlphaMode.value) { honourAlpha(footage, log); }
 
                     var suffix = pad(row.index, 2);
                     var mapping = {};
@@ -373,6 +378,12 @@
                     var maskCount = countMasks(target);
 
                     target.replaceSource(footage, false);
+                    try {
+                        log.push("    clip is " + footage.width + "x" + footage.height +
+                                 "  " + footage.duration.toFixed(2) + "s" +
+                                 "  hasAlpha=" + footage.mainSource.hasAlpha +
+                                 "  alphaMode=" + alphaModeName(footage.mainSource.alphaMode));
+                    } catch (eLog) {}
                     log.push(tag + " " + card.name + "   clip: " + row.file.name +
                              "   masks kept: " + maskCount +
                              "   comps copied: " + clones.length);
@@ -383,6 +394,7 @@
                     if (aTarget && row.alpha) {
                         var alphaFootage = importFootage(row.alpha, cache, planWarnings);
                         if (alphaFootage) {
+                            if (cbAlphaMode.value) { honourAlpha(alphaFootage, log); }
                             var aLayer = mapping[aTarget.comp.id].layer(aTarget.index);
                             aLayer.replaceSource(alphaFootage, false);
                             log.push("    alpha: " + row.alpha.name);
@@ -438,7 +450,68 @@
                   "\n\nOne Ctrl/Cmd+Z undoes all of it.");
         }
 
+        function doReport() {
+            var comp = template();
+            if (!comp) { setStatus("Pick a template comp first."); return; }
+
+            var out = [];
+            out.push("Quote Cards - template report");
+            out.push(new Date().toString());
+            out.push("After Effects " + app.version);
+            out.push("Project: " + (app.project.file ? app.project.file.fsName : "(unsaved)"));
+            out.push("");
+            out.push("Chosen video layer: " + (selectedVideoTarget() ? selectedVideoTarget().label : "none"));
+            out.push("Chosen alpha layer: " + (selectedAlphaTarget() ? selectedAlphaTarget().label : "none"));
+            out.push("Chosen text layer:  " + (selectedTextTarget() ? selectedTextTarget().label : "none"));
+            out.push("");
+            out.push("Clips folder: " + trim(videosTxt.text));
+            out.push("Alpha folder: " + (trim(alphaTxt.text) || "(none)"));
+            out.push("Quotes file:  " + trim(quotesTxt.text));
+            out.push("");
+
+            var files = [];
+            var vf = trim(videosTxt.text);
+            if (vf !== "") {
+                var folder = new Folder(vf);
+                if (folder.exists) {
+                    scanVideos(folder, files, 0);
+                    sortFilesNaturally(files);
+                    out.push("Clips found, in the order they will be used:");
+                    for (var i = 0; i < files.length; i++) {
+                        out.push("  " + (i + 1) + ". " + files[i].name);
+                    }
+                    out.push("");
+                }
+            }
+
+            out.push(new Array(70).join("="));
+            out.push("");
+            describeTree(comp, out, 0, {});
+
+            var target = null;
+            try {
+                var base = app.project.file ? app.project.file.parent
+                                            : new File(trim(quotesTxt.text)).parent;
+                target = new File(base.fsName + "/QuoteCards_report.txt");
+                if (!target.open("w")) { target = null; }
+            } catch (e) { target = null; }
+
+            if (target) {
+                target.write(out.join("\n"));
+                target.close();
+                setStatus("Report written: " + target.fsName);
+                alert("Template report written to:\n\n" + target.fsName +
+                      "\n\nSend this file on - it says exactly what the tool sees.");
+            } else {
+                setStatus("Could not write the report file.");
+                alert("Could not write the report.\n\nTurn on Preferences > Scripting & " +
+                      "Expressions > Allow Scripts to Write Files and Access Network, " +
+                      "then press Report again.");
+            }
+        }
+
         scanBtn.onClick = doScan;
+        reportBtn.onClick = doReport;
         goBtn.onClick = doCreate;
         helpBtn.onClick = function () {
             alert(
