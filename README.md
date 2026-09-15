@@ -7,17 +7,26 @@ The layer is never recreated. Its masks, effects, transforms and keyframes all
 survive — this is an automated "replace footage", not a re-comp.
 
 ```
-ae/PersonReplacer_Auto.jsx   zero-setup version - finds everything itself  <- start here
-ae/PersonReplacer.jsx        full panel - browse for folder, comp and script
+ae/QuoteCards.jsx            builds one card per quote from a template comp
+ae/PersonReplacer_Auto.jsx   zero-setup swap - finds everything itself
+ae/PersonReplacer.jsx        full swap panel - browse for folder, comp and script
 ae/lib/                      shared source both are built from
 ae/build.js                  rebuilds both .jsx files from ae/lib
 ae/tests/                    logic tests (parser, matcher, auto-discovery)
 examples/example_script.srt  a sample timecode script
 docs/WORKFLOW.md             folder layout + step-by-step
 docs/QUICKSTART-AR.md        دليل التشغيل السريع بالعربي
+docs/QUOTECARDS-AR.md        دليل مولّد كروت الاقتباسات بالعربي
 ```
 
 ## Which file do I use?
+
+**`QuoteCards.jsx`** — you have one card design and a list of quotes, and you
+want a card per quote. It duplicates your template comp once per quote, swaps
+in the speaker clip and sets the quote text, keeping the masks, effects and
+type styling. Clip order decides who appears: 1st clip to quote 1, 2nd to
+quote 2, and so on. The other two tools swap footage along a timeline instead —
+pick between them below.
 
 **`PersonReplacer_Auto.jsx`** — nothing to configure. Save your project, open
 your comp, then **File → Scripts → Run Script File…** and pick it. It finds the
@@ -153,8 +162,9 @@ user copies one file and nothing else.
 ## Tests
 
 ```
-node ae/tests/parse.test.js       # 41 assertions
+node ae/tests/parse.test.js       # 46 assertions
 node ae/tests/discovery.test.js   # 11 assertions
+node ae/tests/quotes.test.js      # 19 assertions
 ```
 
 `parse.test.js` covers timecode parsing across every accepted format, range and
@@ -165,6 +175,11 @@ input, and that both built files still embed the shared core verbatim.
 auto-discovery against simulated project trees: the expected layout, nested and
 oddly-named folders, decoy `.txt` files, loose clips, an empty project, and the
 tool's own log file.
+
+`quotes.test.js` covers natural clip ordering, the CSV reader (quoted commas,
+header detection, headerless files), and reading quotes out of `.csv`, `.txt`
+and `.srt` — including against the real generated `examples/episode-elections`
+files, asserting both formats yield the same nine quotes.
 
 The AE-API parts — layer targeting, `replaceSource`, layer splitting, matte
 setup — need a running After Effects and are **not** covered by these tests.

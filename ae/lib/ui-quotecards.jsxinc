@@ -1,0 +1,340 @@
+    // ------------------------------------------------------------------- UI
+
+    function build(thisObj) {
+        var win = (thisObj instanceof Panel)
+            ? thisObj
+            : new Window("palette", "Quote Cards", undefined, { resizeable: true });
+
+        win.orientation = "column";
+        win.alignChildren = ["fill", "top"];
+        win.spacing = 7;
+        win.margins = 12;
+
+        function row(labelText) {
+            var g = win.add("group");
+            g.orientation = "row";
+            g.alignChildren = ["left", "center"];
+            var l = g.add("statictext", undefined, labelText);
+            l.preferredSize.width = 100;
+            return g;
+        }
+
+        function pathRow(labelText, isFolder, prompt) {
+            var g = row(labelText);
+            var txt = g.add("edittext", undefined, "");
+            txt.alignment = ["fill", "center"];
+            txt.preferredSize.width = 300;
+            var btn = g.add("button", undefined, "Browse");
+            btn.preferredSize.width = 70;
+            btn.onClick = function () {
+                var picked = isFolder ? Folder.selectDialog(prompt) : File.openDialog(prompt);
+                if (picked) { txt.text = picked.fsName; }
+            };
+            return txt;
+        }
+
+        // ---- template -------------------------------------------------------
+        var tplGroup = row("Template comp:");
+        var tplDrop = tplGroup.add("dropdownlist", undefined, []);
+        tplDrop.alignment = ["fill", "center"];
+        tplDrop.preferredSize.width = 300;
+        var refreshBtn = tplGroup.add("button", undefined, "Refresh");
+        refreshBtn.preferredSize.width = 70;
+
+        var videosTxt = pathRow("Clips folder:", true, "Where are the speaker clips?");
+        var quotesTxt = pathRow("Quotes file:", false, "The quote list (.csv / .txt / .srt)");
+
+        // ---- which layers ---------------------------------------------------
+        var layerGroup = row("Video layer:");
+        var videoDrop = layerGroup.add("dropdownlist", undefined, []);
+        videoDrop.alignment = ["fill", "center"];
+
+        var textGroup = row("Text layer:");
+        var textDrop = textGroup.add("dropdownlist", undefined, []);
+        textDrop.alignment = ["fill", "center"];
+
+        var opts = win.add("panel", undefined, "Options");
+        opts.orientation = "column";
+        opts.alignChildren = ["left", "top"];
+        opts.margins = [12, 16, 12, 12];
+        opts.spacing = 3;
+        var cbSort = opts.add("checkbox", undefined,
+            "Clip order decides who appears: 1st clip -> 1st quote, 2nd -> 2nd ...");
+        cbSort.value = true;
+        var cbMatte = opts.add("checkbox", undefined,
+            "Build refine-ready matte on each card ([MATTE] + alpha track matte)");
+        cbMatte.value = true;
+        var cbScale = opts.add("checkbox", undefined,
+            "Compensate scale when a clip has different dimensions");
+        cbScale.value = false;
+        var cbFolder = opts.add("checkbox", undefined,
+            "Collect the finished cards in one Project panel folder");
+        cbFolder.value = true;
+
+        var list = win.add("listbox", undefined, [], {
+            numberOfColumns: 3, showHeaders: true,
+            columnTitles: ["#", "Clip", "Quote"],
+            columnWidths: [30, 190, 360]
+        });
+        list.preferredSize.height = 190;
+        list.alignment = ["fill", "fill"];
+
+        var status = win.add("statictext", undefined,
+            "Pick the template comp, the clips folder and the quote list, then Scan.");
+        status.alignment = ["fill", "top"];
+
+        var buttons = win.add("group");
+        buttons.orientation = "row";
+        buttons.alignment = ["fill", "bottom"];
+        var scanBtn = buttons.add("button", undefined, "Scan");
+        var goBtn = buttons.add("button", undefined, "Create cards");
+        var helpBtn = buttons.add("button", undefined, "Help");
+        goBtn.enabled = false;
+
+        // ---- state ----------------------------------------------------------
+
+        var compList = [], videoLayers = [], textLayers = [], plan = [], planWarnings = [];
+
+        function setStatus(m) { status.text = m; }
+
+        function template() {
+            return (tplDrop.selection && compList.length) ? compList[tplDrop.selection.index] : null;
+        }
+
+        function refreshComps() {
+            compList = listComps();
+            tplDrop.removeAll();
+            var activeIdx = 0, active = app.project.activeItem;
+            for (var i = 0; i < compList.length; i++) {
+                tplDrop.add("item", compList[i].name);
+                if (active && active === compList[i]) { activeIdx = i; }
+            }
+            if (compList.length) { tplDrop.selection = activeIdx; }
+            refreshLayers();
+        }
+
+        function refreshLayers() {
+            videoDrop.removeAll();
+            textDrop.removeAll();
+            videoLayers = [];
+            textLayers = [];
+            var comp = template();
+            if (!comp) { return; }
+
+            videoLayers = listFootageLayers(comp);
+            for (var i = 0; i < videoLayers.length; i++) {
+                videoDrop.add("item", videoLayers[i].index + ": " + videoLayers[i].name);
+            }
+            if (videoLayers.length) { videoDrop.selection = 0; }
+            else { videoDrop.add("item", "-- no footage layer in this comp --"); videoDrop.selection = 0; }
+
+            textDrop.add("item", "(leave the text alone)");
+            textLayers = listTextLayers(comp);
+            for (var k = 0; k < textLayers.length; k++) {
+                textDrop.add("item", textLayers[k].index + ": " + textLayers[k].name);
+            }
+            textDrop.selection = textLayers.length ? 1 : 0;
+        }
+
+        tplDrop.onChange = refreshLayers;
+        refreshBtn.onClick = refreshComps;
+
+        function selectedVideoLayer() {
+            if (!videoLayers.length || !videoDrop.selection) { return null; }
+            return videoLayers[videoDrop.selection.index] || null;
+        }
+
+        function selectedTextLayer() {
+            if (!textDrop.selection || textDrop.selection.index === 0) { return null; }
+            return textLayers[textDrop.selection.index - 1] || null;
+        }
+
+        function doScan() {
+            list.removeAll();
+            plan = [];
+            planWarnings = [];
+            goBtn.enabled = false;
+
+            var comp = template();
+            if (!comp) { setStatus("No comp selected. Press Refresh."); return; }
+
+            var vf = trim(videosTxt.text), qf = trim(quotesTxt.text);
+            if (vf === "") { setStatus("Pick the folder holding the speaker clips."); return; }
+            if (qf === "") { setStatus("Pick the quote list file."); return; }
+
+            var folder = new Folder(vf);
+            if (!folder.exists) { setStatus("Clips folder not found: " + vf); return; }
+            var qFile = new File(qf);
+            if (!qFile.exists) { setStatus("Quotes file not found: " + qf); return; }
+
+            var problem = scriptFileProblem(qFile);
+            if (problem) { setStatus("Wrong kind of file - see the message."); alert(problem); return; }
+
+            var files = [];
+            scanVideos(folder, files, 0);
+            if (files.length === 0) { setStatus("No clips found under " + folder.fsName); return; }
+            if (cbSort.value) { sortFilesNaturally(files); }
+
+            var quotes = parseQuotesFile(qFile, planWarnings);
+            if (quotes.length === 0) {
+                setStatus("No quotes read from \"" + qFile.name + "\" - press Help for the formats.");
+                return;
+            }
+
+            if (!selectedVideoLayer()) {
+                setStatus("The template comp has no footage layer to swap.");
+                return;
+            }
+
+            for (var i = 0; i < quotes.length; i++) {
+                var clip = (i < files.length) ? files[i] : null;
+                if (!clip) {
+                    planWarnings.push("Quote " + (i + 1) + " has no clip: the folder holds only " +
+                                      files.length + " clip(s).");
+                }
+                plan.push({ index: i + 1, quote: quotes[i], file: clip, ok: !!clip });
+
+                var it = list.add("item", String(i + 1));
+                it.subItems[0].text = clip ? clip.name : "-- no clip --";
+                it.subItems[1].text = quotes[i].text.length > 90
+                    ? quotes[i].text.substring(0, 90) + "..."
+                    : quotes[i].text;
+            }
+
+            var ready = 0;
+            for (var r = 0; r < plan.length; r++) { if (plan[r].ok) { ready++; } }
+            goBtn.enabled = ready > 0;
+            setStatus(ready + " card(s) ready out of " + plan.length + " quote(s)  |  " +
+                      files.length + " clip(s) in the folder" +
+                      (files.length > quotes.length
+                        ? "  |  " + (files.length - quotes.length) + " clip(s) will go unused"
+                        : ""));
+        }
+
+        function doCreate() {
+            var comp = template();
+            if (!comp || plan.length === 0) { setStatus("Scan first."); return; }
+
+            var videoLayer = selectedVideoLayer();
+            var textLayer = selectedTextLayer();
+            var videoIndex = videoLayer ? videoLayer.index : 0;
+            var textIndex = textLayer ? textLayer.index : 0;
+
+            var log = [];
+            log.push("Quote Cards - " + new Date().toString());
+            log.push("Template: " + comp.name);
+            log.push("Video layer: " + videoIndex + (videoLayer ? " (" + videoLayer.name + ")" : ""));
+            log.push("Text layer:  " + (textIndex ? textIndex + " (" + textLayer.name + ")" : "none"));
+            log.push("");
+
+            var cache = {}, made = 0, skipped = 0, created = [];
+
+            app.beginUndoGroup("Quote Cards - build " + plan.length + " cards");
+            try {
+                var folderItem = null;
+                if (cbFolder.value) {
+                    folderItem = app.project.items.addFolder(comp.name + " - cards");
+                }
+
+                for (var i = 0; i < plan.length; i++) {
+                    var row = plan[i];
+                    var tag = "[" + pad(row.index, 2) + "]";
+                    if (!row.ok) { log.push(tag + " SKIPPED (no clip for this quote)"); skipped++; continue; }
+
+                    var footage = importFootage(row.file, cache, planWarnings);
+                    if (!footage) { log.push(tag + " SKIPPED (import failed)"); skipped++; continue; }
+
+                    var card = comp.duplicate();
+                    card.name = comp.name + " " + pad(row.index, 2);
+                    if (folderItem) { card.parentFolder = folderItem; }
+
+                    var target = card.layer(videoIndex);
+                    var oldW = target.source ? target.source.width : 0;
+                    var oldH = target.source ? target.source.height : 0;
+                    var maskCount = countMasks(target);
+
+                    target.replaceSource(footage, false);
+                    log.push(tag + " " + card.name + "   clip: " + row.file.name +
+                             "   masks kept: " + maskCount);
+
+                    if (cbScale.value) { compensateScale(target, oldW, oldH, log); }
+
+                    if (textIndex) {
+                        if (setLayerText(card.layer(textIndex), row.quote.text, log)) {
+                            log.push("    text set (" + row.quote.text.length + " chars)");
+                        }
+                    }
+                    if (cbMatte.value) {
+                        var matte = buildMatteSetup(target, log);
+                        log.push("    matte layer: " + matte.name);
+                    }
+                    created.push(card);
+                    made++;
+                }
+            } catch (e) {
+                planWarnings.push("Aborted: " + e.toString() + (e.line ? " (line " + e.line + ")" : ""));
+            }
+            app.endUndoGroup();
+
+            log.push("");
+            log.push("Cards created: " + made + "   Skipped: " + skipped);
+            if (planWarnings.length) {
+                log.push("");
+                log.push("Warnings:");
+                for (var w = 0; w < planWarnings.length; w++) { log.push("  - " + planWarnings[w]); }
+            }
+
+            var logPath = "";
+            try {
+                var qf2 = new File(trim(quotesTxt.text));
+                var out = new File(qf2.parent.fsName + "/" + baseName(qf2.name) + "_cards_log.txt");
+                if (out.open("w")) { out.write(log.join("\n")); out.close(); logPath = out.fsName; }
+            } catch (e2) {}
+
+            if (created.length) { created[0].openInViewer(); }
+
+            setStatus("Created " + made + " card(s), skipped " + skipped +
+                      (planWarnings.length ? ", " + planWarnings.length + " warning(s)" : "") +
+                      (logPath ? "  |  log: " + logPath : ""));
+            alert("Quote Cards\n\nCreated: " + made + "\nSkipped: " + skipped +
+                  (logPath ? "\n\nDetails:\n" + logPath : "") +
+                  "\n\nOne Ctrl/Cmd+Z undoes all of it.");
+        }
+
+        scanBtn.onClick = doScan;
+        goBtn.onClick = doCreate;
+        helpBtn.onClick = function () {
+            alert(
+                "Quote Cards\n\n" +
+                "Turns ONE template comp into a card per quote.\n\n" +
+                "1. Template comp - your existing card design: a footage layer\n" +
+                "   for the speaker (masked however you like) and a text layer\n" +
+                "   for the quote. It is never modified - each card is a copy.\n\n" +
+                "2. Clips folder - the speaker clips. Their order decides who\n" +
+                "   appears: 1st clip goes to quote 1, 2nd to quote 2, and so on,\n" +
+                "   sorted naturally so clip2 comes before clip10.\n\n" +
+                "3. Quotes file - one of:\n" +
+                "     .csv  the wordiest column is taken as the quote text\n" +
+                "     .txt  one quote per paragraph (or per line)\n" +
+                "     .srt  the \"# ...\" comment under each timecode block\n\n" +
+                "4. Scan shows each quote next to the clip it will get.\n" +
+                "   Nothing is created yet.\n\n" +
+                "5. Create cards duplicates the template once per quote, swaps\n" +
+                "   the clip, and sets the text - keeping the font, size, colour\n" +
+                "   and alignment you already set.\n\n" +
+                "Masks and effects survive: the layer is reused, not rebuilt.\n" +
+                "The matte option adds a [MATTE] layer above each swapped clip,\n" +
+                "wired as an alpha track matte with Simple Choker and a blur.\n\n" +
+                "Arabic text needs After Effects' Middle Eastern text engine:\n" +
+                "Preferences > Type > Text Engine > South Asian and Middle Eastern.\n\n" +
+                "Everything runs in one undo group: Ctrl/Cmd+Z reverts it all."
+            );
+        };
+
+        refreshComps();
+        win.onResizing = win.onResize = function () { this.layout.resize(); };
+
+        if (win instanceof Window) { win.center(); win.show(); }
+        else { win.layout.layout(true); win.layout.resize(); }
+        return win;
+    }

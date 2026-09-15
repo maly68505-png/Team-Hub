@@ -1,25 +1,27 @@
 /**
- * Person Replacer  -  After Effects ScriptUI panel
- * ------------------------------------------------
- * Reads an SRT-style timecode script, finds the video layer that is live at
- * each timecode, and replaces its footage source with another person's clip.
+ * Quote Cards  -  After Effects
+ * ------------------------------
+ * Turns ONE template comp into a card per quote.
  *
- * The layer itself is never rebuilt: masks, effects, transforms and keyframes
- * all survive, exactly like an Alt+drag "replace footage".
+ * Your template is a comp holding a footage layer for the speaker (masked
+ * however you like) and a text layer for the quote. This builds a copy of it
+ * for every quote in your list, swapping in the right clip and setting the
+ * text, while keeping the masks, effects and type styling you already have.
  *
- * Install:  copy to
- *   Win  C:\Program Files\Adobe\Adobe After Effects <ver>\Support Files\Scripts\ScriptUI Panels\
- *   Mac  /Applications/Adobe After Effects <ver>/Scripts/ScriptUI Panels/
- * then restart AE and open  Window > PersonReplacer.jsx
+ * Clip order decides who appears: the 1st clip in the folder goes to quote 1,
+ * the 2nd to quote 2, and so on.
  *
- * Requires: Preferences > Scripting & Expressions > "Allow Scripts to Write
- * Files and Access Network" (for the log file only).
+ * HOW TO RUN IT:
+ *   File > Scripts > Run Script File...   and pick this file.
+ *
+ * Arabic text needs the Middle Eastern text engine:
+ *   Preferences > Type > Text Engine > South Asian and Middle Eastern
  *
  * GENERATED FILE - do not edit directly.
  * Edit ae/lib/core.jsxinc or ae/lib/ui-*.jsxinc, then run: node ae/build.js
  */
 
-(function personReplacer(thisObj) {
+(function quoteCards(thisObj) {
 
     var SCRIPT_NAME = "Person Replacer";
     var SETTINGS_SECTION = "PersonReplacer";
@@ -637,379 +639,344 @@
         }
     }
 
+    // ------------------------------------------------------------------- UI
+
     function build(thisObj) {
         var win = (thisObj instanceof Panel)
             ? thisObj
-            : new Window("palette", SCRIPT_NAME, undefined, { resizeable: true });
+            : new Window("palette", "Quote Cards", undefined, { resizeable: true });
 
         win.orientation = "column";
         win.alignChildren = ["fill", "top"];
-        win.spacing = 8;
+        win.spacing = 7;
         win.margins = 12;
 
-        function pathRow(labelText, buttonText, isFolder) {
+        function row(labelText) {
             var g = win.add("group");
             g.orientation = "row";
             g.alignChildren = ["left", "center"];
-            var lbl = g.add("statictext", undefined, labelText);
-            lbl.preferredSize.width = 92;
+            var l = g.add("statictext", undefined, labelText);
+            l.preferredSize.width = 100;
+            return g;
+        }
+
+        function pathRow(labelText, isFolder, prompt) {
+            var g = row(labelText);
             var txt = g.add("edittext", undefined, "");
             txt.alignment = ["fill", "center"];
-            txt.preferredSize.width = 320;
-            var btn = g.add("button", undefined, buttonText);
+            txt.preferredSize.width = 300;
+            var btn = g.add("button", undefined, "Browse");
             btn.preferredSize.width = 70;
             btn.onClick = function () {
-                var picked = isFolder
-                    ? Folder.selectDialog("Choose the folder with the person videos")
-                    : File.openDialog("Choose the timecode script (.srt / .txt)");
+                var picked = isFolder ? Folder.selectDialog(prompt) : File.openDialog(prompt);
                 if (picked) { txt.text = picked.fsName; }
             };
             return txt;
         }
 
-        var videosTxt = pathRow("Videos folder:", "Browse", true);
-        var scriptTxt = pathRow("Script file:", "Browse", false);
-
-        var compGroup = win.add("group");
-        compGroup.orientation = "row";
-        compGroup.alignChildren = ["left", "center"];
-        var compLbl = compGroup.add("statictext", undefined, "Target comp:");
-        compLbl.preferredSize.width = 92;
-        var compDrop = compGroup.add("dropdownlist", undefined, []);
-        compDrop.alignment = ["fill", "center"];
-        compDrop.preferredSize.width = 320;
-        var refreshBtn = compGroup.add("button", undefined, "Refresh");
+        // ---- template -------------------------------------------------------
+        var tplGroup = row("Template comp:");
+        var tplDrop = tplGroup.add("dropdownlist", undefined, []);
+        tplDrop.alignment = ["fill", "center"];
+        tplDrop.preferredSize.width = 300;
+        var refreshBtn = tplGroup.add("button", undefined, "Refresh");
         refreshBtn.preferredSize.width = 70;
 
-        var compList = [];
-        function refreshComps() {
-            compList = listComps();
-            compDrop.removeAll();
-            var activeIdx = 0;
-            var active = app.project.activeItem;
-            for (var i = 0; i < compList.length; i++) {
-                compDrop.add("item", compList[i].name);
-                if (active && active === compList[i]) { activeIdx = i; }
-            }
-            if (compList.length > 0) { compDrop.selection = activeIdx; }
-        }
-        refreshBtn.onClick = refreshComps;
+        var videosTxt = pathRow("Clips folder:", true, "Where are the speaker clips?");
+        var quotesTxt = pathRow("Quotes file:", false, "The quote list (.csv / .txt / .srt)");
+
+        // ---- which layers ---------------------------------------------------
+        var layerGroup = row("Video layer:");
+        var videoDrop = layerGroup.add("dropdownlist", undefined, []);
+        videoDrop.alignment = ["fill", "center"];
+
+        var textGroup = row("Text layer:");
+        var textDrop = textGroup.add("dropdownlist", undefined, []);
+        textDrop.alignment = ["fill", "center"];
 
         var opts = win.add("panel", undefined, "Options");
         opts.orientation = "column";
         opts.alignChildren = ["left", "top"];
         opts.margins = [12, 16, 12, 12];
-        opts.spacing = 4;
-
-        var cbSplit = opts.add("checkbox", undefined,
-            "Split the layer to the timecode range (isolate each segment)");
-        cbSplit.value = true;
+        opts.spacing = 3;
+        var cbSort = opts.add("checkbox", undefined,
+            "Clip order decides who appears: 1st clip -> 1st quote, 2nd -> 2nd ...");
+        cbSort.value = true;
         var cbMatte = opts.add("checkbox", undefined,
-            "Build refine-ready matte (duplicate above as [MATTE] + alpha track matte)");
+            "Build refine-ready matte on each card ([MATTE] + alpha track matte)");
         cbMatte.value = true;
         var cbScale = opts.add("checkbox", undefined,
-            "Compensate scale when the new clip has different dimensions");
+            "Compensate scale when a clip has different dimensions");
         cbScale.value = false;
-        var cbLog = opts.add("checkbox", undefined,
-            "Write a log file next to the script file");
-        cbLog.value = true;
+        var cbFolder = opts.add("checkbox", undefined,
+            "Collect the finished cards in one Project panel folder");
+        cbFolder.value = true;
 
-        var listGroup = win.add("group");
-        listGroup.orientation = "column";
-        listGroup.alignChildren = ["fill", "fill"];
-        listGroup.alignment = ["fill", "fill"];
-        var list = listGroup.add("listbox", undefined, [], {
-            numberOfColumns: 6,
-            showHeaders: true,
-            columnTitles: ["#", "In", "Out", "Person", "Source file", "Target layer"],
-            columnWidths: [30, 86, 86, 110, 190, 150]
+        var list = win.add("listbox", undefined, [], {
+            numberOfColumns: 3, showHeaders: true,
+            columnTitles: ["#", "Clip", "Quote"],
+            columnWidths: [30, 190, 360]
         });
-        list.preferredSize.height = 200;
+        list.preferredSize.height = 190;
         list.alignment = ["fill", "fill"];
 
-        var status = win.add("statictext", undefined, "Pick a videos folder and a script file, then Scan.");
+        var status = win.add("statictext", undefined,
+            "Pick the template comp, the clips folder and the quote list, then Scan.");
         status.alignment = ["fill", "top"];
 
         var buttons = win.add("group");
         buttons.orientation = "row";
         buttons.alignment = ["fill", "bottom"];
         var scanBtn = buttons.add("button", undefined, "Scan");
-        var applyBtn = buttons.add("button", undefined, "Apply");
+        var goBtn = buttons.add("button", undefined, "Create cards");
         var helpBtn = buttons.add("button", undefined, "Help");
-        applyBtn.enabled = false;
+        goBtn.enabled = false;
 
-        // ------------------------------------------------------- state + run
+        // ---- state ----------------------------------------------------------
 
-        var plan = [];
-        var planWarnings = [];
+        var compList = [], videoLayers = [], textLayers = [], plan = [], planWarnings = [];
 
-        function setStatus(msg) {
-            status.text = msg;
-            win.update && win.update();
+        function setStatus(m) { status.text = m; }
+
+        function template() {
+            return (tplDrop.selection && compList.length) ? compList[tplDrop.selection.index] : null;
         }
 
-        function currentComp() {
-            if (!compDrop.selection) { return null; }
-            return compList[compDrop.selection.index];
+        function refreshComps() {
+            compList = listComps();
+            tplDrop.removeAll();
+            var activeIdx = 0, active = app.project.activeItem;
+            for (var i = 0; i < compList.length; i++) {
+                tplDrop.add("item", compList[i].name);
+                if (active && active === compList[i]) { activeIdx = i; }
+            }
+            if (compList.length) { tplDrop.selection = activeIdx; }
+            refreshLayers();
         }
 
-        function saveSettings() {
-            try {
-                app.settings.saveSetting(SETTINGS_SECTION, "videos", videosTxt.text);
-                app.settings.saveSetting(SETTINGS_SECTION, "script", scriptTxt.text);
-            } catch (e) {}
+        function refreshLayers() {
+            videoDrop.removeAll();
+            textDrop.removeAll();
+            videoLayers = [];
+            textLayers = [];
+            var comp = template();
+            if (!comp) { return; }
+
+            videoLayers = listFootageLayers(comp);
+            for (var i = 0; i < videoLayers.length; i++) {
+                videoDrop.add("item", videoLayers[i].index + ": " + videoLayers[i].name);
+            }
+            if (videoLayers.length) { videoDrop.selection = 0; }
+            else { videoDrop.add("item", "-- no footage layer in this comp --"); videoDrop.selection = 0; }
+
+            textDrop.add("item", "(leave the text alone)");
+            textLayers = listTextLayers(comp);
+            for (var k = 0; k < textLayers.length; k++) {
+                textDrop.add("item", textLayers[k].index + ": " + textLayers[k].name);
+            }
+            textDrop.selection = textLayers.length ? 1 : 0;
         }
 
-        function loadSettings() {
-            try {
-                if (app.settings.haveSetting(SETTINGS_SECTION, "videos")) {
-                    videosTxt.text = app.settings.getSetting(SETTINGS_SECTION, "videos");
-                }
-                if (app.settings.haveSetting(SETTINGS_SECTION, "script")) {
-                    scriptTxt.text = app.settings.getSetting(SETTINGS_SECTION, "script");
-                }
-            } catch (e) {}
+        tplDrop.onChange = refreshLayers;
+        refreshBtn.onClick = refreshComps;
+
+        function selectedVideoLayer() {
+            if (!videoLayers.length || !videoDrop.selection) { return null; }
+            return videoLayers[videoDrop.selection.index] || null;
+        }
+
+        function selectedTextLayer() {
+            if (!textDrop.selection || textDrop.selection.index === 0) { return null; }
+            return textLayers[textDrop.selection.index - 1] || null;
         }
 
         function doScan() {
             list.removeAll();
             plan = [];
             planWarnings = [];
-            applyBtn.enabled = false;
+            goBtn.enabled = false;
 
-            var comp = currentComp();
-            if (!comp) { setStatus("No comp selected. Hit Refresh."); return; }
+            var comp = template();
+            if (!comp) { setStatus("No comp selected. Press Refresh."); return; }
 
-            var vf = trim(videosTxt.text);
-            var sf = trim(scriptTxt.text);
-            if (vf === "") { setStatus("Pick the videos folder."); return; }
-            if (sf === "") { setStatus("Pick the timecode script file."); return; }
+            var vf = trim(videosTxt.text), qf = trim(quotesTxt.text);
+            if (vf === "") { setStatus("Pick the folder holding the speaker clips."); return; }
+            if (qf === "") { setStatus("Pick the quote list file."); return; }
 
             var folder = new Folder(vf);
-            if (!folder.exists) { setStatus("Videos folder not found: " + vf); return; }
-            var scriptFile = new File(sf);
-            if (!scriptFile.exists) { setStatus("Script file not found: " + sf); return; }
+            if (!folder.exists) { setStatus("Clips folder not found: " + vf); return; }
+            var qFile = new File(qf);
+            if (!qFile.exists) { setStatus("Quotes file not found: " + qf); return; }
 
-            var problem = scriptFileProblem(scriptFile);
-            if (problem) {
-                setStatus("Wrong kind of file - see the message.");
-                alert(problem);
-                return;
-            }
+            var problem = scriptFileProblem(qFile);
+            if (problem) { setStatus("Wrong kind of file - see the message."); alert(problem); return; }
 
             var files = [];
             scanVideos(folder, files, 0);
-            if (files.length === 0) {
-                setStatus("No video files found under " + folder.fsName);
+            if (files.length === 0) { setStatus("No clips found under " + folder.fsName); return; }
+            if (cbSort.value) { sortFilesNaturally(files); }
+
+            var quotes = parseQuotesFile(qFile, planWarnings);
+            if (quotes.length === 0) {
+                setStatus("No quotes read from \"" + qFile.name + "\" - press Help for the formats.");
                 return;
             }
 
-            var segments = parseScript(scriptFile, comp.frameRate, planWarnings);
-            if (segments.length === 0) {
-                setStatus("No timecode lines found in \"" + scriptFile.name +
-                          "\". It must be plain text - press Help for the format.");
+            if (!selectedVideoLayer()) {
+                setStatus("The template comp has no footage layer to swap.");
                 return;
+            }
+
+            for (var i = 0; i < quotes.length; i++) {
+                var clip = (i < files.length) ? files[i] : null;
+                if (!clip) {
+                    planWarnings.push("Quote " + (i + 1) + " has no clip: the folder holds only " +
+                                      files.length + " clip(s).");
+                }
+                plan.push({ index: i + 1, quote: quotes[i], file: clip, ok: !!clip });
+
+                var it = list.add("item", String(i + 1));
+                it.subItems[0].text = clip ? clip.name : "-- no clip --";
+                it.subItems[1].text = quotes[i].text.length > 90
+                    ? quotes[i].text.substring(0, 90) + "..."
+                    : quotes[i].text;
             }
 
             var ready = 0;
-            for (var i = 0; i < segments.length; i++) {
-                var seg = segments[i];
-                var file = pickFile(seg.person, seg.explicitFile, files);
-                var mid = (seg.inSec + seg.outSec) / 2;
-                var layer = layerAtTime(comp, mid, true);
-
-                var row = {
-                    index: i + 1,
-                    seg: seg,
-                    file: file,
-                    layer: layer,
-                    ok: !!(file && layer)
-                };
-                if (!file) {
-                    planWarnings.push("No video file matched \"" + seg.person + "\" at " +
-                                      secondsToTC(seg.inSec, comp.frameRate));
-                }
-                if (!layer) {
-                    planWarnings.push("No footage layer live at " +
-                                      secondsToTC(mid, comp.frameRate) +
-                                      " (for \"" + seg.person + "\")");
-                }
-                if (row.ok) { ready++; }
-                plan.push(row);
-
-                var item = list.add("item", String(row.index));
-                item.subItems[0].text = secondsToTC(seg.inSec, comp.frameRate);
-                item.subItems[1].text = secondsToTC(seg.outSec, comp.frameRate);
-                item.subItems[2].text = seg.person;
-                item.subItems[3].text = file ? file.name : "-- no match --";
-                item.subItems[4].text = layer ? (layer.index + ": " + layer.name) : "-- no layer --";
-            }
-
-            applyBtn.enabled = ready > 0;
-            setStatus(ready + " of " + plan.length + " segments ready" +
-                      (planWarnings.length ? "  |  " + planWarnings.length + " warning(s), see log" : "") +
-                      "  |  " + files.length + " clips in folder");
-            saveSettings();
+            for (var r = 0; r < plan.length; r++) { if (plan[r].ok) { ready++; } }
+            goBtn.enabled = ready > 0;
+            setStatus(ready + " card(s) ready out of " + plan.length + " quote(s)  |  " +
+                      files.length + " clip(s) in the folder" +
+                      (files.length > quotes.length
+                        ? "  |  " + (files.length - quotes.length) + " clip(s) will go unused"
+                        : ""));
         }
 
-        function doApply() {
-            var comp = currentComp();
-            if (!comp) { setStatus("No comp selected."); return; }
-            if (plan.length === 0) { setStatus("Scan first."); return; }
+        function doCreate() {
+            var comp = template();
+            if (!comp || plan.length === 0) { setStatus("Scan first."); return; }
+
+            var videoLayer = selectedVideoLayer();
+            var textLayer = selectedTextLayer();
+            var videoIndex = videoLayer ? videoLayer.index : 0;
+            var textIndex = textLayer ? textLayer.index : 0;
 
             var log = [];
-            log.push(SCRIPT_NAME + " - " + new Date().toString());
-            log.push("Comp: " + comp.name + "  (" + comp.frameRate + " fps)");
-            log.push("Videos: " + videosTxt.text);
-            log.push("Script: " + scriptTxt.text);
+            log.push("Quote Cards - " + new Date().toString());
+            log.push("Template: " + comp.name);
+            log.push("Video layer: " + videoIndex + (videoLayer ? " (" + videoLayer.name + ")" : ""));
+            log.push("Text layer:  " + (textIndex ? textIndex + " (" + textLayer.name + ")" : "none"));
             log.push("");
 
-            var cache = {};
-            var warnings = [];
-            var applied = 0, skipped = 0;
+            var cache = {}, made = 0, skipped = 0, created = [];
 
-            app.beginUndoGroup(SCRIPT_NAME + " - replace people");
+            app.beginUndoGroup("Quote Cards - build " + plan.length + " cards");
             try {
-                // Apply latest-first so that splitting earlier segments cannot
-                // shift the layers we already resolved for later ones.
-                for (var i = plan.length - 1; i >= 0; i--) {
+                var folderItem = null;
+                if (cbFolder.value) {
+                    folderItem = app.project.items.addFolder(comp.name + " - cards");
+                }
+
+                for (var i = 0; i < plan.length; i++) {
                     var row = plan[i];
-                    var seg = row.seg;
-                    var tag = "[" + row.index + "] " + secondsToTC(seg.inSec, comp.frameRate) +
-                              " -> " + secondsToTC(seg.outSec, comp.frameRate) +
-                              "  " + seg.person;
+                    var tag = "[" + pad(row.index, 2) + "]";
+                    if (!row.ok) { log.push(tag + " SKIPPED (no clip for this quote)"); skipped++; continue; }
 
-                    if (!row.ok) {
-                        log.push(tag + "  SKIPPED (" +
-                                 (!row.file ? "no matching video file" : "no layer at that timecode") + ")");
-                        skipped++;
-                        continue;
-                    }
+                    var footage = importFootage(row.file, cache, planWarnings);
+                    if (!footage) { log.push(tag + " SKIPPED (import failed)"); skipped++; continue; }
 
-                    var footage = importFootage(row.file, cache, warnings);
-                    if (!footage) {
-                        log.push(tag + "  SKIPPED (import failed)");
-                        skipped++;
-                        continue;
-                    }
+                    var card = comp.duplicate();
+                    card.name = comp.name + " " + pad(row.index, 2);
+                    if (folderItem) { card.parentFolder = folderItem; }
 
-                    // Re-resolve the layer against the live comp: an earlier
-                    // split may have replaced the object we cached at scan time.
-                    var mid = (seg.inSec + seg.outSec) / 2;
-                    var target = layerAtTime(comp, mid, true);
-                    if (!target) {
-                        log.push(tag + "  SKIPPED (layer no longer live at that timecode)");
-                        skipped++;
-                        continue;
-                    }
-
-                    var oldName = target.name;
-                    var oldSrcName = target.source ? target.source.name : "?";
+                    var target = card.layer(videoIndex);
                     var oldW = target.source ? target.source.width : 0;
                     var oldH = target.source ? target.source.height : 0;
                     var maskCount = countMasks(target);
 
-                    if (cbSplit.value) {
-                        target = isolateRange(target, seg.inSec, seg.outSec);
-                    }
-
                     target.replaceSource(footage, false);
-                    log.push(tag);
-                    log.push("    layer " + target.index + ": " + oldName +
-                             "   " + oldSrcName + "  ->  " + row.file.name);
-                    log.push("    masks preserved: " + maskCount);
+                    log.push(tag + " " + card.name + "   clip: " + row.file.name +
+                             "   masks kept: " + maskCount);
 
-                    if (cbScale.value) {
-                        compensateScale(target, oldW, oldH, log);
+                    if (cbScale.value) { compensateScale(target, oldW, oldH, log); }
+
+                    if (textIndex) {
+                        if (setLayerText(card.layer(textIndex), row.quote.text, log)) {
+                            log.push("    text set (" + row.quote.text.length + " chars)");
+                        }
                     }
                     if (cbMatte.value) {
-                        if (maskCount === 0) {
-                            log.push("    note: no masks on this layer, matte layer built empty - " +
-                                     "draw the cut-out on the [MATTE] layer");
-                        }
                         var matte = buildMatteSetup(target, log);
-                        log.push("    matte layer created: " + matte.name +
-                                 " (alpha matte, Simple Choker + blur for edge refine)");
+                        log.push("    matte layer: " + matte.name);
                     }
-                    applied++;
+                    created.push(card);
+                    made++;
                 }
             } catch (e) {
-                warnings.push("Aborted: " + e.toString() + (e.line ? " (line " + e.line + ")" : ""));
+                planWarnings.push("Aborted: " + e.toString() + (e.line ? " (line " + e.line + ")" : ""));
             }
             app.endUndoGroup();
 
             log.push("");
-            log.push("Applied: " + applied + "   Skipped: " + skipped);
-            var allWarnings = planWarnings.concat(warnings);
-            if (allWarnings.length) {
+            log.push("Cards created: " + made + "   Skipped: " + skipped);
+            if (planWarnings.length) {
                 log.push("");
                 log.push("Warnings:");
-                for (var w = 0; w < allWarnings.length; w++) { log.push("  - " + allWarnings[w]); }
+                for (var w = 0; w < planWarnings.length; w++) { log.push("  - " + planWarnings[w]); }
             }
 
             var logPath = "";
-            if (cbLog.value) {
-                try {
-                    var sFile = new File(trim(scriptTxt.text));
-                    var out = new File(sFile.parent.fsName + "/" + baseName(sFile.name) + "_replace_log.txt");
-                    if (out.open("w")) {
-                        out.write(log.join("\n"));
-                        out.close();
-                        logPath = out.fsName;
-                    }
-                } catch (e2) { /* scripting file access probably off */ }
-            }
+            try {
+                var qf2 = new File(trim(quotesTxt.text));
+                var out = new File(qf2.parent.fsName + "/" + baseName(qf2.name) + "_cards_log.txt");
+                if (out.open("w")) { out.write(log.join("\n")); out.close(); logPath = out.fsName; }
+            } catch (e2) {}
 
-            setStatus("Applied " + applied + ", skipped " + skipped +
-                      (allWarnings.length ? ", " + allWarnings.length + " warning(s)" : "") +
+            if (created.length) { created[0].openInViewer(); }
+
+            setStatus("Created " + made + " card(s), skipped " + skipped +
+                      (planWarnings.length ? ", " + planWarnings.length + " warning(s)" : "") +
                       (logPath ? "  |  log: " + logPath : ""));
-            doScan();
+            alert("Quote Cards\n\nCreated: " + made + "\nSkipped: " + skipped +
+                  (logPath ? "\n\nDetails:\n" + logPath : "") +
+                  "\n\nOne Ctrl/Cmd+Z undoes all of it.");
         }
 
         scanBtn.onClick = doScan;
-        applyBtn.onClick = doApply;
+        goBtn.onClick = doCreate;
         helpBtn.onClick = function () {
             alert(
-                SCRIPT_NAME + "\n\n" +
-                "1. Videos folder - the folder holding each person's clips.\n" +
-                "   A clip is matched when its filename contains the person\n" +
-                "   name from the script, e.g. PERSON_B_take3.mp4 matches PERSON_B.\n" +
-                "   Subfolders are scanned too.\n\n" +
-                "2. Script file - SRT style timecodes:\n\n" +
-                "   1\n" +
-                "   00:00:12:00 --> 00:00:18:00\n" +
-                "   PERSON_B\n\n" +
-                "   Also accepted: 00:00:12,500 (milliseconds), one-line form\n" +
-                "   \"00:00:12:00 --> 00:00:18:00  PERSON_B\", \"PERSON_B: dialogue\",\n" +
-                "   \"[PERSON_B]\", and \"PERSON_B | exact_clip.mp4\" to force a file.\n" +
-                "   Lines starting with # or // are comments.\n\n" +
-                "3. Scan shows exactly what will happen. Nothing is touched yet.\n\n" +
-                "4. Apply swaps the footage source on whichever video layer is\n" +
-                "   live at each timecode. Masks, effects, transforms and\n" +
-                "   keyframes stay on the layer.\n\n" +
-                "Split: isolates the timecode range so one long layer can carry\n" +
-                "several different people.\n\n" +
-                "Matte: duplicates the swapped layer above itself as [MATTE],\n" +
-                "sets it as an alpha track matte, and adds Simple Choker + blur\n" +
-                "for edge refining. The lower layer keeps its masks but their\n" +
-                "mode is set to None so the [MATTE] layer is the only cut-out.\n" +
-                "Roto Brush cannot be scripted - apply it on the [MATTE] layer.\n\n" +
+                "Quote Cards\n\n" +
+                "Turns ONE template comp into a card per quote.\n\n" +
+                "1. Template comp - your existing card design: a footage layer\n" +
+                "   for the speaker (masked however you like) and a text layer\n" +
+                "   for the quote. It is never modified - each card is a copy.\n\n" +
+                "2. Clips folder - the speaker clips. Their order decides who\n" +
+                "   appears: 1st clip goes to quote 1, 2nd to quote 2, and so on,\n" +
+                "   sorted naturally so clip2 comes before clip10.\n\n" +
+                "3. Quotes file - one of:\n" +
+                "     .csv  the wordiest column is taken as the quote text\n" +
+                "     .txt  one quote per paragraph (or per line)\n" +
+                "     .srt  the \"# ...\" comment under each timecode block\n\n" +
+                "4. Scan shows each quote next to the clip it will get.\n" +
+                "   Nothing is created yet.\n\n" +
+                "5. Create cards duplicates the template once per quote, swaps\n" +
+                "   the clip, and sets the text - keeping the font, size, colour\n" +
+                "   and alignment you already set.\n\n" +
+                "Masks and effects survive: the layer is reused, not rebuilt.\n" +
+                "The matte option adds a [MATTE] layer above each swapped clip,\n" +
+                "wired as an alpha track matte with Simple Choker and a blur.\n\n" +
+                "Arabic text needs After Effects' Middle Eastern text engine:\n" +
+                "Preferences > Type > Text Engine > South Asian and Middle Eastern.\n\n" +
                 "Everything runs in one undo group: Ctrl/Cmd+Z reverts it all."
             );
         };
 
-        loadSettings();
         refreshComps();
-
         win.onResizing = win.onResize = function () { this.layout.resize(); };
 
-        if (win instanceof Window) {
-            win.center();
-            win.show();
-        } else {
-            win.layout.layout(true);
-            win.layout.resize();
-        }
+        if (win instanceof Window) { win.center(); win.show(); }
+        else { win.layout.layout(true); win.layout.resize(); }
         return win;
     }
 

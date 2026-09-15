@@ -43,6 +43,29 @@ var TARGETS = [
 ' * Files and Access Network" (for the log file only).\n'
     },
     {
+        out: 'QuoteCards.jsx',
+        ui: 'ui-quotecards.jsxinc',
+        fn: 'quoteCards',
+        header:
+' * Quote Cards  -  After Effects\n' +
+' * ------------------------------\n' +
+' * Turns ONE template comp into a card per quote.\n' +
+' *\n' +
+' * Your template is a comp holding a footage layer for the speaker (masked\n' +
+' * however you like) and a text layer for the quote. This builds a copy of it\n' +
+' * for every quote in your list, swapping in the right clip and setting the\n' +
+' * text, while keeping the masks, effects and type styling you already have.\n' +
+' *\n' +
+' * Clip order decides who appears: the 1st clip in the folder goes to quote 1,\n' +
+' * the 2nd to quote 2, and so on.\n' +
+' *\n' +
+' * HOW TO RUN IT:\n' +
+' *   File > Scripts > Run Script File...   and pick this file.\n' +
+' *\n' +
+' * Arabic text needs the Middle Eastern text engine:\n' +
+' *   Preferences > Type > Text Engine > South Asian and Middle Eastern\n'
+    },
+    {
         out: 'PersonReplacer_Auto.jsx',
         ui: 'ui-auto.jsxinc',
         fn: 'personReplacerAuto',
