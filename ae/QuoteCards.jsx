@@ -470,6 +470,95 @@
         }
     }
 
+
+    // ------------------------------------------------- nested comp handling
+
+    /** A layer's source, or null - text and shape layers have none. */
+    function layerSource(layer) {
+        try { return layer.source || null; } catch (e) { return null; }
+    }
+
+    /**
+     * Walks the whole comp tree and lists every layer worth targeting, so a
+     * template built out of REPLACE-FOOTAGE / REPLACE-PARAGRAPH precomps can
+     * be driven from the comp you actually render.
+     * Returns [{ comp, layer, index, label }] with label like "RENDER > REPLACE-FOOTAGE > guest".
+     */
+    function collectTargets(root, wantText) {
+        var out = [], seen = {};
+        walk(root, root.name, 0);
+        return out;
+
+        function walk(comp, path, depth) {
+            if (!comp || seen[comp.id] || depth > 8) { return; }
+            seen[comp.id] = true;
+            for (var i = 1; i <= comp.numLayers; i++) {
+                var L = comp.layer(i);
+                var isText = (L instanceof TextLayer);
+                if (wantText ? isText : isSwappableLayer(L)) {
+                    out.push({
+                        comp: comp, layer: L, index: L.index,
+                        label: (comp === root ? "" : path + "  >  ") + L.index + ": " + L.name
+                    });
+                }
+                var src = layerSource(L);
+                if (src instanceof CompItem) { walk(src, path + "  >  " + src.name, depth + 1); }
+            }
+        }
+    }
+
+    /**
+     * Which comps in root's tree lead to one of the targets. Only these need a
+     * private copy per card; everything else can stay shared, which keeps the
+     * Project panel from exploding.
+     */
+    function compsLeadingTo(root, targetIds) {
+        var verdict = {};
+        visit(root);
+        return verdict;
+
+        function visit(comp) {
+            if (verdict[comp.id] !== undefined) { return verdict[comp.id]; }
+            verdict[comp.id] = false;                      // also guards re-entry
+            var hit = targetIds[comp.id] === true;
+            for (var i = 1; i <= comp.numLayers; i++) {
+                var src = layerSource(comp.layer(i));
+                if (src instanceof CompItem && visit(src)) { hit = true; }
+            }
+            verdict[comp.id] = hit;
+            return hit;
+        }
+    }
+
+    /**
+     * Duplicates a comp AND the nested comps named in cloneIds, relinking each
+     * copy to its own children. Without this, duplicating the outer comp leaves
+     * every card sharing the same precomps - change one card, change them all.
+     * `mapping` comes back filled in as original item id -> its clone.
+     */
+    function deepDuplicate(comp, cloneIds, mapping, suffix) {
+        if (mapping[comp.id]) { return mapping[comp.id]; }
+        var clone = comp.duplicate();
+        if (suffix) { clone.name = comp.name + " " + suffix; }
+        mapping[comp.id] = clone;
+        for (var i = 1; i <= clone.numLayers; i++) {
+            var L = clone.layer(i);
+            var src = layerSource(L);
+            if (!(src instanceof CompItem) || !cloneIds[src.id]) { continue; }
+            L.replaceSource(deepDuplicate(src, cloneIds, mapping, suffix), false);
+        }
+        return clone;
+    }
+
+    /** Every comp clone made during one deepDuplicate pass. */
+    function mappedClones(mapping) {
+        var out = [];
+        for (var k in mapping) {
+            if (mapping.hasOwnProperty(k)) { out.push(mapping[k]); }
+        }
+        return out;
+    }
+
     // ------------------------------------------------------------ AE helpers
 
     function listComps() {
@@ -706,8 +795,9 @@
             "Clip order decides who appears: 1st clip -> 1st quote, 2nd -> 2nd ...");
         cbSort.value = true;
         var cbMatte = opts.add("checkbox", undefined,
-            "Build refine-ready matte on each card ([MATTE] + alpha track matte)");
-        cbMatte.value = true;
+            "Build refine-ready matte on each card ([MATTE] + alpha track matte) - " +
+            "leave OFF if the template already mattes the guest");
+        cbMatte.value = false;
         var cbScale = opts.add("checkbox", undefined,
             "Compensate scale when a clip has different dimensions");
         cbScale.value = false;
@@ -738,7 +828,7 @@
 
         // ---- state ----------------------------------------------------------
 
-        var compList = [], videoLayers = [], textLayers = [], plan = [], planWarnings = [];
+        var compList = [], videoTargets = [], textTargets = [], plan = [], planWarnings = [];
 
         function setStatus(m) { status.text = m; }
 
@@ -766,21 +856,23 @@
             var comp = template();
             if (!comp) { return; }
 
-            videoLayers = listFootageLayers(comp);
-            for (var i = 0; i < videoLayers.length; i++) {
-                videoDrop.add("item", videoLayers[i].index + ": " + videoLayers[i].name);
+            // look through nested comps too: templates usually hide the guest
+            // and the quote inside REPLACE-FOOTAGE / REPLACE-PARAGRAPH precomps
+            videoTargets = collectTargets(comp, false);
+            for (var i = 0; i < videoTargets.length; i++) {
+                videoDrop.add("item", videoTargets[i].label);
             }
-            if (videoLayers.length) { videoDrop.selection = 0; }
-            else { videoDrop.add("item", "-- no footage layer in this comp --"); videoDrop.selection = 0; }
+            if (videoTargets.length) { videoDrop.selection = bestGuess(videoTargets, "footage,video,guest,person,clip"); }
+            else { videoDrop.add("item", "-- no footage layer anywhere in this comp --"); videoDrop.selection = 0; }
 
-            textLayers = listTextLayers(comp);
-            textDrop.add("item", textLayers.length
+            textTargets = collectTargets(comp, true);
+            textDrop.add("item", textTargets.length
                 ? "(leave the text alone)"
-                : "-- no text layer in this comp --");
-            for (var k = 0; k < textLayers.length; k++) {
-                textDrop.add("item", textLayers[k].index + ": " + textLayers[k].name);
+                : "-- no text layer anywhere in this comp --");
+            for (var k = 0; k < textTargets.length; k++) {
+                textDrop.add("item", textTargets[k].label);
             }
-            textDrop.selection = textLayers.length ? 1 : 0;
+            textDrop.selection = textTargets.length ? bestGuess(textTargets, "paragraph,quote,text,body") + 1 : 0;
         }
 
         /** Everything needed is filled in, so show the plan without being asked. */
@@ -790,19 +882,31 @@
             doScan();
         }
 
+        /** Prefer a layer whose path names it, e.g. REPLACE-FOOTAGE or the guest. */
+        function bestGuess(targets, hintCSV) {
+            var hints = hintCSV.split(",");
+            for (var h = 0; h < hints.length; h++) {
+                var want = normalize(hints[h]);
+                for (var i = 0; i < targets.length; i++) {
+                    if (normalize(targets[i].label).indexOf(want) !== -1) { return i; }
+                }
+            }
+            return 0;
+        }
+
         tplDrop.onChange = function () { refreshLayers(); maybeScan(); };
         videoDrop.onChange = function () { maybeScan(); };
         textDrop.onChange = function () { maybeScan(); };
         refreshBtn.onClick = function () { refreshComps(); maybeScan(); };
 
-        function selectedVideoLayer() {
-            if (!videoLayers.length || !videoDrop.selection) { return null; }
-            return videoLayers[videoDrop.selection.index] || null;
+        function selectedVideoTarget() {
+            if (!videoTargets.length || !videoDrop.selection) { return null; }
+            return videoTargets[videoDrop.selection.index] || null;
         }
 
-        function selectedTextLayer() {
+        function selectedTextTarget() {
             if (!textDrop.selection || textDrop.selection.index === 0) { return null; }
-            return textLayers[textDrop.selection.index - 1] || null;
+            return textTargets[textDrop.selection.index - 1] || null;
         }
 
         function doScan() {
@@ -837,8 +941,8 @@
                 return;
             }
 
-            if (!selectedVideoLayer()) {
-                setStatus("The template comp has no footage layer to swap.");
+            if (!selectedVideoTarget()) {
+                setStatus("No footage layer found in \"" + comp.name + "\" or any comp inside it.");
                 return;
             }
 
@@ -862,10 +966,10 @@
             goBtn.enabled = ready > 0;
 
             var note = "";
-            if (textLayers.length === 0) {
-                note = "  |  NO TEXT LAYER in \"" + comp.name + "\" - the quotes will NOT be " +
-                       "written. Is the text inside a precomp, or a shape layer?";
-            } else if (!selectedTextLayer()) {
+            if (textTargets.length === 0) {
+                note = "  |  NO TEXT LAYER found in \"" + comp.name + "\" or any comp inside it - " +
+                       "the quotes will NOT be written. Is it a shape layer rather than a text layer?";
+            } else if (!selectedTextTarget()) {
                 note = "  |  text layer set to \"leave alone\" - the quotes will not be written";
             }
 
@@ -880,16 +984,29 @@
             var comp = template();
             if (!comp || plan.length === 0) { setStatus("Scan first."); return; }
 
-            var videoLayer = selectedVideoLayer();
-            var textLayer = selectedTextLayer();
-            var videoIndex = videoLayer ? videoLayer.index : 0;
-            var textIndex = textLayer ? textLayer.index : 0;
+            var vTarget = selectedVideoTarget();
+            var tTarget = selectedTextTarget();
+            if (!vTarget) { setStatus("No footage layer to swap."); return; }
+
+            // Only the comps on the way down to the guest and the quote get a
+            // private copy per card. Duplicating the outer comp alone would
+            // leave all nine cards sharing one REPLACE-FOOTAGE precomp.
+            var targetIds = {};
+            targetIds[vTarget.comp.id] = true;
+            if (tTarget) { targetIds[tTarget.comp.id] = true; }
+            var cloneIds = compsLeadingTo(comp, targetIds);
 
             var log = [];
             log.push("Quote Cards - " + new Date().toString());
             log.push("Template: " + comp.name);
-            log.push("Video layer: " + videoIndex + (videoLayer ? " (" + videoLayer.name + ")" : ""));
-            log.push("Text layer:  " + (textIndex ? textIndex + " (" + textLayer.name + ")" : "none"));
+            log.push("Video layer: " + vTarget.label + "   (in comp \"" + vTarget.comp.name + "\")");
+            log.push("Text layer:  " + (tTarget ? tTarget.label + "   (in comp \"" + tTarget.comp.name + "\")" : "none"));
+            var cloneNames = [];
+            for (var ci = 1; ci <= app.project.numItems; ci++) {
+                var it = app.project.item(ci);
+                if (it instanceof CompItem && cloneIds[it.id]) { cloneNames.push(it.name); }
+            }
+            log.push("Comps copied per card: " + cloneNames.join(", "));
             log.push("");
 
             var cache = {}, made = 0, skipped = 0, created = [];
@@ -909,23 +1026,29 @@
                     var footage = importFootage(row.file, cache, planWarnings);
                     if (!footage) { log.push(tag + " SKIPPED (import failed)"); skipped++; continue; }
 
-                    var card = comp.duplicate();
-                    card.name = comp.name + " " + pad(row.index, 2);
-                    if (folderItem) { card.parentFolder = folderItem; }
+                    var suffix = pad(row.index, 2);
+                    var mapping = {};
+                    var card = deepDuplicate(comp, cloneIds, mapping, suffix);
+                    var clones = mappedClones(mapping);
+                    if (folderItem) {
+                        for (var c = 0; c < clones.length; c++) { clones[c].parentFolder = folderItem; }
+                    }
 
-                    var target = card.layer(videoIndex);
+                    var target = mapping[vTarget.comp.id].layer(vTarget.index);
                     var oldW = target.source ? target.source.width : 0;
                     var oldH = target.source ? target.source.height : 0;
                     var maskCount = countMasks(target);
 
                     target.replaceSource(footage, false);
                     log.push(tag + " " + card.name + "   clip: " + row.file.name +
-                             "   masks kept: " + maskCount);
+                             "   masks kept: " + maskCount +
+                             "   comps copied: " + clones.length);
 
                     if (cbScale.value) { compensateScale(target, oldW, oldH, log); }
 
-                    if (textIndex) {
-                        if (setLayerText(card.layer(textIndex), row.quote.text, log)) {
+                    if (tTarget) {
+                        if (setLayerText(mapping[tTarget.comp.id].layer(tTarget.index),
+                                         row.quote.text, log)) {
                             log.push("    text set (" + row.quote.text.length + " chars)");
                         }
                     }
@@ -972,9 +1095,13 @@
             alert(
                 "Quote Cards\n\n" +
                 "Turns ONE template comp into a card per quote.\n\n" +
-                "1. Template comp - your existing card design: a footage layer\n" +
-                "   for the speaker (masked however you like) and a text layer\n" +
-                "   for the quote. It is never modified - each card is a copy.\n\n" +
+                "1. Template comp - the comp you actually RENDER. Its layers and\n" +
+                "   the layers of every comp inside it are searched, so a template\n" +
+                "   built around REPLACE-FOOTAGE / REPLACE-PARAGRAPH precomps works:\n" +
+                "   pick the guest layer and the quote layer wherever they live.\n" +
+                "   The template is never modified - each card is a copy.\n\n" +
+                "   Those precomps are copied per card as well, so editing card 3\n" +
+                "   cannot change cards 1 and 2.\n\n" +
                 "2. Clips folder - the speaker clips. Their order decides who\n" +
                 "   appears: 1st clip goes to quote 1, 2nd to quote 2, and so on,\n" +
                 "   sorted naturally so clip2 comes before clip10.\n\n" +

@@ -468,6 +468,95 @@
         }
     }
 
+
+    // ------------------------------------------------- nested comp handling
+
+    /** A layer's source, or null - text and shape layers have none. */
+    function layerSource(layer) {
+        try { return layer.source || null; } catch (e) { return null; }
+    }
+
+    /**
+     * Walks the whole comp tree and lists every layer worth targeting, so a
+     * template built out of REPLACE-FOOTAGE / REPLACE-PARAGRAPH precomps can
+     * be driven from the comp you actually render.
+     * Returns [{ comp, layer, index, label }] with label like "RENDER > REPLACE-FOOTAGE > guest".
+     */
+    function collectTargets(root, wantText) {
+        var out = [], seen = {};
+        walk(root, root.name, 0);
+        return out;
+
+        function walk(comp, path, depth) {
+            if (!comp || seen[comp.id] || depth > 8) { return; }
+            seen[comp.id] = true;
+            for (var i = 1; i <= comp.numLayers; i++) {
+                var L = comp.layer(i);
+                var isText = (L instanceof TextLayer);
+                if (wantText ? isText : isSwappableLayer(L)) {
+                    out.push({
+                        comp: comp, layer: L, index: L.index,
+                        label: (comp === root ? "" : path + "  >  ") + L.index + ": " + L.name
+                    });
+                }
+                var src = layerSource(L);
+                if (src instanceof CompItem) { walk(src, path + "  >  " + src.name, depth + 1); }
+            }
+        }
+    }
+
+    /**
+     * Which comps in root's tree lead to one of the targets. Only these need a
+     * private copy per card; everything else can stay shared, which keeps the
+     * Project panel from exploding.
+     */
+    function compsLeadingTo(root, targetIds) {
+        var verdict = {};
+        visit(root);
+        return verdict;
+
+        function visit(comp) {
+            if (verdict[comp.id] !== undefined) { return verdict[comp.id]; }
+            verdict[comp.id] = false;                      // also guards re-entry
+            var hit = targetIds[comp.id] === true;
+            for (var i = 1; i <= comp.numLayers; i++) {
+                var src = layerSource(comp.layer(i));
+                if (src instanceof CompItem && visit(src)) { hit = true; }
+            }
+            verdict[comp.id] = hit;
+            return hit;
+        }
+    }
+
+    /**
+     * Duplicates a comp AND the nested comps named in cloneIds, relinking each
+     * copy to its own children. Without this, duplicating the outer comp leaves
+     * every card sharing the same precomps - change one card, change them all.
+     * `mapping` comes back filled in as original item id -> its clone.
+     */
+    function deepDuplicate(comp, cloneIds, mapping, suffix) {
+        if (mapping[comp.id]) { return mapping[comp.id]; }
+        var clone = comp.duplicate();
+        if (suffix) { clone.name = comp.name + " " + suffix; }
+        mapping[comp.id] = clone;
+        for (var i = 1; i <= clone.numLayers; i++) {
+            var L = clone.layer(i);
+            var src = layerSource(L);
+            if (!(src instanceof CompItem) || !cloneIds[src.id]) { continue; }
+            L.replaceSource(deepDuplicate(src, cloneIds, mapping, suffix), false);
+        }
+        return clone;
+    }
+
+    /** Every comp clone made during one deepDuplicate pass. */
+    function mappedClones(mapping) {
+        var out = [];
+        for (var k in mapping) {
+            if (mapping.hasOwnProperty(k)) { out.push(mapping[k]); }
+        }
+        return out;
+    }
+
     // ------------------------------------------------------------ AE helpers
 
     function listComps() {

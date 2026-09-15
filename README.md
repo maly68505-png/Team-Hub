@@ -24,7 +24,10 @@ docs/QUOTECARDS-AR.md        دليل مولّد كروت الاقتباسات �
 **`QuoteCards.jsx`** — you have one card design and a list of quotes, and you
 want a card per quote. It duplicates your template comp once per quote, swaps
 in the speaker clip and sets the quote text, keeping the masks, effects and
-type styling. Clip order decides who appears: 1st clip to quote 1, 2nd to
+type styling. Templates that hide the guest and the quote inside precomps
+(`REPLACE-FOOTAGE`, `REPLACE-PARAGRAPH`) work: layers are found through the
+whole comp tree, and those precomps are copied per card so the cards stay
+independent of each other. Clip order decides who appears: 1st clip to quote 1, 2nd to
 quote 2, and so on. The other two tools swap footage along a timeline instead —
 pick between them below.
 
@@ -165,6 +168,7 @@ user copies one file and nothing else.
 node ae/tests/parse.test.js       # 46 assertions
 node ae/tests/discovery.test.js   # 11 assertions
 node ae/tests/quotes.test.js      # 19 assertions
+node ae/tests/nested.test.js      # 28 assertions
 ```
 
 `parse.test.js` covers timecode parsing across every accepted format, range and
@@ -180,6 +184,13 @@ tool's own log file.
 header detection, headerless files), and reading quotes out of `.csv`, `.txt`
 and `.srt` — including against the real generated `examples/episode-elections`
 files, asserting both formats yield the same nine quotes.
+
+`nested.test.js` builds a miniature AE object model shaped like a real
+template — a render comp pulling its guest from a `REPLACE-FOOTAGE` precomp and
+its quote from `REPLACE-PARAGRAPH` — and asserts that layers are found through
+the tree, that only comps on the path to them are copied, and above all that
+each card ends up with its own precomps: editing card 1 must not rewrite
+card 2, and neither may touch the template.
 
 The AE-API parts — layer targeting, `replaceSource`, layer splitting, matte
 setup — need a running After Effects and are **not** covered by these tests.
