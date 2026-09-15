@@ -559,6 +559,58 @@
         return out;
     }
 
+
+    // ------------------------------------------- landing a clip in its slot
+
+    /**
+     * A placeholder trimmed deep into a long clip leaves the layer reading far
+     * into its source - often more than an hour in. Swapping the source keeps
+     * that offset, so the new clip is read past its own end and the card
+     * renders BLACK. Point the layer back at the clip's beginning.
+     */
+    function resetClipTiming(layer, comp, log) {
+        try {
+            if (layer.timeRemapEnabled) {
+                log.push("    note: time remapping is on, timing left alone");
+                return false;
+            }
+            var wasStart = layer.startTime;
+            var wasIn = layer.inPoint;
+            layer.startTime = 0;
+            layer.inPoint = 0;
+            var srcDur = (layer.source && layer.source.duration) ? layer.source.duration : comp.duration;
+            layer.outPoint = Math.min(srcDur, comp.duration);
+            log.push("    timing reset: startTime " + wasStart.toFixed(2) + "s -> 0, " +
+                     "in " + wasIn.toFixed(2) + "s -> 0, showing 0 - " + layer.outPoint.toFixed(2) + "s");
+            return true;
+        } catch (e) {
+            log.push("    note: could not reset timing: " + e.toString());
+            return false;
+        }
+    }
+
+    /** Scales the clip to cover its comp, so a 1080p clip fills a 4K slot. */
+    function fitToComp(layer, comp, log) {
+        try {
+            var scale = layer.property("ADBE Transform Group").property("ADBE Scale");
+            if (scale.numKeys > 0) {
+                log.push("    note: scale is keyframed, framing left alone");
+                return false;
+            }
+            var src = layer.source;
+            if (!src || !src.width || !src.height) { return false; }
+            if (src.width === comp.width && src.height === comp.height) { return false; }
+            var f = Math.max(comp.width / src.width, comp.height / src.height) * 100;
+            scale.setValue([f, f]);
+            log.push("    fitted " + src.width + "x" + src.height + " into " +
+                     comp.width + "x" + comp.height + " at " + f.toFixed(1) + "%");
+            return true;
+        } catch (e) {
+            log.push("    note: could not fit the clip: " + e.toString());
+            return false;
+        }
+    }
+
     // ------------------------------------------------------------ AE helpers
 
     function listComps() {
@@ -798,9 +850,13 @@
             "Build refine-ready matte on each card ([MATTE] + alpha track matte) - " +
             "leave OFF if the template already mattes the guest");
         cbMatte.value = false;
-        var cbScale = opts.add("checkbox", undefined,
-            "Compensate scale when a clip has different dimensions");
-        cbScale.value = false;
+        var cbReset = opts.add("checkbox", undefined,
+            "Start each clip at its own beginning (fixes a black card when the " +
+            "placeholder was trimmed out of a long recording)");
+        cbReset.value = true;
+        var cbFit = opts.add("checkbox", undefined,
+            "Fit the clip to its comp frame (a 1080p clip fills a 4K slot)");
+        cbFit.value = true;
         var cbFolder = opts.add("checkbox", undefined,
             "Collect the finished cards in one Project panel folder");
         cbFolder.value = true;
@@ -1035,8 +1091,6 @@
                     }
 
                     var target = mapping[vTarget.comp.id].layer(vTarget.index);
-                    var oldW = target.source ? target.source.width : 0;
-                    var oldH = target.source ? target.source.height : 0;
                     var maskCount = countMasks(target);
 
                     target.replaceSource(footage, false);
@@ -1044,7 +1098,8 @@
                              "   masks kept: " + maskCount +
                              "   comps copied: " + clones.length);
 
-                    if (cbScale.value) { compensateScale(target, oldW, oldH, log); }
+                    if (cbReset.value) { resetClipTiming(target, mapping[vTarget.comp.id], log); }
+                    if (cbFit.value) { fitToComp(target, mapping[vTarget.comp.id], log); }
 
                     if (tTarget) {
                         if (setLayerText(mapping[tTarget.comp.id].layer(tTarget.index),
@@ -1114,7 +1169,10 @@
                 "5. Create cards duplicates the template once per quote, swaps\n" +
                 "   the clip, and sets the text - keeping the font, size, colour\n" +
                 "   and alignment you already set.\n\n" +
-                "Masks and effects survive: the layer is reused, not rebuilt.\n" +
+                "Masks and effects survive: the layer is reused, not rebuilt.\n\n" +
+                "If a card comes out BLACK, the placeholder it replaced was trimmed\n" +
+                "out of a long recording, so the layer was reading past the end of\n" +
+                "your clip. \"Start each clip at its own beginning\" fixes that.\n\n" +
                 "The matte option adds a [MATTE] layer above each swapped clip,\n" +
                 "wired as an alpha track matte with Simple Choker and a blur.\n\n" +
                 "Arabic text needs After Effects' Middle Eastern text engine:\n" +

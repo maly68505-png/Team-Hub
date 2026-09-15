@@ -169,6 +169,7 @@ node ae/tests/parse.test.js       # 46 assertions
 node ae/tests/discovery.test.js   # 11 assertions
 node ae/tests/quotes.test.js      # 19 assertions
 node ae/tests/nested.test.js      # 28 assertions
+node ae/tests/timing.test.js      # 16 assertions
 ```
 
 `parse.test.js` covers timecode parsing across every accepted format, range and
@@ -191,6 +192,12 @@ its quote from `REPLACE-PARAGRAPH` — and asserts that layers are found through
 the tree, that only comps on the path to them are copied, and above all that
 each card ends up with its own precomps: editing card 1 must not rewrite
 card 2, and neither may touch the template.
+
+`timing.test.js` covers the black-card case: a placeholder trimmed deep into a
+long recording leaves the layer reading past the end of the new clip, so the
+swap must pull it back to the clip's own start. It also covers clamping to
+whichever of the clip and the comp is shorter, leaving time-remapped and
+keyframed layers alone, and scaling a clip to cover its frame.
 
 The AE-API parts — layer targeting, `replaceSource`, layer splitting, matte
 setup — need a running After Effects and are **not** covered by these tests.
