@@ -21,6 +21,7 @@ var sb = new Function('VIDEO_EXT', 'MIN_MATCH_SCORE', 'TOL',
   block + '\nreturn { naturalCompare: naturalCompare, sortFilesNaturally: sortFilesNaturally,' +
   ' parseCSVText: parseCSVText, pickTextColumn: pickTextColumn, parseQuotesFile: parseQuotesFile,' +
   ' pickLabelledColumn: pickLabelledColumn, looseHas: looseHas,' +
+  ' digitsOf: digitsOf, alphaMatchScore: alphaMatchScore, pairAlphaClips: pairAlphaClips,' +
   ' SPEAKER_HINTS: SPEAKER_HINTS, ROLE_HINTS: ROLE_HINTS };'
 )("mp4,mov,m4v,avi,mkv,mxf,webm,mpg,mpeg,wmv,mts,m2ts,r3d,braw,dv,3gp", 2, 0.0005);
 
@@ -115,6 +116,44 @@ eq('txt carries no speaker either',
 eq('real quotes.csv names its speaker column', rq[0].speakerColumn, 'المتحدث (يتملى يدوياً)');
 eq('real quotes.csv leaves every speaker empty',
    rq.filter(function (r) { return r.speaker !== ''; }).length, 0);
+
+console.log('\n-- pairing a clip with its cut-out --');
+function F(n) { return { name: n, fsName: '/clips/' + n }; }
+function nm(list) { return list.map(function (f) { return f ? f.name : null; }); }
+
+eq('digits normalise across padding', [sb.digitsOf('Aktbas_002.mov'), sb.digitsOf('clip2.mp4')],
+   ['2', '2']);
+eq('a suffixed cut-out matches its clip',
+   sb.alphaMatchScore(F('01_dalal.mp4'), F('01_dalal_alpha.mov')) > 0, true);
+eq('clip1 does not grab clip10\'s cut-out',
+   sb.alphaMatchScore(F('clip1.mp4'), F('clip10_alpha.mov')), 0);
+
+var w1 = [];
+eq('matched by name even when the folder order differs',
+   nm(sb.pairAlphaClips([F('Aktbas_001.mov'), F('Aktbas_002.mov'), F('Aktbas_003.mov')],
+                        [F('Aktbas_003_alpha.mov'), F('Aktbas_001_alpha.mov'),
+                         F('Aktbas_002_alpha.mov')], w1)),
+   ['Aktbas_001_alpha.mov', 'Aktbas_002_alpha.mov', 'Aktbas_003_alpha.mov']);
+eq('a clean name match says nothing', w1.length, 0);
+
+// What actually comes back from an outside keyer: job ids, any order.
+var w2 = [];
+eq('unrecognisable names still pair, by position',
+   nm(sb.pairAlphaClips([F('a.mov'), F('b.mov')], [F('8f3a2b1c.webm'), F('1c9d4e7a.webm')], w2)),
+   ['8f3a2b1c.webm', '1c9d4e7a.webm']);
+eq('and that fallback is called out', w2.length === 1 && /POSITION/.test(w2[0]), true);
+
+var w3 = [];
+eq('the one cut-out goes to the clip it is named after, not to card 1',
+   nm(sb.pairAlphaClips([F('01_a.mov'), F('02_b.mov')], [F('02_b_alpha.mov')], w3)),
+   [null, '02_b_alpha.mov']);
+eq('and nothing was shuffled into the gap', w3.length, 0);
+
+var w4 = [];
+eq('arabic names match, where normalize() would flatten them to nothing',
+   nm(sb.pairAlphaClips([F('01_دلال.mp4')], [F('01_دلال_alpha.mov')], w4)),
+   ['01_دلال_alpha.mov']);
+eq('so no warning is raised for them', w4.length, 0);
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

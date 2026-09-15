@@ -311,6 +311,81 @@
         return files;
     }
 
+    /** Every run of digits in a file's stem, as numbers: "Aktbas_002" -> "2". */
+    function digitsOf(name) {
+        var m = String(baseName(name)).match(/\d+/g);
+        if (!m) { return ""; }
+        var out = [];
+        for (var i = 0; i < m.length; i++) { out.push(String(parseInt(m[i], 10))); }
+        return out.join("-");
+    }
+
+    /**
+     * Does `longS` start with `whole` at a stem boundary? A plain indexOf===0
+     * lets "clip1" claim "clip10_alpha", which is the clip2-before-clip10 trap
+     * wearing a different hat: the number has to end where the stem ends.
+     */
+    function startsWithStem(longS, whole) {
+        if (whole === "" || longS.indexOf(whole) !== 0) { return false; }
+        if (!/\d$/.test(whole)) { return true; }
+        return !/^\d/.test(longS.charAt(whole.length));
+    }
+
+    /**
+     * How well a cut-out file answers to a clip file. normalize() is no use
+     * here - it strips an Arabic file name to "" and then everything matches
+     * everything - so this compares the stems as they are.
+     */
+    function alphaMatchScore(clip, alphaFile) {
+        var a = trim(baseName(clip.name)).toLowerCase();
+        var b = trim(baseName(alphaFile.name)).toLowerCase();
+        if (a === "" || b === "") { return 0; }
+        if (a === b) { return 100; }
+        // "01_dalal.mp4" -> "01_dalal_alpha.mov": one stem starts the other.
+        if (startsWithStem(b, a) || startsWithStem(a, b)) { return 90; }
+        // Numbering is what survives a trip through an outside keying tool.
+        var da = digitsOf(clip.name), db = digitsOf(alphaFile.name);
+        if (da !== "" && da === db) { return 70; }
+        return 0;
+    }
+
+    /**
+     * Pairs each clip with its cut-out. Position alone is how this worked, and
+     * position is exactly what a trip through an external keyer destroys - the
+     * files come back named after a job id, in whatever order they finished.
+     * A cut-out on the wrong card is invisible until someone recognises the
+     * face, so match on the name first and say plainly when that failed.
+     */
+    function pairAlphaClips(files, alphaFiles, warnings) {
+        var used = {}, out = [], byName = 0, i, j;
+        for (i = 0; i < files.length; i++) {
+            var best = -1, bestScore = 0;
+            for (j = 0; j < alphaFiles.length; j++) {
+                if (used[j]) { continue; }
+                var sc = alphaMatchScore(files[i], alphaFiles[j]);
+                if (sc > bestScore) { bestScore = sc; best = j; }
+            }
+            if (best >= 0) { used[best] = true; out.push(alphaFiles[best]); byName++; }
+            else { out.push(null); }
+        }
+        var spare = [];
+        for (j = 0; j < alphaFiles.length; j++) { if (!used[j]) { spare.push(alphaFiles[j]); } }
+        var next = 0, byPosition = 0;
+        for (i = 0; i < out.length; i++) {
+            if (out[i] === null && next < spare.length) { out[i] = spare[next++]; byPosition++; }
+        }
+        if (alphaFiles.length > 0 && byName === 0) {
+            warnings.push("No cut-out file name answers to a clip name, so they were paired by " +
+                          "POSITION. Check the Alpha column row by row before building - a " +
+                          "cut-out on the wrong card is not obvious once it is rendered.");
+        } else if (byPosition > 0) {
+            warnings.push(byName + " cut-out(s) matched by name, " + byPosition + " placed by " +
+                          "position because nothing answered to the clip name. Check those rows " +
+                          "in the Alpha column.");
+        }
+        return out;
+    }
+
     /** Minimal RFC4180 reader: quoted fields, doubled quotes, embedded newlines. */
     function parseCSVText(text) {
         var rows = [], row = [], field = "", inQuotes = false, i = 0;

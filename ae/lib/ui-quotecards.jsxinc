@@ -366,13 +366,23 @@
                 return;
             }
 
+            // Named first, position only as a last resort: files coming back
+            // from an outside keyer carry job ids, not the clip's name.
+            var warnBefore = planWarnings.length;
+            var alphaPairs = alphaFiles.length
+                ? pairAlphaClips(files, alphaFiles, planWarnings) : [];
+            // A pairing warning is useless in the log afterwards - it has to
+            // be on screen while the Alpha column is still there to check.
+            var pairNote = planWarnings.length > warnBefore
+                ? "  |  " + planWarnings[planWarnings.length - 1] : "";
+
             for (var i = 0; i < quotes.length; i++) {
                 var clip = (i < files.length) ? files[i] : null;
                 if (!clip) {
                     planWarnings.push("Quote " + (i + 1) + " has no clip: the folder holds only " +
                                       files.length + " clip(s).");
                 }
-                var alphaClip = (i < alphaFiles.length) ? alphaFiles[i] : null;
+                var alphaClip = alphaPairs[i] || null;
                 plan.push({ index: i + 1, quote: quotes[i], file: clip, alpha: alphaClip, ok: !!clip });
 
                 var it = list.add("item", String(i + 1));
@@ -444,6 +454,8 @@
                 note += "  |  " + clash + " are the SAME layer - one would overwrite the " +
                         "other. Point them at different layers.";
             }
+
+            note += pairNote;
 
             if (nTarget && withSpeaker === 0) {
                 note += "  |  THE NAMES WILL NOT CHANGE: " +
