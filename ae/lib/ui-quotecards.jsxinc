@@ -301,7 +301,27 @@
             for (var r = 0; r < plan.length; r++) { if (plan[r].ok) { ready++; } }
             goBtn.enabled = ready > 0;
 
+            // A template with an ALPHA / MATTE comp in it expects a cut-out clip.
+            // Saying nothing here is how the guest ends up with their whole
+            // studio behind them.
+            var alphaSlot = "";
+            for (var q = 0; q < videoTargets.length; q++) {
+                var lbl = normalize(videoTargets[q].label);
+                if (lbl.indexOf("alpha") !== -1 || lbl.indexOf("matte") !== -1) {
+                    alphaSlot = videoTargets[q].label;
+                    break;
+                }
+            }
+
             var note = "";
+            if (alphaSlot !== "" && !aTarget) {
+                note += "  |  THIS TEMPLATE HAS A CUT-OUT SLOT that is not being filled: \"" +
+                        alphaSlot + "\". Pick it under \"Alpha layer\" and give it a folder of " +
+                        "pre-keyed clips, or the guest keeps their background.";
+            } else if (aTarget && alphaFiles.length === 0) {
+                note += "  |  an alpha layer is chosen but its folder is empty - " +
+                        "the cut-out will stay as the template had it";
+            }
             if (textTargets.length === 0) {
                 note = "  |  NO TEXT LAYER found in \"" + comp.name + "\" or any comp inside it - " +
                        "the quotes will NOT be written. Is it a shape layer rather than a text layer?";
@@ -403,6 +423,9 @@
                         }
                     } else if (aTarget && !row.alpha) {
                         log.push("    note: no alpha clip for this card, template alpha kept");
+                    } else if (!aTarget) {
+                        log.push("    note: NO ALPHA LAYER CHOSEN - this card uses the original " +
+                                 "clip only, so the guest keeps their background");
                     }
 
                     if (tTarget) {
@@ -445,7 +468,16 @@
             setStatus("Created " + made + " card(s), skipped " + skipped +
                       (planWarnings.length ? ", " + planWarnings.length + " warning(s)" : "") +
                       (logPath ? "  |  log: " + logPath : ""));
-            alert("Quote Cards\n\nCreated: " + made + "\nSkipped: " + skipped +
+            alert("Quote Cards\n\n" +
+                  "Created: " + made + "     Skipped: " + skipped + "\n\n" +
+                  "Footage -> " + vTarget.comp.name + " / " + vTarget.layer.name + "\n" +
+                  "Alpha   -> " + (aTarget
+                        ? aTarget.comp.name + " / " + aTarget.layer.name +
+                          "   (" + alphaFiles.length + " clip(s))"
+                        : "NOT SWAPPED - no alpha layer chosen, so the cut-out is " +
+                          "whatever the template already had") + "\n" +
+                  "Text    -> " + (tTarget ? tTarget.comp.name + " / " + tTarget.layer.name : "not touched") +
+                  (planWarnings.length ? "\n\nWarnings: " + planWarnings.length : "") +
                   (logPath ? "\n\nDetails:\n" + logPath : "") +
                   "\n\nOne Ctrl/Cmd+Z undoes all of it.");
         }
