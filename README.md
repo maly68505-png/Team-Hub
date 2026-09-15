@@ -168,7 +168,7 @@ user copies one file and nothing else.
 node ae/tests/parse.test.js       # 46 assertions
 node ae/tests/discovery.test.js   # 11 assertions
 node ae/tests/quotes.test.js      # 19 assertions
-node ae/tests/nested.test.js      # 34 assertions
+node ae/tests/nested.test.js      # 48 assertions
 node ae/tests/timing.test.js      # 16 assertions
 node ae/tests/text.test.js        # 20 assertions
 node ae/tests/alpha.test.js       # 26 assertions
@@ -194,7 +194,9 @@ template — a render comp pulling its guest from a `REPLACE-FOOTAGE` precomp an
 its quote from `REPLACE-PARAGRAPH` — and asserts that layers are found through
 the tree, that only comps on the path to them are copied, and above all that
 each card ends up with its own precomps: editing card 1 must not rewrite
-card 2, and neither may touch the template.
+card 2, and neither may touch the template. It also covers a template slot
+left as an empty comp — offered once however many layers reference it, and
+filled by adding a layer rather than replacing one that isn't there.
 
 `timing.test.js` covers the black-card case: a placeholder trimmed deep into a
 long recording leaves the layer reading past the end of the new clip, so the

@@ -538,7 +538,7 @@
      * Returns [{ comp, layer, index, label }] with label like "RENDER > REPLACE-FOOTAGE > guest".
      */
     function collectTargets(root, wantText) {
-        var out = [], seen = {};
+        var out = [], seen = {}, offered = {};
         walk(root, root.name, 0);
         return out;
 
@@ -548,11 +548,26 @@
             for (var i = 1; i <= comp.numLayers; i++) {
                 var L = comp.layer(i);
                 var isText = (L instanceof TextLayer);
+
+                // A template can leave a slot as an EMPTY comp waiting to be
+                // filled - REPLACE-ALPHA-FOOTAGE is exactly that. There is no
+                // layer to replace, so offer the comp itself and add one.
+                var nested = layerSource(L);
+                if (!wantText && nested instanceof CompItem &&
+                    nested.numLayers === 0 && !offered[nested.id]) {
+                    offered[nested.id] = true;
+                    out.push({
+                        comp: nested, layer: null, index: 0, sample: "", isEmpty: true,
+                        label: path + "  >  " + nested.name +
+                               "   (EMPTY comp - the clip gets added here)"
+                    });
+                }
+
                 if (wantText ? isText : isSwappableLayer(L)) {
                     var where = (comp === root ? "" : path + "  >  ") + L.index + ": " + L.name;
                     var sample = isText ? layerTextValue(L) : "";
                     out.push({
-                        comp: comp, layer: L, index: L.index, sample: sample,
+                        comp: comp, layer: L, index: L.index, sample: sample, isEmpty: false,
                         label: where + (sample !== ""
                             ? "   -   \"" + (sample.length > 42
                                 ? sample.substring(0, 42) + "..." : sample) + "\""
@@ -875,6 +890,24 @@
             problems.push("Could not write " + file.name + ": " + e.toString());
             return "";
         }
+    }
+
+
+    /**
+     * Puts a clip where the chosen target says. A normal target swaps the
+     * layer's source; an empty-comp target gets a new layer added, because
+     * that is how a template hands you a slot with nothing in it yet.
+     */
+    function placeClip(target, destComp, footage, log) {
+        if (target.isEmpty) {
+            var added = destComp.layers.add(footage);
+            log.push("    added \"" + footage.name + "\" into the empty comp \"" +
+                     destComp.name + "\"");
+            return added;
+        }
+        var layer = destComp.layer(target.index);
+        layer.replaceSource(footage, false);
+        return layer;
     }
 
     // ------------------------------------------------------------ AE helpers
@@ -1381,7 +1414,7 @@
                 var lbl = normalize(videoTargets[q].label);
                 if (lbl.indexOf("alpha") !== -1 || lbl.indexOf("matte") !== -1) {
                     alphaSlot = videoTargets[q].label;
-                    break;
+                    if (videoTargets[q].isEmpty) { break; }   // an empty slot is the likeliest
                 }
             }
 
@@ -1498,10 +1531,8 @@
                         for (var c = 0; c < clones.length; c++) { clones[c].parentFolder = folderItem; }
                     }
 
-                    var target = mapping[vTarget.comp.id].layer(vTarget.index);
+                    var target = placeClip(vTarget, mapping[vTarget.comp.id], footage, log);
                     var maskCount = countMasks(target);
-
-                    target.replaceSource(footage, false);
                     try {
                         log.push("    clip is " + footage.width + "x" + footage.height +
                                  "  " + footage.duration.toFixed(2) + "s" +
@@ -1519,8 +1550,8 @@
                         var alphaFootage = importFootage(row.alpha, cache, planWarnings);
                         if (alphaFootage) {
                             applyAlphaMode(alphaFootage, alphaChoice(), log);
-                            var aLayer = mapping[aTarget.comp.id].layer(aTarget.index);
-                            aLayer.replaceSource(alphaFootage, false);
+                            var aLayer = placeClip(aTarget, mapping[aTarget.comp.id],
+                                                   alphaFootage, log);
                             log.push("    alpha: " + row.alpha.name);
                             if (cbReset.value) { resetClipTiming(aLayer, mapping[aTarget.comp.id], log); }
                             if (cbFit.value) { fitToComp(aLayer, mapping[aTarget.comp.id], log); }

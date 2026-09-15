@@ -333,7 +333,7 @@
                 var lbl = normalize(videoTargets[q].label);
                 if (lbl.indexOf("alpha") !== -1 || lbl.indexOf("matte") !== -1) {
                     alphaSlot = videoTargets[q].label;
-                    break;
+                    if (videoTargets[q].isEmpty) { break; }   // an empty slot is the likeliest
                 }
             }
 
@@ -450,10 +450,8 @@
                         for (var c = 0; c < clones.length; c++) { clones[c].parentFolder = folderItem; }
                     }
 
-                    var target = mapping[vTarget.comp.id].layer(vTarget.index);
+                    var target = placeClip(vTarget, mapping[vTarget.comp.id], footage, log);
                     var maskCount = countMasks(target);
-
-                    target.replaceSource(footage, false);
                     try {
                         log.push("    clip is " + footage.width + "x" + footage.height +
                                  "  " + footage.duration.toFixed(2) + "s" +
@@ -471,8 +469,8 @@
                         var alphaFootage = importFootage(row.alpha, cache, planWarnings);
                         if (alphaFootage) {
                             applyAlphaMode(alphaFootage, alphaChoice(), log);
-                            var aLayer = mapping[aTarget.comp.id].layer(aTarget.index);
-                            aLayer.replaceSource(alphaFootage, false);
+                            var aLayer = placeClip(aTarget, mapping[aTarget.comp.id],
+                                                   alphaFootage, log);
                             log.push("    alpha: " + row.alpha.name);
                             if (cbReset.value) { resetClipTiming(aLayer, mapping[aTarget.comp.id], log); }
                             if (cbFit.value) { fitToComp(aLayer, mapping[aTarget.comp.id], log); }

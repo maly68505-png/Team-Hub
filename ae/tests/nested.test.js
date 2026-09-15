@@ -45,7 +45,8 @@ CompItem.prototype.duplicate = function () {
 
 var sb = new Function('VIDEO_EXT','MIN_MATCH_SCORE','TOL','AVLayer','TextLayer','CompItem','FootageItem','FileSource',
   block + '\nreturn { collectTargets: collectTargets, compsLeadingTo: compsLeadingTo,' +
-  ' deepDuplicate: deepDuplicate, mappedClones: mappedClones, isSwappableLayer: isSwappableLayer };'
+  ' deepDuplicate: deepDuplicate, mappedClones: mappedClones, isSwappableLayer: isSwappableLayer,' +
+  ' placeClip: placeClip };'
 )("mp4,mov,m4v,avi,mkv,mxf,webm,mpg,mpeg,wmv,mts,m2ts,r3d,braw,dv,3gp", 2, 0.0005,
   AVLayer, TextLayer, CompItem, FootageItem, FileSource);
 
@@ -75,20 +76,25 @@ function buildProject() {
   var glow = new AVLayer('glow', new FootageItem('shutterstock_3611565563.mov'));
   var elements = new CompItem('ELEMENTS', [glow]);
 
+  var emptyAlpha = new CompItem('REPLACE-ALPHA-FOOTAGE', []);   // 0 layers, as in the real template
+
   var render = new CompItem('RENDER-LEFT', [
     new AVLayer('bg', new FootageItem('screen grid-01.mov')),
     new AVLayer('FOOTAGE slot', replaceFootage),
     new AVLayer('PARAGRAPH slot', replacePara),
-    new AVLayer('shared elements', elements)
+    new AVLayer('shared elements', elements),
+    new AVLayer('ALPHA slot', emptyAlpha),
+    new AVLayer('ALPHA slot again', emptyAlpha)
   ]);
-  return { render: render, replaceFootage: replaceFootage, replacePara: replacePara, elements: elements };
+  return { render: render, replaceFootage: replaceFootage, replacePara: replacePara,
+           elements: elements, emptyAlpha: emptyAlpha };
 }
 
 var P = buildProject();
 
 console.log('\n-- layers are found inside nested comps --');
 var vids = sb.collectTargets(P.render, false);
-eq('3 footage layers across the tree', vids.length, 3);
+eq('3 footage layers plus the empty slot', vids.length, 4);
 eq('guest found inside REPLACE-FOOTAGE',
    vids[1].label, 'RENDER-LEFT  >  REPLACE-FOOTAGE  >  1: guest');
 eq('guest belongs to the precomp, not the render comp',
@@ -110,13 +116,48 @@ eq('a real match reports its index', guessIndex(vids, 'footage'), 1);
 eq('a match on the FIRST entry still reports 0', guessIndex(vids, 'bg'), 0);
 eq('no match reports -1, not 0', guessIndex(vids, 'nothinglikethis'), -1);
 eq('bestGuess still falls back to 0', bestGuess(vids, 'nothinglikethis'), 0);
-eq('alpha hint finds nothing in this template', guessIndex(vids, 'alpha,matte,luma'), -1);
+eq('alpha hint finds the slot in this template', guessIndex(vids, 'alpha,matte,luma') >= 0, true);
+eq('but a template with no such slot reports -1',
+   guessIndex([{ label: 'RENDER > 1: bg' }, { label: 'RENDER > 2: guest' }], 'alpha,matte,luma'), -1);
 
 var withAlpha = [
   { label: 'RENDER > REPLACE-ALPHA-FOOTAGE > 1: guest alpha' },
   { label: 'RENDER > REPLACE-FOOTAGE > 1: guest' }
 ];
 eq('an alpha slot at index 0 is detected', guessIndex(withAlpha, 'alpha,matte,luma'), 0);
+
+console.log('\n-- an empty slot comp is offered as a destination --');
+var emptyEntry = null;
+for (var e = 0; e < vids.length; e++) { if (vids[e].isEmpty) { emptyEntry = vids[e]; } }
+eq('the empty comp is listed', emptyEntry !== null, true);
+eq('it points at the comp itself', emptyEntry.comp.name, 'REPLACE-ALPHA-FOOTAGE');
+eq('it says what will happen',
+   /EMPTY comp - the clip gets added here/.test(emptyEntry.label), true);
+eq('offered once even though two layers use it',
+   (function () { var n = 0; for (var i = 0; i < vids.length; i++) { if (vids[i].isEmpty) { n++; } } return n; })(), 1);
+eq('real layers are not marked empty', vids[0].isEmpty, false);
+eq('the alpha hint now finds it', guessIndex(vids, 'alpha,matte,luma') >= 0, true);
+
+console.log('\n-- filling it adds a layer instead of replacing one --');
+var fakeClip = new FootageItem('Aktbas_001_alpha.mov');
+var addLog = [];
+var destination = new CompItem('REPLACE-ALPHA-FOOTAGE 01', []);
+destination.layers = {
+  added: null,
+  add: function (item) { this.added = new AVLayer(item.name, item); return this.added; }
+};
+var placed = sb.placeClip(emptyEntry, destination, fakeClip, addLog);
+eq('a layer came back', placed !== null && placed !== undefined, true);
+eq('it carries the clip', placed.source.name, 'Aktbas_001_alpha.mov');
+eq('logged as an add, not a swap', /added .* into the empty comp/.test(addLog[0]), true);
+
+console.log('\n-- a normal target still swaps in place --');
+var swapLog = [];
+var normalDest = new CompItem('REPLACE-FOOTAGE 01', [new AVLayer('guest', new FootageItem('old.mov'))]);
+var swapped = sb.placeClip({ isEmpty: false, index: 1 }, normalDest, new FootageItem('new.mov'), swapLog);
+eq('same layer object', swapped === normalDest.layer(1), true);
+eq('source replaced', swapped.source.name, 'new.mov');
+eq('nothing logged about adding', swapLog.length, 0);
 
 console.log('\n-- only comps on the path get copied --');
 var targetIds = {};
@@ -146,6 +187,8 @@ eq('neither touches the template',
    m1[P.replaceFootage.id] === P.replaceFootage, false);
 eq('off-path comp stays shared with the template',
    card1.layer(4).source === P.elements, true);
+eq('the empty slot is shared too until it is targeted',
+   card1.layer(5).source === P.emptyAlpha, true);
 
 console.log('\n-- editing one card leaves the others alone --');
 var clipA = new FootageItem('Aktbas_001.mov');

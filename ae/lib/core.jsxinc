@@ -513,7 +513,7 @@
      * Returns [{ comp, layer, index, label }] with label like "RENDER > REPLACE-FOOTAGE > guest".
      */
     function collectTargets(root, wantText) {
-        var out = [], seen = {};
+        var out = [], seen = {}, offered = {};
         walk(root, root.name, 0);
         return out;
 
@@ -523,11 +523,26 @@
             for (var i = 1; i <= comp.numLayers; i++) {
                 var L = comp.layer(i);
                 var isText = (L instanceof TextLayer);
+
+                // A template can leave a slot as an EMPTY comp waiting to be
+                // filled - REPLACE-ALPHA-FOOTAGE is exactly that. There is no
+                // layer to replace, so offer the comp itself and add one.
+                var nested = layerSource(L);
+                if (!wantText && nested instanceof CompItem &&
+                    nested.numLayers === 0 && !offered[nested.id]) {
+                    offered[nested.id] = true;
+                    out.push({
+                        comp: nested, layer: null, index: 0, sample: "", isEmpty: true,
+                        label: path + "  >  " + nested.name +
+                               "   (EMPTY comp - the clip gets added here)"
+                    });
+                }
+
                 if (wantText ? isText : isSwappableLayer(L)) {
                     var where = (comp === root ? "" : path + "  >  ") + L.index + ": " + L.name;
                     var sample = isText ? layerTextValue(L) : "";
                     out.push({
-                        comp: comp, layer: L, index: L.index, sample: sample,
+                        comp: comp, layer: L, index: L.index, sample: sample, isEmpty: false,
                         label: where + (sample !== ""
                             ? "   -   \"" + (sample.length > 42
                                 ? sample.substring(0, 42) + "..." : sample) + "\""
@@ -850,6 +865,24 @@
             problems.push("Could not write " + file.name + ": " + e.toString());
             return "";
         }
+    }
+
+
+    /**
+     * Puts a clip where the chosen target says. A normal target swaps the
+     * layer's source; an empty-comp target gets a new layer added, because
+     * that is how a template hands you a slot with nothing in it yet.
+     */
+    function placeClip(target, destComp, footage, log) {
+        if (target.isEmpty) {
+            var added = destComp.layers.add(footage);
+            log.push("    added \"" + footage.name + "\" into the empty comp \"" +
+                     destComp.name + "\"");
+            return added;
+        }
+        var layer = destComp.layer(target.index);
+        layer.replaceSource(footage, false);
+        return layer;
     }
 
     // ------------------------------------------------------------ AE helpers
