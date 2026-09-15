@@ -450,6 +450,59 @@
         return out;
     }
 
+    /** The words currently on a text layer, or "" - used to tell them apart. */
+    function layerTextValue(layer) {
+        try {
+            return String(layer.property("ADBE Text Properties")
+                               .property("ADBE Text Document").value.text);
+        } catch (e) {
+            return "";
+        }
+    }
+
+    /**
+     * Shrinks the type until it stops overflowing its box. A quote is longer
+     * than whatever the template was mocked up with, so at the template's size
+     * it spills past the card. Point text has no box to fit, so it is left
+     * alone and said so.
+     */
+    function fitTextToBox(layer, log) {
+        try {
+            var prop = layer.property("ADBE Text Properties").property("ADBE Text Document");
+            if (prop.numKeys > 0) { return false; }
+            var doc = prop.value;
+            if (!doc.boxText) {
+                log.push("    note: this is point text, not a text box - the line cannot " +
+                         "be auto-fitted and may run long");
+                return false;
+            }
+            var boxH = doc.boxTextSize[1];
+            var startSize = doc.fontSize;
+            var t = (layer.inPoint + layer.outPoint) / 2;
+
+            for (var i = 0; i < 60; i++) {
+                var rect = layer.sourceRectAtTime(t, false);
+                if (rect.height <= boxH) { break; }
+                var next = prop.value;
+                var size = next.fontSize * 0.96;
+                if (size < 6) { break; }
+                next.fontSize = size;
+                prop.setValue(next);
+            }
+
+            var finalSize = prop.value.fontSize;
+            if (Math.abs(finalSize - startSize) > 0.01) {
+                log.push("    type shrunk " + startSize.toFixed(1) + " -> " +
+                         finalSize.toFixed(1) + " to fit the box");
+                return true;
+            }
+            return false;
+        } catch (e) {
+            log.push("    note: could not fit the text: " + e.toString());
+            return false;
+        }
+    }
+
     /** Replaces the words but keeps the font, size, colour and alignment. */
     function setLayerText(layer, str, log) {
         try {
@@ -494,9 +547,14 @@
                 var L = comp.layer(i);
                 var isText = (L instanceof TextLayer);
                 if (wantText ? isText : isSwappableLayer(L)) {
+                    var where = (comp === root ? "" : path + "  >  ") + L.index + ": " + L.name;
+                    var sample = isText ? layerTextValue(L) : "";
                     out.push({
-                        comp: comp, layer: L, index: L.index,
-                        label: (comp === root ? "" : path + "  >  ") + L.index + ": " + L.name
+                        comp: comp, layer: L, index: L.index, sample: sample,
+                        label: where + (sample !== ""
+                            ? "   -   \"" + (sample.length > 42
+                                ? sample.substring(0, 42) + "..." : sample) + "\""
+                            : "")
                     });
                 }
                 var src = layerSource(L);

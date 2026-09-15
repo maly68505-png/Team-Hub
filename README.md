@@ -170,6 +170,7 @@ node ae/tests/discovery.test.js   # 11 assertions
 node ae/tests/quotes.test.js      # 19 assertions
 node ae/tests/nested.test.js      # 28 assertions
 node ae/tests/timing.test.js      # 16 assertions
+node ae/tests/text.test.js        # 20 assertions
 ```
 
 `parse.test.js` covers timecode parsing across every accepted format, range and
@@ -198,6 +199,10 @@ long recording leaves the layer reading past the end of the new clip, so the
 swap must pull it back to the clip's own start. It also covers clamping to
 whichever of the clip and the comp is shorter, leaving time-remapped and
 keyframed layers alone, and scaling a clip to cover its frame.
+
+`text.test.js` covers choosing the quote body over the speaker-name line, and
+shrinking the type until a real quote fits its box — leaving point text and
+animated type alone, and never going below 6pt.
 
 The AE-API parts — layer targeting, `replaceSource`, layer splitting, matte
 setup — need a running After Effects and are **not** covered by these tests.

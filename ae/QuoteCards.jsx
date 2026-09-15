@@ -452,6 +452,59 @@
         return out;
     }
 
+    /** The words currently on a text layer, or "" - used to tell them apart. */
+    function layerTextValue(layer) {
+        try {
+            return String(layer.property("ADBE Text Properties")
+                               .property("ADBE Text Document").value.text);
+        } catch (e) {
+            return "";
+        }
+    }
+
+    /**
+     * Shrinks the type until it stops overflowing its box. A quote is longer
+     * than whatever the template was mocked up with, so at the template's size
+     * it spills past the card. Point text has no box to fit, so it is left
+     * alone and said so.
+     */
+    function fitTextToBox(layer, log) {
+        try {
+            var prop = layer.property("ADBE Text Properties").property("ADBE Text Document");
+            if (prop.numKeys > 0) { return false; }
+            var doc = prop.value;
+            if (!doc.boxText) {
+                log.push("    note: this is point text, not a text box - the line cannot " +
+                         "be auto-fitted and may run long");
+                return false;
+            }
+            var boxH = doc.boxTextSize[1];
+            var startSize = doc.fontSize;
+            var t = (layer.inPoint + layer.outPoint) / 2;
+
+            for (var i = 0; i < 60; i++) {
+                var rect = layer.sourceRectAtTime(t, false);
+                if (rect.height <= boxH) { break; }
+                var next = prop.value;
+                var size = next.fontSize * 0.96;
+                if (size < 6) { break; }
+                next.fontSize = size;
+                prop.setValue(next);
+            }
+
+            var finalSize = prop.value.fontSize;
+            if (Math.abs(finalSize - startSize) > 0.01) {
+                log.push("    type shrunk " + startSize.toFixed(1) + " -> " +
+                         finalSize.toFixed(1) + " to fit the box");
+                return true;
+            }
+            return false;
+        } catch (e) {
+            log.push("    note: could not fit the text: " + e.toString());
+            return false;
+        }
+    }
+
     /** Replaces the words but keeps the font, size, colour and alignment. */
     function setLayerText(layer, str, log) {
         try {
@@ -496,9 +549,14 @@
                 var L = comp.layer(i);
                 var isText = (L instanceof TextLayer);
                 if (wantText ? isText : isSwappableLayer(L)) {
+                    var where = (comp === root ? "" : path + "  >  ") + L.index + ": " + L.name;
+                    var sample = isText ? layerTextValue(L) : "";
                     out.push({
-                        comp: comp, layer: L, index: L.index,
-                        label: (comp === root ? "" : path + "  >  ") + L.index + ": " + L.name
+                        comp: comp, layer: L, index: L.index, sample: sample,
+                        label: where + (sample !== ""
+                            ? "   -   \"" + (sample.length > 42
+                                ? sample.substring(0, 42) + "..." : sample) + "\""
+                            : "")
                     });
                 }
                 var src = layerSource(L);
@@ -828,11 +886,17 @@
 
         var videosTxt = pathRow("Clips folder:", true, "Where are the speaker clips?");
         var quotesTxt = pathRow("Quotes file:", false, "The quote list (.csv / .txt / .srt)");
+        var alphaTxt = pathRow("Alpha clips:", true,
+            "Optional: the pre-keyed / cut-out version of each clip");
 
         // ---- which layers ---------------------------------------------------
         var layerGroup = row("Video layer:");
         var videoDrop = layerGroup.add("dropdownlist", undefined, []);
         videoDrop.alignment = ["fill", "center"];
+
+        var alphaGroup = row("Alpha layer:");
+        var alphaDrop = alphaGroup.add("dropdownlist", undefined, []);
+        alphaDrop.alignment = ["fill", "center"];
 
         var textGroup = row("Text layer:");
         var textDrop = textGroup.add("dropdownlist", undefined, []);
@@ -857,14 +921,17 @@
         var cbFit = opts.add("checkbox", undefined,
             "Fit the clip to its comp frame (a 1080p clip fills a 4K slot)");
         cbFit.value = true;
+        var cbFitText = opts.add("checkbox", undefined,
+            "Shrink the type until the quote fits its text box");
+        cbFitText.value = true;
         var cbFolder = opts.add("checkbox", undefined,
             "Collect the finished cards in one Project panel folder");
         cbFolder.value = true;
 
         var list = win.add("listbox", undefined, [], {
-            numberOfColumns: 3, showHeaders: true,
-            columnTitles: ["#", "Clip", "Quote"],
-            columnWidths: [30, 190, 360]
+            numberOfColumns: 4, showHeaders: true,
+            columnTitles: ["#", "Clip", "Alpha", "Quote"],
+            columnWidths: [30, 170, 170, 300]
         });
         list.preferredSize.height = 190;
         list.alignment = ["fill", "fill"];
@@ -885,6 +952,7 @@
         // ---- state ----------------------------------------------------------
 
         var compList = [], videoTargets = [], textTargets = [], plan = [], planWarnings = [];
+        var alphaFiles = [];
 
         function setStatus(m) { status.text = m; }
 
@@ -921,6 +989,17 @@
             if (videoTargets.length) { videoDrop.selection = bestGuess(videoTargets, "footage,video,guest,person,clip"); }
             else { videoDrop.add("item", "-- no footage layer anywhere in this comp --"); videoDrop.selection = 0; }
 
+            alphaDrop.removeAll();
+            alphaDrop.add("item", videoTargets.length
+                ? "(no separate alpha layer)"
+                : "-- no footage layer anywhere in this comp --");
+            for (var a = 0; a < videoTargets.length; a++) {
+                alphaDrop.add("item", videoTargets[a].label);
+            }
+            var alphaHit = videoTargets.length
+                ? bestGuess(videoTargets, "alpha,matte,luma,cutout,key") : -1;
+            alphaDrop.selection = (alphaHit > 0) ? alphaHit + 1 : 0;
+
             textTargets = collectTargets(comp, true);
             textDrop.add("item", textTargets.length
                 ? "(leave the text alone)"
@@ -928,7 +1007,7 @@
             for (var k = 0; k < textTargets.length; k++) {
                 textDrop.add("item", textTargets[k].label);
             }
-            textDrop.selection = textTargets.length ? bestGuess(textTargets, "paragraph,quote,text,body") + 1 : 0;
+            textDrop.selection = textTargets.length ? bestTextGuess(textTargets) + 1 : 0;
         }
 
         /** Everything needed is filled in, so show the plan without being asked. */
@@ -950,14 +1029,34 @@
             return 0;
         }
 
+        /**
+         * The quote body is the text layer already carrying the most words -
+         * a speaker name or a job title is always shorter. Matching on the
+         * layer name alone picked the name line and cropped the quote.
+         */
+        function bestTextGuess(targets) {
+            var best = 0, bestLen = -1;
+            for (var i = 0; i < targets.length; i++) {
+                var len = targets[i].sample ? targets[i].sample.length : 0;
+                if (len > bestLen) { bestLen = len; best = i; }
+            }
+            return best;
+        }
+
         tplDrop.onChange = function () { refreshLayers(); maybeScan(); };
         videoDrop.onChange = function () { maybeScan(); };
+        alphaDrop.onChange = function () { maybeScan(); };
         textDrop.onChange = function () { maybeScan(); };
         refreshBtn.onClick = function () { refreshComps(); maybeScan(); };
 
         function selectedVideoTarget() {
             if (!videoTargets.length || !videoDrop.selection) { return null; }
             return videoTargets[videoDrop.selection.index] || null;
+        }
+
+        function selectedAlphaTarget() {
+            if (!alphaDrop.selection || alphaDrop.selection.index === 0) { return null; }
+            return videoTargets[alphaDrop.selection.index - 1] || null;
         }
 
         function selectedTextTarget() {
@@ -991,6 +1090,20 @@
             if (files.length === 0) { setStatus("No clips found under " + folder.fsName); return; }
             if (cbSort.value) { sortFilesNaturally(files); }
 
+            alphaFiles = [];
+            var aTarget = selectedAlphaTarget();
+            var af = trim(alphaTxt.text);
+            if (aTarget && af !== "") {
+                var aFolder = new Folder(af);
+                if (!aFolder.exists) { setStatus("Alpha clips folder not found: " + af); return; }
+                scanVideos(aFolder, alphaFiles, 0);
+                if (cbSort.value) { sortFilesNaturally(alphaFiles); }
+                if (alphaFiles.length === 0) {
+                    planWarnings.push("No clips found in the alpha folder - the cut-out will " +
+                                      "keep the template's own alpha.");
+                }
+            }
+
             var quotes = parseQuotesFile(qFile, planWarnings);
             if (quotes.length === 0) {
                 setStatus("No quotes read from \"" + qFile.name + "\" - press Help for the formats.");
@@ -1008,12 +1121,15 @@
                     planWarnings.push("Quote " + (i + 1) + " has no clip: the folder holds only " +
                                       files.length + " clip(s).");
                 }
-                plan.push({ index: i + 1, quote: quotes[i], file: clip, ok: !!clip });
+                var alphaClip = (i < alphaFiles.length) ? alphaFiles[i] : null;
+                plan.push({ index: i + 1, quote: quotes[i], file: clip, alpha: alphaClip, ok: !!clip });
 
                 var it = list.add("item", String(i + 1));
                 it.subItems[0].text = clip ? clip.name : "-- no clip --";
-                it.subItems[1].text = quotes[i].text.length > 90
-                    ? quotes[i].text.substring(0, 90) + "..."
+                it.subItems[1].text = alphaClip ? alphaClip.name
+                    : (aTarget && af !== "" ? "-- none --" : "");
+                it.subItems[2].text = quotes[i].text.length > 80
+                    ? quotes[i].text.substring(0, 80) + "..."
                     : quotes[i].text;
             }
 
@@ -1047,15 +1163,18 @@
             // Only the comps on the way down to the guest and the quote get a
             // private copy per card. Duplicating the outer comp alone would
             // leave all nine cards sharing one REPLACE-FOOTAGE precomp.
+            var aTarget = selectedAlphaTarget();
             var targetIds = {};
             targetIds[vTarget.comp.id] = true;
             if (tTarget) { targetIds[tTarget.comp.id] = true; }
+            if (aTarget) { targetIds[aTarget.comp.id] = true; }
             var cloneIds = compsLeadingTo(comp, targetIds);
 
             var log = [];
             log.push("Quote Cards - " + new Date().toString());
             log.push("Template: " + comp.name);
             log.push("Video layer: " + vTarget.label + "   (in comp \"" + vTarget.comp.name + "\")");
+            log.push("Alpha layer: " + (aTarget ? aTarget.label + "   (in comp \"" + aTarget.comp.name + "\")" : "none"));
             log.push("Text layer:  " + (tTarget ? tTarget.label + "   (in comp \"" + tTarget.comp.name + "\")" : "none"));
             var cloneNames = [];
             for (var ci = 1; ci <= app.project.numItems; ci++) {
@@ -1101,10 +1220,25 @@
                     if (cbReset.value) { resetClipTiming(target, mapping[vTarget.comp.id], log); }
                     if (cbFit.value) { fitToComp(target, mapping[vTarget.comp.id], log); }
 
+                    if (aTarget && row.alpha) {
+                        var alphaFootage = importFootage(row.alpha, cache, planWarnings);
+                        if (alphaFootage) {
+                            var aLayer = mapping[aTarget.comp.id].layer(aTarget.index);
+                            aLayer.replaceSource(alphaFootage, false);
+                            log.push("    alpha: " + row.alpha.name);
+                            if (cbReset.value) { resetClipTiming(aLayer, mapping[aTarget.comp.id], log); }
+                            if (cbFit.value) { fitToComp(aLayer, mapping[aTarget.comp.id], log); }
+                        }
+                    } else if (aTarget && !row.alpha) {
+                        log.push("    note: no alpha clip for this card, template alpha kept");
+                    }
+
                     if (tTarget) {
-                        if (setLayerText(mapping[tTarget.comp.id].layer(tTarget.index),
-                                         row.quote.text, log)) {
-                            log.push("    text set (" + row.quote.text.length + " chars)");
+                        var textLayer = mapping[tTarget.comp.id].layer(tTarget.index);
+                        if (setLayerText(textLayer, row.quote.text, log)) {
+                            log.push("    text set (" + row.quote.text.length + " chars) on " +
+                                     textLayer.name);
+                            if (cbFitText.value) { fitTextToBox(textLayer, log); }
                         }
                     }
                     if (cbMatte.value) {
@@ -1160,15 +1294,22 @@
                 "2. Clips folder - the speaker clips. Their order decides who\n" +
                 "   appears: 1st clip goes to quote 1, 2nd to quote 2, and so on,\n" +
                 "   sorted naturally so clip2 comes before clip10.\n\n" +
-                "3. Quotes file - one of:\n" +
+                "3. Alpha clips (optional) - if your template keeps a separate\n" +
+                "   cut-out layer (REPLACE-ALPHA-FOOTAGE and the like), point this\n" +
+                "   at a folder of pre-keyed clips in the SAME order. A script\n" +
+                "   cannot rotoscope a person, so the cut-outs have to be made\n" +
+                "   first - in Roto Brush, a keyer, or an external tool - and this\n" +
+                "   just drops the right one into each card.\n\n" +
+                "4. Quotes file - one of:\n" +
                 "     .csv  the wordiest column is taken as the quote text\n" +
                 "     .txt  one quote per paragraph (or per line)\n" +
                 "     .srt  the \"# ...\" comment under each timecode block\n\n" +
-                "4. Scan shows each quote next to the clip it will get.\n" +
+                "5. Scan shows each quote next to the clip it will get.\n" +
                 "   Nothing is created yet.\n\n" +
-                "5. Create cards duplicates the template once per quote, swaps\n" +
+                "6. Create cards duplicates the template once per quote, swaps\n" +
                 "   the clip, and sets the text - keeping the font, size, colour\n" +
-                "   and alignment you already set.\n\n" +
+                "   and alignment you already set, shrinking the type if the quote\n" +
+                "   is longer than the box it lands in.\n\n" +
                 "Masks and effects survive: the layer is reused, not rebuilt.\n\n" +
                 "If a card comes out BLACK, the placeholder it replaced was trimmed\n" +
                 "out of a long recording, so the layer was reading past the end of\n" +
