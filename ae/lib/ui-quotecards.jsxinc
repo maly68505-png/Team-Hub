@@ -161,8 +161,8 @@
                 alphaDrop.add("item", videoTargets[a].label);
             }
             var alphaHit = videoTargets.length
-                ? bestGuess(videoTargets, "alpha,matte,luma,cutout,key") : -1;
-            alphaDrop.selection = (alphaHit > 0) ? alphaHit + 1 : 0;
+                ? guessIndex(videoTargets, "alpha,matte,luma,cutout,key") : -1;
+            alphaDrop.selection = (alphaHit >= 0) ? alphaHit + 1 : 0;
 
             textTargets = collectTargets(comp, true);
             textDrop.add("item", textTargets.length
@@ -181,8 +181,13 @@
             doScan();
         }
 
-        /** Prefer a layer whose path names it, e.g. REPLACE-FOOTAGE or the guest. */
-        function bestGuess(targets, hintCSV) {
+        /**
+         * Index of the first layer whose path names it, or -1 for no match.
+         * Returning 0 as the miss value made "found nothing" indistinguishable
+         * from "matched the very first layer", which quietly left the alpha
+         * slot unfilled.
+         */
+        function guessIndex(targets, hintCSV) {
             var hints = hintCSV.split(",");
             for (var h = 0; h < hints.length; h++) {
                 var want = normalize(hints[h]);
@@ -190,7 +195,13 @@
                     if (normalize(targets[i].label).indexOf(want) !== -1) { return i; }
                 }
             }
-            return 0;
+            return -1;
+        }
+
+        /** Same, but falls back to the first layer when nothing is named. */
+        function bestGuess(targets, hintCSV) {
+            var i = guessIndex(targets, hintCSV);
+            return i < 0 ? 0 : i;
         }
 
         /**
@@ -348,6 +359,32 @@
             // private copy per card. Duplicating the outer comp alone would
             // leave all nine cards sharing one REPLACE-FOOTAGE precomp.
             var aTarget = selectedAlphaTarget();
+
+            // This has now failed silently several times running: the cards
+            // come out with the guest's whole studio behind them and nothing
+            // stops to say the cut-out slot was never filled.
+            var slot = "";
+            for (var q = 0; q < videoTargets.length; q++) {
+                var lbl = normalize(videoTargets[q].label);
+                if (lbl.indexOf("alpha") !== -1 || lbl.indexOf("matte") !== -1) {
+                    slot = videoTargets[q].label;
+                    break;
+                }
+            }
+            if (slot !== "" && (!aTarget || alphaFiles.length === 0)) {
+                var why = !aTarget
+                    ? "no layer is chosen under \"Alpha layer\""
+                    : "the \"Alpha clips\" folder has no clips in it";
+                if (!confirm("The cut-out will NOT be replaced.\n\n" +
+                             "This template has a cut-out slot:\n    " + slot + "\n\n" +
+                             "but " + why + ", so every card will keep the guest's own\n" +
+                             "background instead of being cut out.\n\n" +
+                             "Build the cards anyway?", true)) {
+                    setStatus("Stopped: fill in \"Alpha layer\" and \"Alpha clips\", then try again.");
+                    return;
+                }
+            }
+
             var targetIds = {};
             targetIds[vTarget.comp.id] = true;
             if (tTarget) { targetIds[tTarget.comp.id] = true; }

@@ -51,9 +51,11 @@ var sb = new Function('VIDEO_EXT','MIN_MATCH_SCORE','TOL','AVLayer','TextLayer',
 
 // bestGuess lives in the panel, but it is what auto-picks the right layer
 var uiSrc = fs.readFileSync(path.join(AE, 'lib', 'ui-quotecards.jsxinc'), 'utf8');
-var guessSrc = uiSrc.slice(uiSrc.indexOf('        function bestGuess('), uiSrc.indexOf('        tplDrop.onChange'));
+var guessSrc = uiSrc.slice(uiSrc.indexOf('        function guessIndex('), uiSrc.indexOf('        tplDrop.onChange'));
 var normSrc = core.slice(core.indexOf('    function normalize('), core.indexOf('    function pad('));
-var bestGuess = new Function(normSrc + guessSrc + '\nreturn bestGuess;')();
+var guessed = new Function(normSrc + guessSrc + '\nreturn { bestGuess: bestGuess, guessIndex: guessIndex };')();
+var bestGuess = guessed.bestGuess;
+var guessIndex = guessed.guessIndex;
 
 var pass = 0, fail = 0;
 function eq(label, got, want) {
@@ -101,6 +103,20 @@ console.log('\n-- the right layer is pre-selected --');
 eq('guest auto-picked over bg and glow',
    bestGuess(vids, 'footage,video,guest,person,clip'), 1);
 eq('quote auto-picked', bestGuess(texts, 'paragraph,quote,text,body'), 0);
+
+console.log('\n-- "found nothing" is not the same as "found the first one" --');
+// this is what left the cut-out slot silently unfilled
+eq('a real match reports its index', guessIndex(vids, 'footage'), 1);
+eq('a match on the FIRST entry still reports 0', guessIndex(vids, 'bg'), 0);
+eq('no match reports -1, not 0', guessIndex(vids, 'nothinglikethis'), -1);
+eq('bestGuess still falls back to 0', bestGuess(vids, 'nothinglikethis'), 0);
+eq('alpha hint finds nothing in this template', guessIndex(vids, 'alpha,matte,luma'), -1);
+
+var withAlpha = [
+  { label: 'RENDER > REPLACE-ALPHA-FOOTAGE > 1: guest alpha' },
+  { label: 'RENDER > REPLACE-FOOTAGE > 1: guest' }
+];
+eq('an alpha slot at index 0 is detected', guessIndex(withAlpha, 'alpha,matte,luma'), 0);
 
 console.log('\n-- only comps on the path get copied --');
 var targetIds = {};

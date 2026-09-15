@@ -168,9 +168,10 @@ user copies one file and nothing else.
 node ae/tests/parse.test.js       # 46 assertions
 node ae/tests/discovery.test.js   # 11 assertions
 node ae/tests/quotes.test.js      # 19 assertions
-node ae/tests/nested.test.js      # 28 assertions
+node ae/tests/nested.test.js      # 34 assertions
 node ae/tests/timing.test.js      # 16 assertions
 node ae/tests/text.test.js        # 20 assertions
+node ae/tests/alpha.test.js       # 15 assertions
 ```
 
 `parse.test.js` covers timecode parsing across every accepted format, range and
