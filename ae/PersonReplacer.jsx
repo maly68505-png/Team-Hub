@@ -477,6 +477,109 @@
     }
 
     /**
+     * The guests, read out of the producer's own form.
+     *
+     * A form lists them once, under a heading, as "Name - Title". The quote
+     * table in the same form does NOT say who said what - that is the one
+     * thing nobody can read off the paper - so the speaker column still has
+     * to be filled in by someone who watched the episode. What it should not
+     * take is typing a name and an eighty-nine character title nine times:
+     * with the guests known, "2" or a surname in that column is enough.
+     *
+     * Returns [{ name, role }].
+     */
+    var GUEST_HEADINGS = "الضيوف,الضيف,المتحدثون,guests,speakers,panel";
+
+    function parseGuestList(text) {
+        var lines = String(text || "").split(/\r\n|\r|\n/);
+        var out = [], inBlock = false, i;
+        for (i = 0; i < lines.length; i++) {
+            var raw = lines[i];
+            var L = trim(raw);
+            if (L === "") { continue; }
+
+            var heads = GUEST_HEADINGS.split(","), isHead = false;
+            for (var h = 0; h < heads.length; h++) {
+                if (looseHas(L, heads[h]) && L.length < 40) { isHead = true; break; }
+            }
+            if (isHead) { inBlock = true; continue; }
+            if (!inBlock) { continue; }
+
+            // a bullet keeps us in the block; anything else ends it
+            var bullet = L.replace(/^[\-\u2013\u2014\u2022\*\u00b7]+\s*/, "");
+            if (bullet === L) { inBlock = false; continue; }
+            if (trim(bullet) === "") { continue; }
+
+            // "Name - Title" wins over "Name, Title": a title can hold commas
+            // of its own, and this one does.
+            var name = trim(bullet), role = "";
+            var dash = bullet.search(/\s[\u2013\u2014-]\s/);
+            if (dash > 0) {
+                name = trim(bullet.substring(0, dash));
+                role = trim(bullet.substring(dash).replace(/^\s[\u2013\u2014-]\s/, ""));
+            } else {
+                var comma = bullet.indexOf("،");
+                if (comma < 0) { comma = bullet.indexOf(","); }
+                if (comma > 0) {
+                    name = trim(bullet.substring(0, comma));
+                    role = trim(bullet.substring(comma + 1));
+                }
+            }
+            if (name !== "") { out.push({ name: name, role: role }); }
+        }
+        return out;
+    }
+
+    /**
+     * Turns what someone typed in the speaker column into a guest. Accepts the
+     * guest's number in the list, any part of their name, or the whole name.
+     * Returns null when it matches nobody - a wrong name is worse than none.
+     */
+    function resolveGuest(value, guests) {
+        var v = trim(value || "");
+        if (v === "" || !guests || guests.length === 0) { return null; }
+
+        var n = parseInt(v.replace(/[\u0660-\u0669]/g, function (d) {
+            return String(d.charCodeAt(0) - 0x0660);
+        }), 10);
+        if (!isNaN(n) && String(n) === v.replace(/[\u0660-\u0669]/g, function (d) {
+            return String(d.charCodeAt(0) - 0x0660);
+        }) && n >= 1 && n <= guests.length) {
+            return guests[n - 1];
+        }
+
+        var i, hit = null, hits = 0;
+        for (i = 0; i < guests.length; i++) {
+            if (guests[i].name === v) { return guests[i]; }
+        }
+        for (i = 0; i < guests.length; i++) {
+            if (looseHas(guests[i].name, v) || looseHas(v, guests[i].name)) {
+                hit = guests[i]; hits++;
+            }
+        }
+        return hits === 1 ? hit : null;      // ambiguous is not a match
+    }
+
+    /** The producer's form sitting next to the quote list, if there is one. */
+    var GUEST_FILES = "episode-info.txt,guests.txt,الضيوف.txt";
+
+    function guestListBeside(file) {
+        try {
+            if (!file || !file.parent) { return ""; }
+            var names = GUEST_FILES.split(",");
+            for (var i = 0; i < names.length; i++) {
+                var f = new File(file.parent.fsName + "/" + trim(names[i]));
+                if (f.exists && f.open("r")) {
+                    var raw = f.read();
+                    f.close();
+                    return raw;
+                }
+            }
+        } catch (e) {}
+        return "";
+    }
+
+    /**
      * Reads the quote list. Accepts:
      *   .csv  - the wordiest column is taken as the quote text
      *   .srt  - the "# ..." comment carried under each timecode block
@@ -567,15 +670,33 @@
             }
         }
 
+        // "3" or a surname in the speaker column becomes the guest's full name
+        // and title, taken from the producer's own form.
+        var guests = parseGuestList(guestListBeside(file));
+        var resolved = 0;
+
         var quotes = [];
         for (i = 0; i < texts.length; i++) {
+            var sp = speakers[i] || "", ro = roles[i] || "";
+            if (guests.length) {
+                var g = resolveGuest(sp, guests);
+                if (g) {
+                    if (g.name !== sp) { resolved++; }
+                    sp = g.name;
+                    if (ro === "") { ro = g.role; }
+                }
+            }
             quotes.push({
                 index: i + 1,
                 text: texts[i],
-                speaker: speakers[i] || "",
-                role: roles[i] || "",
+                speaker: sp,
+                role: ro,
                 speakerColumn: speakerHeader
             });
+        }
+        if (resolved > 0) {
+            warnings.push(resolved + " speaker(s) filled in from the guest list beside the " +
+                          "quote file - check the Name column before building.");
         }
         return quotes;
     }

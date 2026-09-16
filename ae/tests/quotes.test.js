@@ -22,6 +22,7 @@ var sb = new Function('VIDEO_EXT', 'MIN_MATCH_SCORE', 'TOL',
   ' parseCSVText: parseCSVText, pickTextColumn: pickTextColumn, parseQuotesFile: parseQuotesFile,' +
   ' pickLabelledColumn: pickLabelledColumn, looseHas: looseHas,' +
   ' digitsOf: digitsOf, alphaMatchScore: alphaMatchScore, pairAlphaClips: pairAlphaClips,' +
+  ' parseGuestList: parseGuestList, resolveGuest: resolveGuest,' +
   ' SPEAKER_HINTS: SPEAKER_HINTS, ROLE_HINTS: ROLE_HINTS };'
 )("mp4,mov,m4v,avi,mkv,mxf,webm,mpg,mpeg,wmv,mts,m2ts,r3d,braw,dv,3gp", 2, 0.0005);
 
@@ -189,6 +190,34 @@ eq('arabic names match, where normalize() would flatten them to nothing',
    nm(sb.pairAlphaClips([F('01_دلال.mp4')], [F('01_دلال_alpha.mov')], w4)),
    ['01_دلال_alpha.mov']);
 eq('so no warning is raised for them', w4.length, 0);
+
+console.log('\n-- the guests, read out of the producer\'s form --');
+var form = fs.readFileSync(path.join(ROOT, 'examples/episode-elections/episode-info.txt'), 'utf8');
+var guests = sb.parseGuestList(form);
+eq('three guests found', guests.length, 3);
+eq('name and title split on the dash, not on the comma inside the title',
+   [guests[0].name, guests[0].role.indexOf('عضو المجلس الثوري')],
+   ['الدكتورة دلال عريقات', 0]);
+eq('the title keeps its own comma', guests[0].role.indexOf('،') > 0, true);
+eq('the other two', [guests[1].name, guests[2].name],
+   ['محمد مشينش', 'الدكتور إيهاب محارمة']);
+eq('lines above the heading are not guests',
+   sb.parseGuestList('المقدم: عثمان\n\nالضيوف:\n  - أ — ب\n').length, 1);
+eq('the block ends at the first line that is not a bullet',
+   sb.parseGuestList('الضيوف:\n - أ — ب\nالمحاور:\n - جـ — د\n').length, 1);
+
+console.log('\n-- a short key in the speaker column becomes the whole guest --');
+eq('by position', sb.resolveGuest('2', guests).name, 'محمد مشينش');
+eq('by arabic digits', sb.resolveGuest('٣', guests).name, 'الدكتور إيهاب محارمة');
+eq('by part of the name', sb.resolveGuest('مشينش', guests).name, 'محمد مشينش');
+eq('by the whole name', sb.resolveGuest('الدكتورة دلال عريقات', guests).name, 'الدكتورة دلال عريقات');
+eq('a number nobody has matches nobody', sb.resolveGuest('9', guests), null);
+eq('a name nobody has matches nobody', sb.resolveGuest('سمير', guests), null);
+eq('an empty cell matches nobody', sb.resolveGuest('', guests), null);
+// A wrong name on a real person's quote is worse than no name at all.
+var twins = [{ name: 'أحمد علي', role: 'x' }, { name: 'أحمد سمير', role: 'y' }];
+eq('an ambiguous part of a name is refused, not guessed', sb.resolveGuest('أحمد', twins), null);
+eq('but the full one still resolves', sb.resolveGuest('أحمد سمير', twins).name, 'أحمد سمير');
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
