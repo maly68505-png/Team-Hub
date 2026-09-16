@@ -35,7 +35,8 @@ Object.defineProperty(CompItem.prototype, 'numLayers', { get: function () { retu
 CompItem.prototype.layer = function (i) { return this.layers[i - 1]; };
 
 var sb = new Function('VIDEO_EXT', 'MIN_MATCH_SCORE', 'TOL', 'CompItem', 'AVLayer',
-  block + '\nreturn { disableRotoEffects: disableRotoEffects, enableLayersShowing: enableLayersShowing };'
+  block + '\nreturn { disableRotoEffects: disableRotoEffects, enableLayersShowing: enableLayersShowing,'
+        + ' disableRotoInCard: disableRotoInCard };'
 )("mp4,mov", 2, 0.0005, CompItem, AVLayer);
 
 var pass = 0, fail = 0;
@@ -97,6 +98,39 @@ eq('reported', /switched on 2 layer\(s\)/.test(log[0]), true);
 log = [];
 eq('running again changes nothing', sb.enableLayersShowing(card, alphaComp, log), 0);
 eq('and stays quiet', log.length, 0);
+
+console.log('\n-- the matte is not on the layer that gets swapped --');
+// In the real template the strokes sit on the RENDER-LEFT layer that SHOWS
+// the precomp, not on the clip inside it. Aiming at the swapped clip found
+// nothing, so a stale matte stayed live on every card and punched pieces of
+// the new video over the quote box.
+log = [];
+var swappedClip = new AVLayer('Aktbas_004.mov', null, []);
+var footageComp = new CompItem('REPLACE- FOOTAGE 04', [swappedClip]);
+var mattedLayer = new AVLayer('Opject MAtte on the guest', footageComp, [
+  new Effect('Motion Tile', 'ADBE Tile'),
+  new Effect('Object Matte', 'ADBE Samurai')
+]);
+var sharedElements = new CompItem('ELEMENTS', [
+  new AVLayer('glow', null, [new Effect('Object Matte', 'ADBE Samurai')])
+]);
+var cardComp = new CompItem('RENDER-LEFT 04', [
+  mattedLayer,
+  new AVLayer('shared elements', sharedElements, [])
+]);
+var mapping = {};
+mapping[1000] = cardComp;
+mapping[1001] = footageComp;
+
+eq('aiming at the swapped clip finds nothing', sb.disableRotoEffects(swappedClip, log), 0);
+eq('walking the card finds it', sb.disableRotoInCard(cardComp, mapping, log), 1);
+eq('and it is off', mattedLayer._fx.property(2).enabled, false);
+eq('Motion Tile is left alone', mattedLayer._fx.property(1).enabled, true);
+eq('a comp this card does not own is untouched',
+   sharedElements.layer(1)._fx.property(1).enabled, true);
+
+log = [];
+eq('running it twice changes nothing', sb.disableRotoInCard(cardComp, mapping, log), 0);
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

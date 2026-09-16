@@ -1189,6 +1189,41 @@
     }
 
     /**
+     * Turns off every Roto Brush / Object Matte in the comps THIS CARD OWNS.
+     *
+     * Aiming at the swapped layer alone missed them: the strokes are painted
+     * on the layer that shows the precomp - "Opject MAtte on the guest" -
+     * not on the clip inside it.
+     *
+     * And a stale matte does not fail quietly. It still punches whatever
+     * region it thinks is the guest through everything behind it, so a piece
+     * of the new clip gets drawn over the quote box and the card looks like
+     * its box never opened. Which region, and how much damage, depends on the
+     * clip - which is why it hits one card and not its neighbours.
+     *
+     * Shared comps are left alone: they belong to every other card too.
+     */
+    function disableRotoInCard(card, mapping, log) {
+        var owned = {}, seen = {}, n = 0, k;
+        for (k in mapping) {
+            if (mapping.hasOwnProperty(k)) { owned[mapping[k].id] = true; }
+        }
+        walk(card, 0);
+        return n;
+
+        function walk(comp, depth) {
+            if (!comp || seen[comp.id] || depth > 8 || !owned[comp.id]) { return; }
+            seen[comp.id] = true;
+            for (var i = 1; i <= comp.numLayers; i++) {
+                var L = comp.layer(i);
+                n += disableRotoEffects(L, log);
+                var src = layerSource(L);
+                if (src instanceof CompItem) { walk(src, depth + 1); }
+            }
+        }
+    }
+
+    /**
      * A template usually ships its alpha route switched off. Once a cut-out
      * clip is dropped in, the layers showing it have to be turned back on or
      * nothing changes on screen.
@@ -1490,8 +1525,8 @@
             return ["auto", "straight", "premul-white", "premul-black"][i];
         }
         var cbAlphaPath = opts.add("checkbox", undefined,
-            "Switch the template over to the cut-out clip (turn its alpha layers on, and turn " +
-            "off Roto Brush that was painted on the template's own footage)");
+            "Turn off Roto Brush / Object Matte painted on the template's own clip - it cannot " +
+            "follow yours - and switch on the cut-out layers if you supplied cut-outs");
         cbAlphaPath.value = true;
         var cbFitText = opts.add("checkbox", undefined,
             "Shrink the type until the quote fits its text box");
@@ -1987,7 +2022,7 @@
             log.push("Comps copied per card: " + cloneNames.join(", "));
             log.push("");
 
-            var cache = {}, made = 0, skipped = 0, created = [];
+            var cache = {}, made = 0, skipped = 0, created = [], rotoOff = 0;
 
             app.beginUndoGroup("Quote Cards - build " + plan.length + " cards");
             try {
@@ -2059,7 +2094,6 @@
                             if (cbFit.value) { fitToComp(aLayer, mapping[aTarget.comp.id], log); }
                             if (cbAlphaPath.value) {
                                 enableLayersShowing(card, mapping[aTarget.comp.id], log);
-                                disableRotoEffects(target, log);
                             }
                         }
                     } else if (aTarget && !row.alpha) {
@@ -2077,6 +2111,15 @@
                             if (cbFitText.value) { fitTextToBox(textLayer, log); }
                         }
                     }
+                    // Not conditional on having a cut-out: the strokes belong to
+                    // the clip that WAS there either way, and leaving them on is
+                    // what paints a piece of this clip over the quote box.
+                    if (cbAlphaPath.value) {
+                        var killed = disableRotoInCard(card, mapping, log);
+                        rotoOff += killed;
+                        if (killed === 0) { log.push("    no Roto Brush / Object Matte to turn off"); }
+                    }
+
                     writeSideText(nTarget, "name", row.quote.speaker, mapping, log);
                     writeSideText(rTarget, "title", row.quote.role, mapping, log);
 
@@ -2124,6 +2167,12 @@
                   "Name    -> " + (nTarget ? nTarget.comp.name + " / " + nTarget.layer.name : "not touched") +
                   "\n" +
                   "Title   -> " + (rTarget ? rTarget.comp.name + " / " + rTarget.layer.name : "not touched") +
+                  (rotoOff > 0
+                        ? "\n\nTurned off " + rotoOff + " Roto Brush / Object Matte effect(s) " +
+                          "painted on the template's own clip. The guest now sits BEHIND the " +
+                          "quote box instead of in front of it - a matte drawn for another " +
+                          "clip was punching pieces of video over the box."
+                        : "") +
                   (planWarnings.length
                         ? "\n\nWarnings: " + planWarnings.length + "\n" +
                           planWarnings.slice(0, 4).join("\n") +

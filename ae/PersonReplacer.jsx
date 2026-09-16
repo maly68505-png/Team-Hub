@@ -1187,6 +1187,41 @@
     }
 
     /**
+     * Turns off every Roto Brush / Object Matte in the comps THIS CARD OWNS.
+     *
+     * Aiming at the swapped layer alone missed them: the strokes are painted
+     * on the layer that shows the precomp - "Opject MAtte on the guest" -
+     * not on the clip inside it.
+     *
+     * And a stale matte does not fail quietly. It still punches whatever
+     * region it thinks is the guest through everything behind it, so a piece
+     * of the new clip gets drawn over the quote box and the card looks like
+     * its box never opened. Which region, and how much damage, depends on the
+     * clip - which is why it hits one card and not its neighbours.
+     *
+     * Shared comps are left alone: they belong to every other card too.
+     */
+    function disableRotoInCard(card, mapping, log) {
+        var owned = {}, seen = {}, n = 0, k;
+        for (k in mapping) {
+            if (mapping.hasOwnProperty(k)) { owned[mapping[k].id] = true; }
+        }
+        walk(card, 0);
+        return n;
+
+        function walk(comp, depth) {
+            if (!comp || seen[comp.id] || depth > 8 || !owned[comp.id]) { return; }
+            seen[comp.id] = true;
+            for (var i = 1; i <= comp.numLayers; i++) {
+                var L = comp.layer(i);
+                n += disableRotoEffects(L, log);
+                var src = layerSource(L);
+                if (src instanceof CompItem) { walk(src, depth + 1); }
+            }
+        }
+    }
+
+    /**
      * A template usually ships its alpha route switched off. Once a cut-out
      * clip is dropped in, the layers showing it have to be turned back on or
      * nothing changes on screen.
