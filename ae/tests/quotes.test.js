@@ -136,8 +136,10 @@ eq('and the wordiest column is still the quote, not one of those two',
 // rather than let one name stand in for everybody the way it used to.
 eq('the one guest we know is on her own quote', rq[1].speaker, 'الدكتورة دلال عريقات');
 eq('her title came through whole', rq[1].role.indexOf('المجلس الثوري') > 0, true);
-eq('the other eight are still waiting for a name',
-   rq.filter(function (r) { return r.speaker === ''; }).length, 8);
+eq('the guests we know are on their own quotes',
+   [rq[0].speaker, rq[2].speaker], ['محمد مشينش', 'الدكتور إيهاب محارمة']);
+eq('the rest are still waiting for a name',
+   rq.filter(function (r) { return r.speaker === ''; }).length, 6);
 
 console.log('\n-- pairing a clip with its cut-out --');
 function F(n) { return { name: n, fsName: '/clips/' + n }; }
