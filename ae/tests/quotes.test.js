@@ -113,9 +113,13 @@ eq('txt carries no speaker either',
 
 // This is the live file, and its speaker column is headed but blank - the
 // panel has to tell the user that rather than silently reusing one name.
-eq('real quotes.csv names its speaker column', rq[0].speakerColumn, 'المتحدث (يتملى يدوياً)');
-eq('real quotes.csv leaves every speaker empty',
-   rq.filter(function (r) { return r.speaker !== ''; }).length, 0);
+eq('real quotes.csv names its speaker column', rq[0].speakerColumn, 'المتحدث');
+eq('real quotes.csv has a job-title column beside it',
+   sb.pickLabelledColumn(sb.parseCSVText(realCsv), sb.ROLE_HINTS, -1) >= 0, true);
+eq('and the wordiest column is still the quote, not one of those two',
+   rq[0].text.indexOf('السلطة تُريد'), 0);
+eq('both are still blank - the panel has to say so rather than reuse one name',
+   rq.filter(function (r) { return r.speaker !== '' || r.role !== ''; }).length, 0);
 
 console.log('\n-- pairing a clip with its cut-out --');
 function F(n) { return { name: n, fsName: '/clips/' + n }; }
