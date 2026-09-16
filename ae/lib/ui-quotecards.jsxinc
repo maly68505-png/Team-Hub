@@ -604,7 +604,7 @@
             log.push("Comps copied per card: " + cloneNames.join(", "));
             log.push("");
 
-            var cache = {}, made = 0, skipped = 0, created = [], rotoOff = 0;
+            var cache = {}, made = 0, skipped = 0, created = [], rotoOff = 0, mattePending = [];
 
             app.beginUndoGroup("Quote Cards - build " + plan.length + " cards");
             try {
@@ -699,14 +699,17 @@
                     if (cbAlphaPath.value) {
                         var box = tTarget ? layerShowing(card, mapping[tTarget.comp.id]) : null;
                         if (box) {
-                            var moved = moveMattesBehindBox(card, box, log);
+                            var moved = moveMattesBehindBox(card, box,
+                                                            mapping[vTarget.comp.id], log);
                             rotoOff += moved;
                             if (moved === 0) {
-                                log.push("    nothing with a stale matte sits in front of the box");
+                                log.push("    nothing in front of the box draws the guest");
+                                mattePending.push(suffix + " (nothing found in front of the box)");
                             }
                         } else {
                             log.push("    note: could not find the layer holding the quote box, " +
                                      "so the template's matte was left exactly as it was");
+                            mattePending.push(suffix + " (quote box not found)");
                         }
                     }
 
@@ -762,6 +765,11 @@
                           "Brush / Object Matte was painted on the template's own clip, so it " +
                           "could bleed over the box. The guest keeps his colours and stays in " +
                           "front of the red circle - he just cannot overlap the box any more."
+                        : "") +
+                  (mattePending.length
+                        ? "\n\nCOULD NOT DO THAT ON CARD(S): " + mattePending.join(", ") +
+                          "\nThose cards can still have a piece of the clip drawn over the box. " +
+                          "Send the log file and it will say why."
                         : "") +
                   (planWarnings.length
                         ? "\n\nWarnings: " + planWarnings.length + "\n" +

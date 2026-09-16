@@ -1218,26 +1218,34 @@
      * sits, so the guest keeps his colours and stays in front - which is the
      * whole point of that layer.
      */
-    function moveMattesBehindBox(card, boxLayer, log) {
+    function moveMattesBehindBox(card, boxLayer, footageComp, log) {
         if (!card || !boxLayer) { return 0; }
         var pending = [], i;
         for (i = 1; i <= card.numLayers; i++) {
             var L = card.layer(i);
             if (L === boxLayer) { continue; }
             if (L.index > boxLayer.index) { continue; }     // already behind it
-            if (rotoEffectName(L) === "") { continue; }
-            pending.push(L);
+
+            // Any layer in front of the box that draws the guest's footage can
+            // cover the box. Whether a Roto Brush can be SEEN on it is beside
+            // the point - one card moved and another did not, on the same run,
+            // because the effect went unrecognised there. Showing the footage
+            // is the property that matters.
+            var shows = footageComp && compContains(layerSource(L), footageComp, 0);
+            var fx = rotoEffectName(L);
+            if (!shows && fx === "") { continue; }
+            pending.push({ layer: L, name: L.name, why: fx !== "" ? "its \"" + fx + "\"" : "it" });
         }
         for (i = 0; i < pending.length; i++) {
-            var name = pending[i].name, fx = rotoEffectName(pending[i]);
             try {
-                pending[i].moveAfter(boxLayer);
-                log.push("    moved \"" + name + "\" behind \"" + boxLayer.name + "\" - its \"" +
-                         fx + "\" was painted on the template's own clip, so it can bleed over " +
-                         "the box. Behind it, the box always wins; the guest keeps his colours " +
-                         "and stays in front of the circle.");
+                pending[i].layer.moveAfter(boxLayer);
+                log.push("    moved \"" + pending[i].name + "\" behind \"" + boxLayer.name +
+                         "\" - " + pending[i].why + " was painted on the template's own clip, so " +
+                         "it can bleed over the box. Behind it, the box always wins; the guest " +
+                         "keeps his colours and stays in front of the circle.");
             } catch (e) {
-                log.push("    note: could not move \"" + name + "\" behind the box: " + e.toString());
+                log.push("    note: could not move \"" + pending[i].name + "\" behind the box: " +
+                         e.toString());
                 return i;
             }
         }
@@ -2044,7 +2052,7 @@
             log.push("Comps copied per card: " + cloneNames.join(", "));
             log.push("");
 
-            var cache = {}, made = 0, skipped = 0, created = [], rotoOff = 0;
+            var cache = {}, made = 0, skipped = 0, created = [], rotoOff = 0, mattePending = [];
 
             app.beginUndoGroup("Quote Cards - build " + plan.length + " cards");
             try {
@@ -2139,14 +2147,17 @@
                     if (cbAlphaPath.value) {
                         var box = tTarget ? layerShowing(card, mapping[tTarget.comp.id]) : null;
                         if (box) {
-                            var moved = moveMattesBehindBox(card, box, log);
+                            var moved = moveMattesBehindBox(card, box,
+                                                            mapping[vTarget.comp.id], log);
                             rotoOff += moved;
                             if (moved === 0) {
-                                log.push("    nothing with a stale matte sits in front of the box");
+                                log.push("    nothing in front of the box draws the guest");
+                                mattePending.push(suffix + " (nothing found in front of the box)");
                             }
                         } else {
                             log.push("    note: could not find the layer holding the quote box, " +
                                      "so the template's matte was left exactly as it was");
+                            mattePending.push(suffix + " (quote box not found)");
                         }
                     }
 
@@ -2202,6 +2213,11 @@
                           "Brush / Object Matte was painted on the template's own clip, so it " +
                           "could bleed over the box. The guest keeps his colours and stays in " +
                           "front of the red circle - he just cannot overlap the box any more."
+                        : "") +
+                  (mattePending.length
+                        ? "\n\nCOULD NOT DO THAT ON CARD(S): " + mattePending.join(", ") +
+                          "\nThose cards can still have a piece of the clip drawn over the box. " +
+                          "Send the log file and it will say why."
                         : "") +
                   (planWarnings.length
                         ? "\n\nWarnings: " + planWarnings.length + "\n" +

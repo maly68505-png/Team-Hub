@@ -127,7 +127,7 @@ eq('a comp that is not in there is not claimed',
    sb.compContains(footageComp, paraComp, 0), false);
 
 eq('the matte starts in front of the box', matte.index < boxLayer.index, true);
-eq('one layer moved', sb.moveMattesBehindBox(cardComp, boxLayer, log), 1);
+eq('one layer moved', sb.moveMattesBehindBox(cardComp, boxLayer, footageComp, log), 1);
 eq('now behind the box', matte.index > boxLayer.index, true);
 eq('but still in front of the red circle', matte.index < circle.index, true);
 eq('the layer is still switched on', matte.enabled, true);
@@ -135,7 +135,29 @@ eq('and its matte is untouched', matte._fx.property(2).enabled, true);
 eq('said why', /can bleed over the box/.test(log[0]), true);
 
 log = [];
-eq('running it again moves nothing', sb.moveMattesBehindBox(cardComp, boxLayer, log), 0);
+eq('running it again moves nothing',
+   sb.moveMattesBehindBox(cardComp, boxLayer, footageComp, log), 0);
+
+console.log('\n-- a matte the effect scan cannot see still gets moved --');
+// One card moved and another did not on the same run. Recognising the effect
+// is not a dependable test; drawing the guest's footage in front of the box
+// is, and that is the thing that can cover it.
+log = [];
+var hidden = new AVLayer('guest, effect unreadable', footageComp, []);
+var box2 = new AVLayer('G - 2', boxComp, []);
+var card2 = new CompItem('RENDER-LEFT 04', [hidden, box2, mainClip]);
+eq('no effect is detected on it', sb.rotoEffectName(hidden), '');
+eq('it moves anyway, because it shows the footage',
+   sb.moveMattesBehindBox(card2, box2, footageComp, log), 1);
+eq('and it is now behind the box', hidden.index > box2.index, true);
+
+log = [];
+var unrelated = new AVLayer('logo', new CompItem('LOGO', []), []);
+var box3 = new AVLayer('G - 2', boxComp, []);
+var card3 = new CompItem('RENDER-LEFT 05', [unrelated, box3]);
+eq('a layer that draws neither is left where it is',
+   sb.moveMattesBehindBox(card3, box3, footageComp, log), 0);
+eq('still in front', unrelated.index < box3.index, true);
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
