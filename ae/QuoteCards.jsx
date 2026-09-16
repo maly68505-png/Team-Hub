@@ -1182,49 +1182,66 @@
         return "";
     }
 
-    /**
-     * Switches OFF the layers whose cut-out was painted on the template's own
-     * clip, in the comps this card owns.
-     *
-     * Disabling the effect instead would be worse than the bug it fixes. On
-     * the IQTEBAS template that layer reports masks=0 and trackMatte=none, so
-     * the Roto Brush is the only thing giving it an alpha at all: turn the
-     * effect off and the layer becomes a full, opaque frame of video sitting
-     * on top of the quote box. The layer exists solely to show the guest in
-     * FRONT of the box, and with a matte it can no longer honour, the layer
-     * is what has to go.
-     *
-     * The guest is still drawn - by the layers below the box - and the box
-     * now sits cleanly on top. Real cut-out clips are what buy the overlap
-     * back.
-     *
-     * Shared comps are skipped; they belong to every other card too.
-     */
-    function disableStaleMatteLayers(card, mapping, log) {
-        var owned = {}, seen = {}, n = 0, k;
-        for (k in mapping) {
-            if (mapping.hasOwnProperty(k)) { owned[mapping[k].id] = true; }
+    /** Is `want` this comp, or anywhere inside it? */
+    function compContains(comp, want, depth) {
+        if (!(comp instanceof CompItem) || depth > 8) { return false; }
+        if (comp === want) { return true; }
+        for (var i = 1; i <= comp.numLayers; i++) {
+            if (compContains(layerSource(comp.layer(i)), want, depth + 1)) { return true; }
         }
-        walk(card, 0);
-        return n;
+        return false;
+    }
 
-        function walk(comp, depth) {
-            if (!comp || seen[comp.id] || depth > 8 || !owned[comp.id]) { return; }
-            seen[comp.id] = true;
-            for (var i = 1; i <= comp.numLayers; i++) {
-                var L = comp.layer(i);
-                var fxName = rotoEffectName(L);
-                if (fxName !== "" && L.enabled) {
-                    L.enabled = false;
-                    n++;
-                    log.push("    switched OFF layer \"" + L.name + "\" in \"" + comp.name +
-                             "\" - its \"" + fxName + "\" was painted on the template's own " +
-                             "clip and was drawing pieces of this one over the quote box");
-                }
-                var src = layerSource(L);
-                if (src instanceof CompItem) { walk(src, depth + 1); }
+    /** The layer in `card` that shows `wantComp`, directly or nested. */
+    function layerShowing(card, wantComp) {
+        if (!card || !wantComp) { return null; }
+        for (var i = 1; i <= card.numLayers; i++) {
+            if (compContains(layerSource(card.layer(i)), wantComp, 0)) { return card.layer(i); }
+        }
+        return null;
+    }
+
+    /**
+     * Moves the guest's cut-out layer BEHIND the quote box, instead of
+     * switching it off.
+     *
+     * Switching it off cost far more than it fixed. The template draws the
+     * guest twice: a desaturated copy at the bottom of the stack, tinted by an
+     * adjustment layer, which is the background - and this one, in full
+     * colour, above the red circle. Turn this one off and every card loses the
+     * guest's real colours and drops him behind the circle, to fix a bleed on
+     * one card.
+     *
+     * The strokes are still stale, so this layer can still let a piece of the
+     * clip through where it should not. Below the box it no longer matters:
+     * the box is drawn after it and covers it. Above the red circle it still
+     * sits, so the guest keeps his colours and stays in front - which is the
+     * whole point of that layer.
+     */
+    function moveMattesBehindBox(card, boxLayer, log) {
+        if (!card || !boxLayer) { return 0; }
+        var pending = [], i;
+        for (i = 1; i <= card.numLayers; i++) {
+            var L = card.layer(i);
+            if (L === boxLayer) { continue; }
+            if (L.index > boxLayer.index) { continue; }     // already behind it
+            if (rotoEffectName(L) === "") { continue; }
+            pending.push(L);
+        }
+        for (i = 0; i < pending.length; i++) {
+            var name = pending[i].name, fx = rotoEffectName(pending[i]);
+            try {
+                pending[i].moveAfter(boxLayer);
+                log.push("    moved \"" + name + "\" behind \"" + boxLayer.name + "\" - its \"" +
+                         fx + "\" was painted on the template's own clip, so it can bleed over " +
+                         "the box. Behind it, the box always wins; the guest keeps his colours " +
+                         "and stays in front of the circle.");
+            } catch (e) {
+                log.push("    note: could not move \"" + name + "\" behind the box: " + e.toString());
+                return i;
             }
         }
+        return pending.length;
     }
 
     /**
@@ -1529,8 +1546,9 @@
             return ["auto", "straight", "premul-white", "premul-black"][i];
         }
         var cbAlphaPath = opts.add("checkbox", undefined,
-            "Turn off Roto Brush / Object Matte painted on the template's own clip - it cannot " +
-            "follow yours - and switch on the cut-out layers if you supplied cut-outs");
+            "Keep the template's Roto Brush / Object Matte behind the quote box - it was painted " +
+            "on the template's own clip, so it can bleed over the box - and switch on the " +
+            "cut-out layers if you supplied cut-outs");
         cbAlphaPath.value = true;
         var cbFitText = opts.add("checkbox", undefined,
             "Shrink the type until the quote fits its text box");
@@ -2119,9 +2137,17 @@
                     // the clip that WAS there either way, and leaving them on is
                     // what paints a piece of this clip over the quote box.
                     if (cbAlphaPath.value) {
-                        var killed = disableStaleMatteLayers(card, mapping, log);
-                        rotoOff += killed;
-                        if (killed === 0) { log.push("    no Roto Brush / Object Matte to turn off"); }
+                        var box = tTarget ? layerShowing(card, mapping[tTarget.comp.id]) : null;
+                        if (box) {
+                            var moved = moveMattesBehindBox(card, box, log);
+                            rotoOff += moved;
+                            if (moved === 0) {
+                                log.push("    nothing with a stale matte sits in front of the box");
+                            }
+                        } else {
+                            log.push("    note: could not find the layer holding the quote box, " +
+                                     "so the template's matte was left exactly as it was");
+                        }
                     }
 
                     writeSideText(nTarget, "name", row.quote.speaker, mapping, log);
@@ -2172,11 +2198,10 @@
                   "\n" +
                   "Title   -> " + (rTarget ? rTarget.comp.name + " / " + rTarget.layer.name : "not touched") +
                   (rotoOff > 0
-                        ? "\n\nSwitched off " + rotoOff + " layer(s) whose Roto Brush / Object " +
-                          "Matte was painted on the template's own clip. The guest now sits " +
-                          "BEHIND the quote box instead of in front of it - that matte was " +
-                          "drawing pieces of your clip over the box. Supply cut-out clips to " +
-                          "get the overlap back."
+                        ? "\n\nMoved " + rotoOff + " layer(s) behind the quote box. Their Roto " +
+                          "Brush / Object Matte was painted on the template's own clip, so it " +
+                          "could bleed over the box. The guest keeps his colours and stays in " +
+                          "front of the red circle - he just cannot overlap the box any more."
                         : "") +
                   (planWarnings.length
                         ? "\n\nWarnings: " + planWarnings.length + "\n" +

@@ -29,14 +29,26 @@ AVLayer.prototype.property = function (n) {
 };
 function CompItem(name, layers) {
   this.id = NEXT++; this.name = name; this.layers = layers || [];
-  for (var i = 0; i < this.layers.length; i++) { this.layers[i].index = i + 1; }
+  this._renumber();
 }
+CompItem.prototype._renumber = function () {
+  for (var i = 0; i < this.layers.length; i++) {
+    this.layers[i].index = i + 1; this.layers[i]._comp = this;
+  }
+};
+AVLayer.prototype.moveAfter = function (other) {
+  var c = this._comp, from = c.layers.indexOf(this);
+  c.layers.splice(from, 1);
+  c.layers.splice(c.layers.indexOf(other) + 1, 0, this);
+  c._renumber();
+};
 Object.defineProperty(CompItem.prototype, 'numLayers', { get: function () { return this.layers.length; } });
 CompItem.prototype.layer = function (i) { return this.layers[i - 1]; };
 
 var sb = new Function('VIDEO_EXT', 'MIN_MATCH_SCORE', 'TOL', 'CompItem', 'AVLayer',
   block + '\nreturn { rotoEffectName: rotoEffectName, enableLayersShowing: enableLayersShowing,'
-        + ' disableStaleMatteLayers: disableStaleMatteLayers };'
+        + ' moveMattesBehindBox: moveMattesBehindBox, layerShowing: layerShowing,'
+        + ' compContains: compContains };'
 )("mp4,mov", 2, 0.0005, CompItem, AVLayer);
 
 var pass = 0, fail = 0;
@@ -89,45 +101,41 @@ log = [];
 eq('running again changes nothing', sb.enableLayersShowing(card, alphaComp, log), 0);
 eq('and stays quiet', log.length, 0);
 
-console.log('\n-- the matte is not on the layer that gets swapped --');
-// In the real template the strokes sit on the RENDER-LEFT layer that SHOWS
-// the precomp, not on the clip inside it. Aiming at the swapped clip found
-// nothing, so a stale matte stayed live on every card and punched pieces of
-// the new video over the quote box.
+console.log('\n-- the stale matte goes behind the box, not off --');
+// Switching the layer off was worse than the bleed it fixed: the template
+// draws the guest twice, and this is the copy carrying his real colours,
+// sitting above the red circle. Behind the box it can no longer bleed, and
+// it keeps both of those.
 log = [];
 var swappedClip = new AVLayer('Aktbas_004.mov', null, []);
 var footageComp = new CompItem('REPLACE- FOOTAGE 04', [swappedClip]);
-var mattedLayer = new AVLayer('Opject MAtte on the guest', footageComp, [
+var paraComp = new CompItem('REPLACE-PARAGRAPH 04', [new AVLayer('PARAGRAPH', null, [])]);
+var boxComp = new CompItem('G - 2 04', [new AVLayer('REPLACE-PARAGRAPH', paraComp, [])]);
+
+var matte = new AVLayer('Opject MAtte on the guest', footageComp, [
   new Effect('Motion Tile', 'ADBE Tile'),
   new Effect('Object Matte', 'ADBE Samurai')
 ]);
-var sharedElements = new CompItem('ELEMENTS', [
-  new AVLayer('glow', null, [new Effect('Object Matte', 'ADBE Samurai')])
-]);
-var cardComp = new CompItem('RENDER-LEFT 04', [
-  mattedLayer,
-  new AVLayer('shared elements', sharedElements, [])
-]);
-var mapping = {};
-mapping[1000] = cardComp;
-mapping[1001] = footageComp;
+var boxLayer = new AVLayer('G - 2', boxComp, []);
+var circle = new AVLayer('Big-circle', new CompItem('RED CIRCLE', []), []);
+var mainClip = new AVLayer('MAIN CLIP', footageComp, []);
+var cardComp = new CompItem('RENDER-LEFT 04', [matte, boxLayer, circle, mainClip]);
 
-eq('the swapped clip itself carries no matte', sb.rotoEffectName(swappedClip), '');
-eq('walking the card finds the layer that does',
-   sb.disableStaleMatteLayers(cardComp, mapping, log), 1);
+eq('the box layer is found through its nested comps',
+   sb.layerShowing(cardComp, paraComp) === boxLayer, true);
+eq('a comp that is not in there is not claimed',
+   sb.compContains(footageComp, paraComp, 0), false);
 
-// The LAYER goes, not the effect. That layer reports masks=0 and
-// trackMatte=none in the real template, so the Roto Brush is the only thing
-// giving it an alpha - disabling the effect would leave a full opaque frame
-// of video sitting on top of the quote box.
-eq('the layer is switched off', mattedLayer.enabled, false);
-eq('the effect itself is left alone', mattedLayer._fx.property(2).enabled, true);
-eq('a comp this card does not own is untouched',
-   sharedElements.layer(1)._fx.property(1).enabled, true);
-eq('and that layer stays visible', sharedElements.layer(1).enabled, true);
+eq('the matte starts in front of the box', matte.index < boxLayer.index, true);
+eq('one layer moved', sb.moveMattesBehindBox(cardComp, boxLayer, log), 1);
+eq('now behind the box', matte.index > boxLayer.index, true);
+eq('but still in front of the red circle', matte.index < circle.index, true);
+eq('the layer is still switched on', matte.enabled, true);
+eq('and its matte is untouched', matte._fx.property(2).enabled, true);
+eq('said why', /can bleed over the box/.test(log[0]), true);
 
 log = [];
-eq('running it twice changes nothing', sb.disableStaleMatteLayers(cardComp, mapping, log), 0);
+eq('running it again moves nothing', sb.moveMattesBehindBox(cardComp, boxLayer, log), 0);
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
