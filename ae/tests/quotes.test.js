@@ -97,6 +97,20 @@ eq('speaker read per row', [nq[0].speaker, nq[1].speaker], ['Dr Bashar', 'Layla 
 eq('title read per row', [nq[0].role, nq[1].role], ['Politics professor', 'Analyst']);
 eq('column header reported back', nq[0].speakerColumn, 'Speaker');
 
+console.log('\n-- a job title longer than the quote it sits under --');
+// Dalal Erekat's real title runs 89 characters against a 93-character quote.
+// Four characters decided which one got written across the card.
+var longTitle = 'عضو المجلس الثوري لحركة فتح وأستاذة الدبلوماسية وحل الصراعات في الجامعة العربية الأمريكية';
+var titled = '#,Speaker,Title,quote\n' +
+             '1,د. دلال عريقات,' + longTitle + ',اقتباس قصير\n' +
+             '2,د. دلال عريقات,' + longTitle + ',اقتباس قصير تاني\n';
+var tq = sb.parseQuotesFile(new FileStub('q.csv', titled), []);
+eq('the quote is still the quote, not the title', tq[0].text, 'اقتباس قصير');
+eq('and the title went to its own field', tq[0].role, longTitle);
+eq('a named column is out of the wordiest-column running',
+   sb.pickTextColumn(sb.parseCSVText(titled), { 1: true, 2: true }), 3);
+eq('without the skip it would have won', sb.pickTextColumn(sb.parseCSVText(titled)), 2);
+
 console.log('\n-- a file that names nobody --');
 // A headed but blank column is not the same as no column: the panel says
 // "fill this in" for the first and "add one" for the second.
@@ -118,8 +132,12 @@ eq('real quotes.csv has a job-title column beside it',
    sb.pickLabelledColumn(sb.parseCSVText(realCsv), sb.ROLE_HINTS, -1) >= 0, true);
 eq('and the wordiest column is still the quote, not one of those two',
    rq[0].text.indexOf('السلطة تُريد'), 0);
-eq('both are still blank - the panel has to say so rather than reuse one name',
-   rq.filter(function (r) { return r.speaker !== '' || r.role !== ''; }).length, 0);
+// Card 2 is filled in; the other eight are not, and the panel has to say so
+// rather than let one name stand in for everybody the way it used to.
+eq('the one guest we know is on her own quote', rq[1].speaker, 'الدكتورة دلال عريقات');
+eq('her title came through whole', rq[1].role.indexOf('المجلس الثوري') > 0, true);
+eq('the other eight are still waiting for a name',
+   rq.filter(function (r) { return r.speaker === ''; }).length, 8);
 
 console.log('\n-- pairing a clip with its cut-out --');
 function F(n) { return { name: n, fsName: '/clips/' + n }; }

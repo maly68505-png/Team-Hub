@@ -416,12 +416,20 @@
         return out;
     }
 
-    /** The column carrying the quotes is simply the wordiest one. */
-    function pickTextColumn(rows) {
+    /**
+     * The column carrying the quotes is the wordiest one, ignoring any column
+     * in `skip`. A guest's job title can easily run longer than the quote it
+     * sits under - "member of the Revolutionary Council of Fatah and professor
+     * of diplomacy..." beats most quotes - and then the wordiest-column rule
+     * writes the title across the card as though it were the quote. Columns a
+     * header has already claimed are taken out of the running.
+     */
+    function pickTextColumn(rows, skip) {
         var widest = 0, c;
         for (var r = 0; r < rows.length; r++) { widest = Math.max(widest, rows[r].length); }
-        var best = 0, bestScore = -1;
+        var best = -1, bestScore = -1;
         for (c = 0; c < widest; c++) {
+            if (skip && skip[c]) { continue; }
             var total = 0, n = 0;
             for (var i = 1; i < rows.length; i++) {          // skip a header row
                 if (rows[i].length <= c) { continue; }
@@ -431,7 +439,7 @@
             var score = n ? total / n : 0;
             if (score > bestScore) { bestScore = score; best = c; }
         }
-        return best;
+        return best < 0 ? 0 : best;
     }
 
     /**
@@ -492,7 +500,18 @@
         if (ext === "csv" || ext === "tsv") {
             var rows = parseCSVText(ext === "tsv" ? raw.replace(/\t/g, ",") : raw);
             if (rows.length === 0) { return []; }
-            var col = pickTextColumn(rows);
+
+            // Claim the named columns first, then pick the quote from what is
+            // left. Done the other way round, a long job title wins the
+            // "wordiest column" contest and lands on the quote layer.
+            var speakerCol = pickLabelledColumn(rows, SPEAKER_HINTS, -1);
+            var roleCol = pickLabelledColumn(rows, ROLE_HINTS, -1);
+            if (roleCol === speakerCol) { roleCol = -1; }
+            var skip = {};
+            if (speakerCol >= 0) { skip[speakerCol] = true; }
+            if (roleCol >= 0) { skip[roleCol] = true; }
+
+            var col = pickTextColumn(rows, skip);
             var start = 1;
             var head = rows[0].length > col ? trim(rows[0][col]) : "";
             var bodyLen = 0, bodyN = 0;
@@ -503,13 +522,11 @@
             if (head !== "" && avg > 0 && head.length >= avg * 0.6) {
                 start = 0;                                   // no header after all
             }
-            var speakerCol = -1, roleCol = -1;
-            if (start === 1) {                               // only a real header can name them
-                speakerCol = pickLabelledColumn(rows, SPEAKER_HINTS, col);
-                roleCol = pickLabelledColumn(rows, ROLE_HINTS, col);
-                if (roleCol === speakerCol) { roleCol = -1; }
-                if (speakerCol >= 0) { speakerHeader = trim(rows[0][speakerCol]); }
-            }
+            // A header that names a column IS a header, whatever the length
+            // heuristic above decided about the quote column.
+            if (speakerCol >= 0 || roleCol >= 0) { start = 1; }
+            if (speakerCol >= 0) { speakerHeader = trim(rows[0][speakerCol]); }
+
             for (i = start; i < rows.length; i++) {
                 if (rows[i].length > col) {
                     var v = trim(rows[i][col]);
@@ -945,7 +962,8 @@
                         var doc = L.property("ADBE Text Properties").property("ADBE Text Document").value;
                         boxInfo = "   " + (doc.boxText
                             ? "BOX " + doc.boxTextSize[0] + "x" + doc.boxTextSize[1]
-                            : "POINT TEXT (cannot auto-fit)") + "   size=" + doc.fontSize;
+                            : "POINT TEXT (cannot auto-fit)") + "   size=" + doc.fontSize +
+                            "   font=" + doc.font;
                     } catch (e4) {}
                     out.push(pad4 + "      text:   \"" +
                              (words.length > 60 ? words.substring(0, 60) + "..." : words) +
