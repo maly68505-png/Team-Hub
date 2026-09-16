@@ -365,6 +365,7 @@
             if (cbSort.value) { sortFilesNaturally(files); }
 
             alphaFiles = [];
+            var sameFolderNote = "";
             var aTarget = selectedAlphaTarget();
             var af = trim(alphaTxt.text);
             if (aTarget && af !== "") {
@@ -375,6 +376,15 @@
                 if (alphaFiles.length === 0) {
                     planWarnings.push("No clips found in the alpha folder - the cut-out will " +
                                       "keep the template's own alpha.");
+                }
+                // Pointing "Alpha clips" at the ordinary clips is not a cut-out
+                // route, it is the same video twice - and every card then warns
+                // about a missing alpha channel with no hint as to why.
+                if (aFolder.fsName === folder.fsName) {
+                    sameFolderNote = "  |  \"Alpha clips\" is the SAME folder as \"Clips " +
+                        "folder\" - those are the original videos, not cut-outs, so they carry " +
+                        "no transparency. Clear \"Alpha clips\" and set \"Alpha layer\" to " +
+                        "\"(no separate alpha layer)\" until you have real cut-outs.";
                 }
             }
 
@@ -478,7 +488,7 @@
                         "other. Point them at different layers.";
             }
 
-            note += pairNote;
+            note += pairNote + sameFolderNote;
 
             if (nTarget && withSpeaker === 0) {
                 note += "  |  THE NAMES WILL NOT CHANGE: " +
@@ -528,12 +538,28 @@
                 }
             }
             if (aTarget && aTarget === vTarget) {
-                setStatus("\"Video layer\" and \"Alpha layer\" are the SAME slot - pick " +
-                          "different ones, or set Alpha layer back to \"(no separate alpha " +
-                          "layer)\".");
+                // Saying "this is wrong" and stopping leaves the user to guess
+                // which of twenty entries is right. Name it.
+                var suggest = -1;
+                for (var sg = 0; sg < videoTargets.length; sg++) {
+                    if (!videoTargets[sg].isEmpty) { suggest = sg; break; }
+                }
+                var realHit = guessIndex(videoTargets, "footage,video,guest,person,clip", true);
+                if (realHit >= 0) { suggest = realHit; }
+
+                setStatus("\"Video layer\" and \"Alpha layer\" are the SAME slot" +
+                          (suggest >= 0 ? " - set Video layer to: " + videoTargets[suggest].label
+                                        : " - pick different ones") + ".");
                 alert("Video layer and Alpha layer both point at:\n\n    " + vTarget.label +
-                      "\n\nThe clip would be written into one place twice and the other slot " +
-                      "left empty. Pick the guest's own footage layer under \"Video layer\".");
+                      "\n\nThat slot is empty, so the clip would be written into it twice and " +
+                      "the guest never swapped.\n\n" +
+                      (suggest >= 0
+                        ? "Set \"Video layer\" to:\n\n    " + videoTargets[suggest].label +
+                          "\n\nand leave \"Alpha layer\" where it is."
+                        : "This comp has no real footage layer - check you picked the comp you " +
+                          "actually render.") +
+                      "\n\nNo cut-out clips? Clear \"Alpha clips\" and set \"Alpha layer\" " +
+                      "to \"(no separate alpha layer)\" - the cards still build.");
                 return;
             }
 
