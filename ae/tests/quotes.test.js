@@ -136,10 +136,19 @@ eq('and the wordiest column is still the quote, not one of those two',
 // rather than let one name stand in for everybody the way it used to.
 eq('the one guest we know is on her own quote', rq[1].speaker, 'الدكتورة دلال عريقات');
 eq('her title came through whole', rq[1].role.indexOf('المجلس الثوري') > 0, true);
+// Three guests across nine quotes, so a name repeats - which is exactly why
+// one name could sit on all nine cards without looking obviously wrong.
 eq('the guests we know are on their own quotes',
-   [rq[0].speaker, rq[2].speaker], ['محمد مشينش', 'الدكتور إيهاب محارمة']);
-eq('the rest are still waiting for a name',
-   rq.filter(function (r) { return r.speaker === ''; }).length, 6);
+   [rq[0].speaker, rq[1].speaker, rq[2].speaker],
+   ['محمد مشينش', 'الدكتورة دلال عريقات', 'الدكتور إيهاب محارمة']);
+eq('a guest who speaks more than once keeps the same name and title',
+   [rq[5].speaker === rq[0].speaker, rq[5].role === rq[0].role], [true, true]);
+eq('three distinct guests, not one', (function () {
+   var seen = {}, n = 0;
+   rq.forEach(function (r) { if (r.speaker && !seen[r.speaker]) { seen[r.speaker] = 1; n++; } });
+   return n;
+}()), 3);
+eq('card 9 is still unnamed rather than guessed', rq[8].speaker, '');
 
 console.log('\n-- pairing a clip with its cut-out --');
 function F(n) { return { name: n, fsName: '/clips/' + n }; }
