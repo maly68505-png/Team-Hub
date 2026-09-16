@@ -30,9 +30,9 @@
                 var picked = isFolder ? Folder.selectDialog(prompt) : File.openDialog(prompt);
                 if (!picked) { return; }
                 txt.text = picked.fsName;
-                maybeScan();          // setting .text from code fires no onChange
+                adoptThenScan();      // setting .text from code fires no onChange
             };
-            txt.onChange = function () { maybeScan(); };
+            txt.onChange = function () { adoptThenScan(); };
             return txt;
         }
 
@@ -248,7 +248,39 @@
             return -1;
         }
 
+        /**
+         * A setup file next to the quote list is how a second editor, on a
+         * different machine, inherits the layer choices instead of guessing
+         * them. Only the choices are taken - the paths in it are somebody
+         * else's.
+         */
+        var lastPresetTried = "";
+        function maybeAdoptPreset() {
+            var qp = trim(quotesTxt.text);
+            if (qp === "" || qp === lastPresetTried) { return ""; }
+            lastPresetTried = qp;
+            var pf = presetBeside(qp);
+            if (!pf) { return ""; }
+            try {
+                if (!pf.open("r")) { return ""; }
+                var raw = pf.read();
+                pf.close();
+                var hits = applySetup(textToSetup(raw));
+                return hits > 0
+                    ? "  |  setup adopted from " + PRESET_NAME + " next to the quote list (" +
+                      hits + " choice(s))"
+                    : "";
+            } catch (e) { return ""; }
+        }
+
         /** Everything needed is filled in, so show the plan without being asked. */
+        function adoptThenScan() {
+            presetNote = maybeAdoptPreset();
+            maybeScan();
+        }
+
+        var presetNote = "";
+
         function maybeScan() {
             if (!template()) { return; }
             if (trim(videosTxt.text) === "" || trim(quotesTxt.text) === "") { return; }
@@ -489,7 +521,7 @@
                         "other. Point them at different layers.";
             }
 
-            note += pairNote + sameFolderNote;
+            note += pairNote + sameFolderNote + presetNote;
 
             if (nTarget && withSpeaker === 0) {
                 note += "  |  THE NAMES WILL NOT CHANGE: " +
@@ -739,6 +771,11 @@
                 for (var w = 0; w < planWarnings.length; w++) { log.push("  - " + planWarnings[w]); }
             }
 
+            // The setup is worth more than the log to the next person who opens
+            // this episode folder on another machine.
+            saveToMachine();
+            var presetPath = writePreset(trim(quotesTxt.text), planWarnings);
+
             var logPath = "";
             try {
                 var qf2 = new File(trim(quotesTxt.text));
@@ -779,6 +816,9 @@
                           planWarnings.slice(0, 4).join("\n") +
                           (planWarnings.length > 4 ? "\n..." : "")
                         : "") +
+                  (presetPath ? "\n\nSetup saved to " + PRESET_NAME + " next to the quote " +
+                                "list. Send that file with the episode and the next machine " +
+                                "picks up these same layer choices." : "") +
                   (logPath ? "\n\nDetails:\n" + logPath : "") +
                   "\n\nOne Ctrl/Cmd+Z undoes all of it.");
         }
@@ -800,6 +840,142 @@
                 log.push("    " + what + " set: \"" + value + "\" on " + layer.name);
                 if (cbFitText.value) { fitTextToBox(layer, log); }
             }
+        }
+
+        // ------------------------------------------------- remembering the setup
+        //
+        // The layer choices belong to the TEMPLATE, not to the machine or the
+        // episode, so an editor should pick them once and never again - and a
+        // second editor on another machine should not have to guess them at
+        // all. They are stored by their full path label, which is the same
+        // wherever the project is opened.
+
+        var PRESET_NAME = "QuoteCards_setup.txt";
+
+        function currentSetup() {
+            var v = selectedVideoTarget(), a = selectedAlphaTarget();
+            var t = selectedTextTarget(), n = selectedNameTarget(), r = selectedRoleTarget();
+            return {
+                template: template() ? template().name : "",
+                video: v ? v.label : "",
+                alpha: a ? a.label : "",
+                text: t ? t.label : "",
+                name: n ? n.label : "",
+                title: r ? r.label : "",
+                sort: cbSort.value ? "1" : "0",
+                matte: cbMatte.value ? "1" : "0",
+                reset: cbReset.value ? "1" : "0",
+                fit: cbFit.value ? "1" : "0",
+                alphaPath: cbAlphaPath.value ? "1" : "0",
+                fitText: cbFitText.value ? "1" : "0",
+                folder: cbFolder.value ? "1" : "0",
+                alphaMode: String(alphaModeDrop.selection ? alphaModeDrop.selection.index : 0)
+            };
+        }
+
+        function setupToText(o) {
+            var out = [], k;
+            out.push("# Quote Cards setup - keep this next to the quote list.");
+            out.push("# It carries the layer choices, not any file path: paths differ");
+            out.push("# per machine, the template's layers do not.");
+            for (k in o) { if (o.hasOwnProperty(k)) { out.push(k + "\t" + o[k]); } }
+            return out.join("\n");
+        }
+
+        function textToSetup(txt) {
+            var o = {}, lines = String(txt).split(/\r\n|\r|\n/);
+            for (var i = 0; i < lines.length; i++) {
+                if (trim(lines[i]) === "" || lines[i].charAt(0) === "#") { continue; }
+                var tab = lines[i].indexOf("\t");
+                if (tab > 0) { o[trim(lines[i].substring(0, tab))] = lines[i].substring(tab + 1); }
+            }
+            return o;
+        }
+
+        /** Points a dropdown at the entry whose label matches, or leaves it be. */
+        function selectByLabel(drop, targets, label, offset) {
+            if (trim(label || "") === "") { return false; }
+            for (var i = 0; i < targets.length; i++) {
+                if (targets[i].label === label) { drop.selection = i + offset; return true; }
+            }
+            return false;
+        }
+
+        function applySetup(o) {
+            if (!o) { return 0; }
+            var hits = 0, i;
+            if (trim(o.template || "") !== "") {
+                for (i = 0; i < compList.length; i++) {
+                    if (compList[i].name === o.template) { tplDrop.selection = i; hits++; break; }
+                }
+                refreshLayers();                       // the lists belong to that comp
+            }
+            if (selectByLabel(videoDrop, videoTargets, o.video, 0)) { hits++; }
+            if (selectByLabel(alphaDrop, videoTargets, o.alpha, 1)) { hits++; }
+            if (selectByLabel(textDrop, textTargets, o.text, 1)) { hits++; }
+            if (selectByLabel(nameDrop, textTargets, o.name, 1)) { hits++; }
+            if (selectByLabel(roleDrop, textTargets, o.title, 1)) { hits++; }
+
+            function bool(v, cb) { if (v === "0" || v === "1") { cb.value = (v === "1"); } }
+            bool(o.sort, cbSort); bool(o.matte, cbMatte); bool(o.reset, cbReset);
+            bool(o.fit, cbFit); bool(o.alphaPath, cbAlphaPath); bool(o.fitText, cbFitText);
+            bool(o.folder, cbFolder);
+            var am = parseInt(o.alphaMode, 10);
+            if (!isNaN(am) && am >= 0 && am < 4) { alphaModeDrop.selection = am; }
+            return hits;
+        }
+
+        function presetBeside(quotesPath) {
+            try {
+                var qf = new File(trim(quotesPath));
+                if (!qf.parent) { return null; }
+                var pf = new File(qf.parent.fsName + "/" + PRESET_NAME);
+                return pf.exists ? pf : null;
+            } catch (e) { return null; }
+        }
+
+        /** Writes the setup next to the quote list, so it travels with the episode. */
+        function writePreset(quotesPath, problems) {
+            try {
+                var qf = new File(trim(quotesPath));
+                if (!qf.parent) { return ""; }
+                return writeTextFile(new File(qf.parent.fsName + "/" + PRESET_NAME),
+                                     setupToText(currentSetup()), problems);
+            } catch (e) { return ""; }
+        }
+
+        function saveToMachine() {
+            try {
+                var o = currentSetup(), k;
+                o.videosFolder = trim(videosTxt.text);
+                o.alphaFolder = trim(alphaTxt.text);
+                o.quotesFile = trim(quotesTxt.text);
+                for (k in o) {
+                    if (o.hasOwnProperty(k)) {
+                        app.settings.saveSetting(QC_SETTINGS, k, String(o[k]));
+                    }
+                }
+            } catch (e) {}
+        }
+
+        function loadFromMachine() {
+            try {
+                var o = {}, keys = ["template", "video", "alpha", "text", "name", "title",
+                    "sort", "matte", "reset", "fit", "alphaPath", "fitText", "folder",
+                    "alphaMode", "videosFolder", "alphaFolder", "quotesFile"];
+                var any = false;
+                for (var i = 0; i < keys.length; i++) {
+                    if (app.settings.haveSetting(QC_SETTINGS, keys[i])) {
+                        o[keys[i]] = app.settings.getSetting(QC_SETTINGS, keys[i]);
+                        any = true;
+                    }
+                }
+                if (!any) { return; }
+                if (trim(o.videosFolder || "") !== "") { videosTxt.text = o.videosFolder; }
+                if (trim(o.alphaFolder || "") !== "") { alphaTxt.text = o.alphaFolder; }
+                if (trim(o.quotesFile || "") !== "") { quotesTxt.text = o.quotesFile; }
+                applySetup(o);
+            } catch (e) {}
         }
 
         function doReport() {
@@ -921,6 +1097,8 @@
         };
 
         refreshComps();
+        loadFromMachine();          // pick up where this machine left off
+        maybeScan();
         win.onResizing = win.onResize = function () { this.layout.resize(); };
 
         if (win instanceof Window) { win.center(); win.show(); }
