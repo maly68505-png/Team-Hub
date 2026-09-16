@@ -1218,8 +1218,9 @@
      * sits, so the guest keeps his colours and stays in front - which is the
      * whole point of that layer.
      */
-    function moveMattesBehindBox(card, boxLayer, footageComp, log) {
+    function moveMattesBehindBox(card, boxLayer, footageComp, log, moveProblems) {
         if (!card || !boxLayer) { return 0; }
+        moveProblems = moveProblems || [];
         var pending = [], i;
         for (i = 1; i <= card.numLayers; i++) {
             var L = card.layer(i);
@@ -1236,20 +1237,29 @@
             if (!shows && fx === "") { continue; }
             pending.push({ layer: L, name: L.name, why: fx !== "" ? "its \"" + fx + "\"" : "it" });
         }
+        var done = 0;
         for (i = 0; i < pending.length; i++) {
+            var L = pending[i].layer, wasLocked = false;
             try {
-                pending[i].layer.moveAfter(boxLayer);
+                // After Effects refuses to move a locked layer, and the refusal
+                // reads like nothing happened. One card out of nine behaving
+                // differently is what a stray lock looks like from outside.
+                try { wasLocked = L.locked; L.locked = false; } catch (eL) {}
+                L.moveAfter(boxLayer);
+                done++;
                 log.push("    moved \"" + pending[i].name + "\" behind \"" + boxLayer.name +
                          "\" - " + pending[i].why + " was painted on the template's own clip, so " +
                          "it can bleed over the box. Behind it, the box always wins; the guest " +
-                         "keeps his colours and stays in front of the circle.");
+                         "keeps his colours and stays in front of the circle." +
+                         (wasLocked ? "  (the layer was LOCKED - unlocked to move it)" : ""));
             } catch (e) {
-                log.push("    note: could not move \"" + pending[i].name + "\" behind the box: " +
+                moveProblems.push("\"" + pending[i].name + "\": " + e.toString());
+                log.push("    *** could not move \"" + pending[i].name + "\" behind the box: " +
                          e.toString());
-                return i;
             }
+            try { L.locked = wasLocked; } catch (eR) {}
         }
-        return pending.length;
+        return done;
     }
 
     /**
@@ -2147,10 +2157,13 @@
                     if (cbAlphaPath.value) {
                         var box = tTarget ? layerShowing(card, mapping[tTarget.comp.id]) : null;
                         if (box) {
+                            var probs = [];
                             var moved = moveMattesBehindBox(card, box,
-                                                            mapping[vTarget.comp.id], log);
+                                                            mapping[vTarget.comp.id], log, probs);
                             rotoOff += moved;
-                            if (moved === 0) {
+                            if (probs.length) {
+                                mattePending.push(suffix + " -> " + probs.join("; "));
+                            } else if (moved === 0) {
                                 log.push("    nothing in front of the box draws the guest");
                                 mattePending.push(suffix + " (nothing found in front of the box)");
                             }

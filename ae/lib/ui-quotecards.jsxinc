@@ -699,10 +699,13 @@
                     if (cbAlphaPath.value) {
                         var box = tTarget ? layerShowing(card, mapping[tTarget.comp.id]) : null;
                         if (box) {
+                            var probs = [];
                             var moved = moveMattesBehindBox(card, box,
-                                                            mapping[vTarget.comp.id], log);
+                                                            mapping[vTarget.comp.id], log, probs);
                             rotoOff += moved;
-                            if (moved === 0) {
+                            if (probs.length) {
+                                mattePending.push(suffix + " -> " + probs.join("; "));
+                            } else if (moved === 0) {
                                 log.push("    nothing in front of the box draws the guest");
                                 mattePending.push(suffix + " (nothing found in front of the box)");
                             }

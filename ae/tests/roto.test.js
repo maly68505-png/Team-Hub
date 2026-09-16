@@ -138,6 +138,37 @@ log = [];
 eq('running it again moves nothing',
    sb.moveMattesBehindBox(cardComp, boxLayer, footageComp, log), 0);
 
+console.log('\n-- a locked layer is unlocked, moved, and locked again --');
+// After Effects refuses to move a locked layer and the refusal looks like
+// nothing happened - which is what one card out of nine failing looks like.
+log = [];
+var lockedMatte = new AVLayer('Opject MAtte on the guest', footageComp, []);
+lockedMatte.locked = true;
+var lockedBox = new AVLayer('G - 2', boxComp, []);
+var lockedCard = new CompItem('RENDER-LEFT 04', [lockedMatte, lockedBox]);
+var baseMove = AVLayer.prototype.moveAfter;
+AVLayer.prototype.moveAfter = function (other) {
+  if (this.locked) { throw new Error('layer is locked'); }
+  baseMove.call(this, other);
+};
+var probs = [];
+eq('it still moves', sb.moveMattesBehindBox(lockedCard, lockedBox, footageComp, log, probs), 1);
+eq('behind the box now', lockedMatte.index > lockedBox.index, true);
+eq('its lock is put back', lockedMatte.locked, true);
+eq('and the log says it was locked', /was LOCKED/.test(log[0]), true);
+eq('no problem reported', probs.length, 0);
+
+// a failure that is not the lock still reaches the caller verbatim
+AVLayer.prototype.moveAfter = function () { throw new Error('some other refusal'); };
+var probs2 = [], log2 = [];
+var m2 = new AVLayer('Opject MAtte on the guest', footageComp, []);
+var b2 = new AVLayer('G - 2', boxComp, []);
+var c2 = new CompItem('RENDER-LEFT 07', [m2, b2]);
+eq('nothing moved', sb.moveMattesBehindBox(c2, b2, footageComp, log2, probs2), 0);
+eq('and the reason is handed back, not swallowed',
+   probs2.length === 1 && /some other refusal/.test(probs2[0]), true);
+AVLayer.prototype.moveAfter = baseMove;
+
 console.log('\n-- a matte the effect scan cannot see still gets moved --');
 // One card moved and another did not on the same run. Recognising the effect
 // is not a dependable test; drawing the guest's footage in front of the box
