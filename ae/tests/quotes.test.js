@@ -23,6 +23,7 @@ var sb = new Function('VIDEO_EXT', 'MIN_MATCH_SCORE', 'TOL',
   ' pickLabelledColumn: pickLabelledColumn, looseHas: looseHas,' +
   ' digitsOf: digitsOf, alphaMatchScore: alphaMatchScore, pairAlphaClips: pairAlphaClips,' +
   ' parseGuestList: parseGuestList, resolveGuest: resolveGuest,' +
+  ' isNumericColumn: isNumericColumn,' +
   ' SPEAKER_HINTS: SPEAKER_HINTS, ROLE_HINTS: ROLE_HINTS };'
 )("mp4,mov,m4v,avi,mkv,mxf,webm,mpg,mpeg,wmv,mts,m2ts,r3d,braw,dv,3gp", 2, 0.0005);
 
@@ -218,6 +219,26 @@ eq('an empty cell matches nobody', sb.resolveGuest('', guests), null);
 var twins = [{ name: 'أحمد علي', role: 'x' }, { name: 'أحمد سمير', role: 'y' }];
 eq('an ambiguous part of a name is refused, not guessed', sb.resolveGuest('أحمد', twins), null);
 eq('but the full one still resolves', sb.resolveGuest('أحمد سمير', twins).name, 'أحمد سمير');
+
+console.log('\n-- a sheet nobody has filled in yet --');
+// The starter sheet has headers and row numbers and nothing else. The row
+// numbers were the wordiest column by default, so it produced nine cards
+// reading "1", "2", "3" with no warning at all.
+var starter = fs.readFileSync(path.join(ROOT, 'examples/_NEW-EPISODE/quotes.csv'), 'utf8');
+eq('no quotes are invented from it',
+   sb.parseQuotesFile(new FileStub('quotes.csv', starter), []).length, 0);
+
+var numsOnly = sb.parseCSVText('#,when,quote\n1,11:06,\n2,29:35,\n');
+eq('the index column is recognised as numbers', sb.isNumericColumn(numsOnly, 0), true);
+eq('a timecode column is not just numbers', sb.isNumericColumn(numsOnly, 1), false);
+eq('an empty column counts as nothing, not as numbers',
+   sb.isNumericColumn(numsOnly, 2), false);
+eq('arabic digits count as numbers too',
+   sb.isNumericColumn(sb.parseCSVText('#\n١\n٢\n'), 0), true);
+
+// and a real sheet is untouched by all this
+eq('the elections sheet still reads nine quotes', rq.length, 9);
+eq('and still finds the right column', rq[0].text.indexOf('السلطة تُريد'), 0);
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

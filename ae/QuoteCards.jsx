@@ -419,6 +419,19 @@
         return out;
     }
 
+    /** Every filled cell in this column is just a number. */
+    function isNumericColumn(rows, c) {
+        var seen = 0;
+        for (var r = 1; r < rows.length; r++) {
+            if (rows[r].length <= c) { continue; }
+            var v = trim(rows[r][c]);
+            if (v === "") { continue; }
+            seen++;
+            if (!/^[0-9\u0660-\u0669]+$/.test(v)) { return false; }
+        }
+        return seen > 0;
+    }
+
     /**
      * The column carrying the quotes is the wordiest one, ignoring any column
      * in `skip`. A guest's job title can easily run longer than the quote it
@@ -433,6 +446,10 @@
         var best = -1, bestScore = -1;
         for (c = 0; c < widest; c++) {
             if (skip && skip[c]) { continue; }
+            // A column of bare row numbers is not a column of quotes. On a
+            // blank sheet it is the only one with anything in it, and it used
+            // to win - nine cards reading "1", "2", "3" and nothing to say so.
+            if (isNumericColumn(rows, c)) { continue; }
             var total = 0, n = 0;
             for (var i = 1; i < rows.length; i++) {          // skip a header row
                 if (rows[i].length <= c) { continue; }
