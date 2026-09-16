@@ -756,7 +756,7 @@
      * every card sharing the same precomps - change one card, change them all.
      * `mapping` comes back filled in as original item id -> its clone.
      */
-    function deepDuplicate(comp, cloneIds, mapping, suffix) {
+    function deepDuplicate(comp, cloneIds, mapping, suffix, log) {
         if (mapping[comp.id]) { return mapping[comp.id]; }
         var clone = comp.duplicate();
         if (suffix) { clone.name = comp.name + " " + suffix; }
@@ -765,9 +765,88 @@
             var L = clone.layer(i);
             var src = layerSource(L);
             if (!(src instanceof CompItem) || !cloneIds[src.id]) { continue; }
-            L.replaceSource(deepDuplicate(src, cloneIds, mapping, suffix), false);
+            var remap = captureTimeRemap(L);
+            L.replaceSource(deepDuplicate(src, cloneIds, mapping, suffix, log), false);
+            restoreTimeRemap(L, remap, clone.name + " / " + L.name, log);
         }
         return clone;
+    }
+
+    /**
+     * A template animates its quote box by TIME REMAPPING the comp that holds
+     * it, not by keyframing it in place. Replacing that layer's source is
+     * allowed to rewrite the remap keyframes, and a card whose remap has been
+     * rewritten opens at the wrong moment - or looks like it never opens at
+     * all. Copy them off before the swap.
+     */
+    function captureTimeRemap(layer) {
+        try {
+            if (!layer.timeRemapEnabled) { return null; }
+            var p = layer.property("ADBE Time Remapping");
+            if (!p || p.numKeys === 0) { return null; }
+            var keys = [];
+            for (var i = 1; i <= p.numKeys; i++) {
+                keys.push({
+                    t: p.keyTime(i),
+                    v: p.keyValue(i),
+                    inType: p.keyInInterpolationType(i),
+                    outType: p.keyOutInterpolationType(i)
+                });
+            }
+            return {
+                keys: keys,
+                startTime: layer.startTime,
+                inPoint: layer.inPoint,
+                outPoint: layer.outPoint
+            };
+        } catch (e) { return null; }
+    }
+
+    /** Puts back what captureTimeRemap took, and says so when it was needed. */
+    function restoreTimeRemap(layer, saved, where, log) {
+        if (!saved) { return false; }
+        try {
+            var p = layer.property("ADBE Time Remapping");
+            if (!p) { return false; }
+            var disturbed = (p.numKeys !== saved.keys.length);
+            if (!disturbed) {
+                for (var c = 1; c <= p.numKeys; c++) {
+                    if (Math.abs(p.keyTime(c) - saved.keys[c - 1].t) > TOL ||
+                        Math.abs(p.keyValue(c) - saved.keys[c - 1].v) > TOL) {
+                        disturbed = true;
+                        break;
+                    }
+                }
+            }
+            if (!disturbed && Math.abs(layer.inPoint - saved.inPoint) <= TOL &&
+                Math.abs(layer.outPoint - saved.outPoint) <= TOL) {
+                return false;
+            }
+
+            while (p.numKeys > 0) { p.removeKey(1); }
+            var i;
+            for (i = 0; i < saved.keys.length; i++) {
+                p.setValueAtTime(saved.keys[i].t, saved.keys[i].v);
+            }
+            for (i = 1; i <= p.numKeys; i++) {
+                try {
+                    p.setInterpolationTypeAtKey(i, saved.keys[i - 1].inType,
+                                                   saved.keys[i - 1].outType);
+                } catch (eI) {}
+            }
+            layer.startTime = saved.startTime;
+            layer.inPoint = saved.inPoint;
+            layer.outPoint = saved.outPoint;
+            if (log) {
+                log.push("    time remap on \"" + where + "\" was rewritten by the source " +
+                         "swap - put back (" + saved.keys.length + " key(s), in " +
+                         saved.inPoint.toFixed(2) + "s out " + saved.outPoint.toFixed(2) + "s)");
+            }
+            return true;
+        } catch (e) {
+            if (log) { log.push("    note: could not restore the time remap: " + e.toString()); }
+            return false;
+        }
     }
 
     /** Every comp clone made during one deepDuplicate pass. */
@@ -1480,7 +1559,14 @@
             for (var i = 0; i < videoTargets.length; i++) {
                 videoDrop.add("item", videoTargets[i].label);
             }
-            if (videoTargets.length) { videoDrop.selection = bestGuess(videoTargets, "footage,video,guest,person,clip"); }
+            // The empty cut-out slot is usually called REPLACE-ALPHA-FOOTAGE,
+            // so it answers to "footage" and, sitting above the real clip in
+            // the tree, it used to win. The template's own guest was then
+            // never swapped and the clip was dropped into a comp whose layers
+            // are switched off - the guest stays put and nothing says why.
+            var videoIdx = videoTargets.length
+                ? bestGuess(videoTargets, "footage,video,guest,person,clip", true) : -1;
+            if (videoTargets.length) { videoDrop.selection = videoIdx; }
             else { videoDrop.add("item", "-- no footage layer anywhere in this comp --"); videoDrop.selection = 0; }
 
             alphaDrop.removeAll();
@@ -1490,8 +1576,10 @@
             for (var a = 0; a < videoTargets.length; a++) {
                 alphaDrop.add("item", videoTargets[a].label);
             }
+            // ...and the same target must never be both, or the clip is
+            // written twice into one place and the other slot stays empty.
             var alphaHit = videoTargets.length
-                ? guessIndex(videoTargets, "alpha,matte,luma,cutout,key") : -1;
+                ? guessIndex(videoTargets, "alpha,matte,luma,cutout,key", false, videoIdx) : -1;
             alphaDrop.selection = (alphaHit >= 0) ? alphaHit + 1 : 0;
 
             textTargets = collectTargets(comp, true);
@@ -1556,21 +1644,35 @@
          * from "matched the very first layer", which quietly left the alpha
          * slot unfilled.
          */
-        function guessIndex(targets, hintCSV) {
+        function guessIndex(targets, hintCSV, realOnly, skipIndex) {
             var hints = hintCSV.split(",");
             for (var h = 0; h < hints.length; h++) {
                 var want = normalize(hints[h]);
+                if (want === "") { continue; }        // "" matches every label
                 for (var i = 0; i < targets.length; i++) {
+                    if (i === skipIndex) { continue; }
+                    if (realOnly && targets[i].isEmpty) { continue; }
                     if (normalize(targets[i].label).indexOf(want) !== -1) { return i; }
                 }
             }
             return -1;
         }
 
-        /** Same, but falls back to the first layer when nothing is named. */
-        function bestGuess(targets, hintCSV) {
-            var i = guessIndex(targets, hintCSV);
-            return i < 0 ? 0 : i;
+        /**
+         * Same, but falls back to a layer that really exists before settling
+         * for an empty slot, and only then for the first thing in the list.
+         */
+        function bestGuess(targets, hintCSV, realOnly) {
+            var i = guessIndex(targets, hintCSV, realOnly);
+            if (i >= 0) { return i; }
+            if (realOnly) {
+                i = guessIndex(targets, hintCSV, false);
+                if (i >= 0) { return i; }
+                for (var k = 0; k < targets.length; k++) {
+                    if (!targets[k].isEmpty) { return k; }
+                }
+            }
+            return 0;
         }
 
         /**
@@ -1809,6 +1911,16 @@
                     break;
                 }
             }
+            if (aTarget && aTarget === vTarget) {
+                setStatus("\"Video layer\" and \"Alpha layer\" are the SAME slot - pick " +
+                          "different ones, or set Alpha layer back to \"(no separate alpha " +
+                          "layer)\".");
+                alert("Video layer and Alpha layer both point at:\n\n    " + vTarget.label +
+                      "\n\nThe clip would be written into one place twice and the other slot " +
+                      "left empty. Pick the guest's own footage layer under \"Video layer\".");
+                return;
+            }
+
             var gaveAlphaFolder = trim(alphaTxt.text) !== "";
             if ((slot !== "" || gaveAlphaFolder) && (!aTarget || alphaFiles.length === 0)) {
                 var why = !aTarget
@@ -1869,7 +1981,7 @@
 
                     var suffix = pad(row.index, 2);
                     var mapping = {};
-                    var card = deepDuplicate(comp, cloneIds, mapping, suffix);
+                    var card = deepDuplicate(comp, cloneIds, mapping, suffix, log);
                     var clones = mappedClones(mapping);
                     if (folderItem) {
                         for (var c = 0; c < clones.length; c++) { clones[c].parentFolder = folderItem; }

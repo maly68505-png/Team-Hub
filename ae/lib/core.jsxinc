@@ -731,7 +731,7 @@
      * every card sharing the same precomps - change one card, change them all.
      * `mapping` comes back filled in as original item id -> its clone.
      */
-    function deepDuplicate(comp, cloneIds, mapping, suffix) {
+    function deepDuplicate(comp, cloneIds, mapping, suffix, log) {
         if (mapping[comp.id]) { return mapping[comp.id]; }
         var clone = comp.duplicate();
         if (suffix) { clone.name = comp.name + " " + suffix; }
@@ -740,9 +740,88 @@
             var L = clone.layer(i);
             var src = layerSource(L);
             if (!(src instanceof CompItem) || !cloneIds[src.id]) { continue; }
-            L.replaceSource(deepDuplicate(src, cloneIds, mapping, suffix), false);
+            var remap = captureTimeRemap(L);
+            L.replaceSource(deepDuplicate(src, cloneIds, mapping, suffix, log), false);
+            restoreTimeRemap(L, remap, clone.name + " / " + L.name, log);
         }
         return clone;
+    }
+
+    /**
+     * A template animates its quote box by TIME REMAPPING the comp that holds
+     * it, not by keyframing it in place. Replacing that layer's source is
+     * allowed to rewrite the remap keyframes, and a card whose remap has been
+     * rewritten opens at the wrong moment - or looks like it never opens at
+     * all. Copy them off before the swap.
+     */
+    function captureTimeRemap(layer) {
+        try {
+            if (!layer.timeRemapEnabled) { return null; }
+            var p = layer.property("ADBE Time Remapping");
+            if (!p || p.numKeys === 0) { return null; }
+            var keys = [];
+            for (var i = 1; i <= p.numKeys; i++) {
+                keys.push({
+                    t: p.keyTime(i),
+                    v: p.keyValue(i),
+                    inType: p.keyInInterpolationType(i),
+                    outType: p.keyOutInterpolationType(i)
+                });
+            }
+            return {
+                keys: keys,
+                startTime: layer.startTime,
+                inPoint: layer.inPoint,
+                outPoint: layer.outPoint
+            };
+        } catch (e) { return null; }
+    }
+
+    /** Puts back what captureTimeRemap took, and says so when it was needed. */
+    function restoreTimeRemap(layer, saved, where, log) {
+        if (!saved) { return false; }
+        try {
+            var p = layer.property("ADBE Time Remapping");
+            if (!p) { return false; }
+            var disturbed = (p.numKeys !== saved.keys.length);
+            if (!disturbed) {
+                for (var c = 1; c <= p.numKeys; c++) {
+                    if (Math.abs(p.keyTime(c) - saved.keys[c - 1].t) > TOL ||
+                        Math.abs(p.keyValue(c) - saved.keys[c - 1].v) > TOL) {
+                        disturbed = true;
+                        break;
+                    }
+                }
+            }
+            if (!disturbed && Math.abs(layer.inPoint - saved.inPoint) <= TOL &&
+                Math.abs(layer.outPoint - saved.outPoint) <= TOL) {
+                return false;
+            }
+
+            while (p.numKeys > 0) { p.removeKey(1); }
+            var i;
+            for (i = 0; i < saved.keys.length; i++) {
+                p.setValueAtTime(saved.keys[i].t, saved.keys[i].v);
+            }
+            for (i = 1; i <= p.numKeys; i++) {
+                try {
+                    p.setInterpolationTypeAtKey(i, saved.keys[i - 1].inType,
+                                                   saved.keys[i - 1].outType);
+                } catch (eI) {}
+            }
+            layer.startTime = saved.startTime;
+            layer.inPoint = saved.inPoint;
+            layer.outPoint = saved.outPoint;
+            if (log) {
+                log.push("    time remap on \"" + where + "\" was rewritten by the source " +
+                         "swap - put back (" + saved.keys.length + " key(s), in " +
+                         saved.inPoint.toFixed(2) + "s out " + saved.outPoint.toFixed(2) + "s)");
+            }
+            return true;
+        } catch (e) {
+            if (log) { log.push("    note: could not restore the time remap: " + e.toString()); }
+            return false;
+        }
     }
 
     /** Every comp clone made during one deepDuplicate pass. */

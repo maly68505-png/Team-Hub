@@ -205,6 +205,36 @@ eq('card 1 text', m1[P.replacePara.id].layer(1)._text, 'quote one');
 eq('card 2 text', m2[P.replacePara.id].layer(1)._text, 'quote two');
 eq('template text untouched', P.replacePara.layer(1)._text, 'original template text');
 
+console.log('\n-- the empty cut-out slot must not be mistaken for the guest --');
+// The real IQTEBAS template lists REPLACE-ALPHA-FOOTAGE (0 layers, eye off)
+// ABOVE the comp holding the guest. Its name contains "FOOTAGE", so on a
+// first-match-wins scan it won the "footage" hint, and the clip was dropped
+// into a switched-off empty comp while the guest was never swapped.
+var order = new CompItem('RENDER-LEFT', [
+  new AVLayer('bg', new FootageItem('screen grid-01.mov')),
+  new AVLayer('ALPHA slot', P.emptyAlpha),          // first, as in the real file
+  new AVLayer('FOOTAGE slot', P.replaceFootage)
+]);
+var t = sb.collectTargets(order, false);
+var emptyAt = -1, guestAt = -1;
+for (var ti = 0; ti < t.length; ti++) {
+  if (t[ti].isEmpty) { emptyAt = ti; }
+  if (/SAMPLE-OTHMAN|guest/.test(t[ti].label)) { guestAt = ti; }
+}
+eq('the empty slot really does come first', emptyAt < guestAt, true);
+eq('but the guest wins the video guess',
+   bestGuess(t, 'footage,video,guest,person,clip', true), guestAt);
+eq('without realOnly the empty slot still wins - the old behaviour',
+   bestGuess(t, 'footage,video,guest,person,clip'), emptyAt);
+eq('and the empty slot is what the alpha guess gets',
+   guessIndex(t, 'alpha,matte,luma,cutout,key', false, guestAt), emptyAt);
+eq('the two never land on the same target',
+   bestGuess(t, 'footage,video,guest,person,clip', true) ===
+   guessIndex(t, 'alpha,matte,luma,cutout,key', false, guestAt), false);
+
+// An Arabic hint normalises to "" and indexOf("") matches everything.
+eq('an empty hint cannot claim target 0', guessIndex(t, 'اسم', false), -1);
+
 console.log('\n-- a flat template still works --');
 var flat = new CompItem('flat', [new AVLayer('person', new FootageItem('a.mov'))]);
 var flatIds = {}; flatIds[flat.id] = true;
