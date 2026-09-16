@@ -35,8 +35,8 @@ Object.defineProperty(CompItem.prototype, 'numLayers', { get: function () { retu
 CompItem.prototype.layer = function (i) { return this.layers[i - 1]; };
 
 var sb = new Function('VIDEO_EXT', 'MIN_MATCH_SCORE', 'TOL', 'CompItem', 'AVLayer',
-  block + '\nreturn { disableRotoEffects: disableRotoEffects, enableLayersShowing: enableLayersShowing,'
-        + ' disableRotoInCard: disableRotoInCard };'
+  block + '\nreturn { rotoEffectName: rotoEffectName, enableLayersShowing: enableLayersShowing,'
+        + ' disableStaleMatteLayers: disableStaleMatteLayers };'
 )("mp4,mov", 2, 0.0005, CompItem, AVLayer);
 
 var pass = 0, fail = 0;
@@ -52,30 +52,20 @@ var guest = new AVLayer('Opject MAtte on the guest', null, [
   new Effect('Motion Tile', 'ADBE Tile'),
   new Effect('Object Matte', 'ADBE Samurai')      // renamed Roto Brush, as in the real project
 ]);
-eq('one effect turned off', sb.disableRotoEffects(guest, log), 1);
-eq('the Roto one', guest._fx.property(2).enabled, false);
-eq('Motion Tile untouched', guest._fx.property(1).enabled, true);
-eq('and says why', /Roto Brush strokes were painted on the template/.test(log[0]), true);
-
-log = [];
-var byName = new AVLayer('x', null, [new Effect('Roto Brush & Refine Matte', 'ADBE Whatever')]);
-eq('matched on the name too', sb.disableRotoEffects(byName, log), 1);
-
-log = [];
-var plain = new AVLayer('y', null, [
-  new Effect('Gaussian Blur', 'ADBE Gaussian Blur 2'),
-  new Effect('Tint', 'ADBE Tint')
-]);
-eq('ordinary effects are left alone', sb.disableRotoEffects(plain, log), 0);
-eq('all still enabled', [plain._fx.property(1).enabled, plain._fx.property(2).enabled], [true, true]);
-
-log = [];
-var already = new AVLayer('z', null, [new Effect('Object Matte', 'ADBE Samurai')]);
-already._fx.property(1).enabled = false;
-eq('an already-off effect is not counted twice', sb.disableRotoEffects(already, log), 0);
+eq('found by its renamed label', sb.rotoEffectName(guest), 'Object Matte');
+eq('a layer with none reports none',
+   sb.rotoEffectName(new AVLayer('plain', null, [new Effect('Tint', 'ADBE Tint')])), '');
+eq('matched on matchName too',
+   sb.rotoEffectName(new AVLayer('x', null, [new Effect('Whatever', 'ADBE Samurai')])), 'Whatever');
+eq('and on the plain english name',
+   sb.rotoEffectName(new AVLayer('x', null, [new Effect('Roto Brush & Refine Matte', 'ADBE Zzz')])),
+   'Roto Brush & Refine Matte');
+var offAlready = new AVLayer('x', null, [new Effect('Object Matte', 'ADBE Samurai')]);
+offAlready._fx.property(1).enabled = false;
+eq('an effect already off is not reported', sb.rotoEffectName(offAlready), '');
 
 eq('a layer with no effects does not crash',
-   sb.disableRotoEffects({ name: 'null', property: function () { throw new Error('none'); } }, []), 0);
+   sb.rotoEffectName({ name: 'null', property: function () { throw new Error('none'); } }), '');
 
 console.log('\n-- the alpha route gets switched on --');
 var alphaComp = new CompItem('REPLACE-ALPHA-FOOTAGE 01', []);
@@ -122,15 +112,22 @@ var mapping = {};
 mapping[1000] = cardComp;
 mapping[1001] = footageComp;
 
-eq('aiming at the swapped clip finds nothing', sb.disableRotoEffects(swappedClip, log), 0);
-eq('walking the card finds it', sb.disableRotoInCard(cardComp, mapping, log), 1);
-eq('and it is off', mattedLayer._fx.property(2).enabled, false);
-eq('Motion Tile is left alone', mattedLayer._fx.property(1).enabled, true);
+eq('the swapped clip itself carries no matte', sb.rotoEffectName(swappedClip), '');
+eq('walking the card finds the layer that does',
+   sb.disableStaleMatteLayers(cardComp, mapping, log), 1);
+
+// The LAYER goes, not the effect. That layer reports masks=0 and
+// trackMatte=none in the real template, so the Roto Brush is the only thing
+// giving it an alpha - disabling the effect would leave a full opaque frame
+// of video sitting on top of the quote box.
+eq('the layer is switched off', mattedLayer.enabled, false);
+eq('the effect itself is left alone', mattedLayer._fx.property(2).enabled, true);
 eq('a comp this card does not own is untouched',
    sharedElements.layer(1)._fx.property(1).enabled, true);
+eq('and that layer stays visible', sharedElements.layer(1).enabled, true);
 
 log = [];
-eq('running it twice changes nothing', sb.disableRotoInCard(cardComp, mapping, log), 0);
+eq('running it twice changes nothing', sb.disableStaleMatteLayers(cardComp, mapping, log), 0);
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

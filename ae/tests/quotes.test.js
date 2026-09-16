@@ -148,7 +148,9 @@ eq('three distinct guests, not one', (function () {
    rq.forEach(function (r) { if (r.speaker && !seen[r.speaker]) { seen[r.speaker] = 1; n++; } });
    return n;
 }()), 3);
-eq('card 9 is still unnamed rather than guessed', rq[8].speaker, '');
+eq('card 9 is named now that it has been seen', rq[8].speaker, 'محمد مشينش');
+eq('every card has a speaker',
+   rq.filter(function (r) { return r.speaker === ''; }).length, 0);
 
 console.log('\n-- pairing a clip with its cut-out --');
 function F(n) { return { name: n, fsName: '/clips/' + n }; }

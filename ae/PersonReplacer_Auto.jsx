@@ -1161,51 +1161,48 @@
      */
     var ROTO_HINTS = "samurai,roto";
 
-    function disableRotoEffects(layer, log) {
-        var n = 0;
+    /** The name of the first live Roto Brush / Object Matte on a layer, or "". */
+    function rotoEffectName(layer) {
         try {
             var fx = layer.property("ADBE Effect Parade");
+            var hits = ROTO_HINTS.split(",");
             for (var i = 1; i <= fx.numProperties; i++) {
                 var e = fx.property(i);
+                if (!e.enabled) { continue; }
                 var mn = "", nm = "";
                 try { mn = normalize(e.matchName); } catch (x1) {}
                 try { nm = normalize(e.name); } catch (x2) {}
-                var hits = ROTO_HINTS.split(",");
-                var match = false;
                 for (var h = 0; h < hits.length; h++) {
                     var want = normalize(hits[h]);
-                    if (mn.indexOf(want) !== -1 || nm.indexOf(want) !== -1) { match = true; break; }
+                    if (want !== "" && (mn.indexOf(want) !== -1 || nm.indexOf(want) !== -1)) {
+                        return e.name;
+                    }
                 }
-                if (!match && nm.indexOf("objectmatte") !== -1) { match = true; }
-                if (match && e.enabled) {
-                    e.enabled = false;
-                    n++;
-                    log.push("    turned off \"" + e.name + "\" - its Roto Brush strokes were " +
-                             "painted on the template's own clip and mean nothing on yours");
-                }
+                if (nm.indexOf("objectmatte") !== -1) { return e.name; }
             }
-        } catch (e2) {
-            log.push("    note: could not check for Roto Brush: " + e2.toString());
-        }
-        return n;
+        } catch (e2) {}
+        return "";
     }
 
     /**
-     * Turns off every Roto Brush / Object Matte in the comps THIS CARD OWNS.
+     * Switches OFF the layers whose cut-out was painted on the template's own
+     * clip, in the comps this card owns.
      *
-     * Aiming at the swapped layer alone missed them: the strokes are painted
-     * on the layer that shows the precomp - "Opject MAtte on the guest" -
-     * not on the clip inside it.
+     * Disabling the effect instead would be worse than the bug it fixes. On
+     * the IQTEBAS template that layer reports masks=0 and trackMatte=none, so
+     * the Roto Brush is the only thing giving it an alpha at all: turn the
+     * effect off and the layer becomes a full, opaque frame of video sitting
+     * on top of the quote box. The layer exists solely to show the guest in
+     * FRONT of the box, and with a matte it can no longer honour, the layer
+     * is what has to go.
      *
-     * And a stale matte does not fail quietly. It still punches whatever
-     * region it thinks is the guest through everything behind it, so a piece
-     * of the new clip gets drawn over the quote box and the card looks like
-     * its box never opened. Which region, and how much damage, depends on the
-     * clip - which is why it hits one card and not its neighbours.
+     * The guest is still drawn - by the layers below the box - and the box
+     * now sits cleanly on top. Real cut-out clips are what buy the overlap
+     * back.
      *
-     * Shared comps are left alone: they belong to every other card too.
+     * Shared comps are skipped; they belong to every other card too.
      */
-    function disableRotoInCard(card, mapping, log) {
+    function disableStaleMatteLayers(card, mapping, log) {
         var owned = {}, seen = {}, n = 0, k;
         for (k in mapping) {
             if (mapping.hasOwnProperty(k)) { owned[mapping[k].id] = true; }
@@ -1218,7 +1215,14 @@
             seen[comp.id] = true;
             for (var i = 1; i <= comp.numLayers; i++) {
                 var L = comp.layer(i);
-                n += disableRotoEffects(L, log);
+                var fxName = rotoEffectName(L);
+                if (fxName !== "" && L.enabled) {
+                    L.enabled = false;
+                    n++;
+                    log.push("    switched OFF layer \"" + L.name + "\" in \"" + comp.name +
+                             "\" - its \"" + fxName + "\" was painted on the template's own " +
+                             "clip and was drawing pieces of this one over the quote box");
+                }
                 var src = layerSource(L);
                 if (src instanceof CompItem) { walk(src, depth + 1); }
             }

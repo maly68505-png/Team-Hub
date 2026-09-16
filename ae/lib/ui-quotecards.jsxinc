@@ -696,7 +696,7 @@
                     // the clip that WAS there either way, and leaving them on is
                     // what paints a piece of this clip over the quote box.
                     if (cbAlphaPath.value) {
-                        var killed = disableRotoInCard(card, mapping, log);
+                        var killed = disableStaleMatteLayers(card, mapping, log);
                         rotoOff += killed;
                         if (killed === 0) { log.push("    no Roto Brush / Object Matte to turn off"); }
                     }
@@ -749,10 +749,11 @@
                   "\n" +
                   "Title   -> " + (rTarget ? rTarget.comp.name + " / " + rTarget.layer.name : "not touched") +
                   (rotoOff > 0
-                        ? "\n\nTurned off " + rotoOff + " Roto Brush / Object Matte effect(s) " +
-                          "painted on the template's own clip. The guest now sits BEHIND the " +
-                          "quote box instead of in front of it - a matte drawn for another " +
-                          "clip was punching pieces of video over the box."
+                        ? "\n\nSwitched off " + rotoOff + " layer(s) whose Roto Brush / Object " +
+                          "Matte was painted on the template's own clip. The guest now sits " +
+                          "BEHIND the quote box instead of in front of it - that matte was " +
+                          "drawing pieces of your clip over the box. Supply cut-out clips to " +
+                          "get the overlap back."
                         : "") +
                   (planWarnings.length
                         ? "\n\nWarnings: " + planWarnings.length + "\n" +
