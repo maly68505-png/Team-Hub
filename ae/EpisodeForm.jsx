@@ -603,9 +603,12 @@
     var TC_TAIL = /[\s\t]+\(?((?:[0-9\u0660-\u0669]{1,2}:)?[0-9\u0660-\u0669]{1,2}:[0-9\u0660-\u0669]{2})\)?\s*$/;
     var MIN_QUOTE = 12;
 
+    var LINKISH = /https?:\/\/|www\.|drive\.google|\/view\?|usp=|\.com\/|\.jpg|\.png|\.mp4/i;
+
     function parseFormQuotes(text) {
         var lines = String(text || "").split(/\r\n|\r|\n/);
         var out = [], inGuests = false, i, h;
+        var fragments = 0, shortOnes = 0;
         var heads = GUEST_HEADINGS.split(",");
 
         // A form numbers its quotes. Where it does, an unnumbered line is the
@@ -649,8 +652,25 @@
             if (L.length < MIN_QUOTE) { continue; }
             if (!isNaN(digitsToInt(L))) { continue; }
 
+            // Nobody quotes a link. Forms carry a whole table of them for the
+            // visuals, and copying a table out of a PDF breaks every one into
+            // pieces long enough to pass for a quote.
+            if (LINKISH.test(L)) { fragments++; continue; }
+            if (!/[A-Za-z\u0600-\u06FF]/.test(L)) { fragments++; continue; }
+
+            if (L.length < 40) { shortOnes++; }
             out.push({ index: out.length + 1, text: L, timecode: tc });
         }
+
+        // Copying a table out of a PDF loses its structure: every cell lands
+        // on its own line, numbering splits off from the text it belonged to,
+        // and a link breaks across four lines. What comes back is not quotes,
+        // and reporting fifty-three of them as if it were is the worst answer.
+        // Everything being thrown away is the strongest sign of all, not the
+        // weakest: requiring a survivor meant the worst pastes went unflagged.
+        out.looksFragmented = (fragments >= 3) ||
+            (out.length > 0 && (shortOnes / out.length) > 0.5);
+        out.droppedFragments = fragments;
         return out;
     }
 
@@ -1816,12 +1836,40 @@
                 gi.subItems[1].text = guests[g].role;
             }
 
-            saveBtn.enabled = quotes.length > 0;
+            saveBtn.enabled = quotes.length > 0 && !quotes.looksFragmented;
+
+            // A paste that came apart is checked BEFORE an empty result: when
+            // it comes apart badly enough nothing survives at all, and "no
+            // quotes found - they need to be numbered" sends the reader off to
+            // fix numbering that was never the problem.
+            if (quotes.looksFragmented) {
+                setStatus("This paste came out in pieces - " + quotes.length + " \"quote(s)\" " +
+                          "from it, most of them fragments. Copying a table out of a PDF loses " +
+                          "its structure. Open the form in Word or Google Docs and copy from " +
+                          "there, or ask the producer for the document instead of the PDF.");
+                alert("That paste came apart.\n\n" +
+                      "It produced " + quotes.length + " \"quotes\"" +
+                      (quotes.droppedFragments > 0
+                        ? ", after throwing away " + quotes.droppedFragments + " line(s) that " +
+                          "were links or punctuation"
+                        : "") + " - which is what a PDF table looks like once it has been " +
+                      "copied: every cell on its own line, the numbering split off from its " +
+                      "own text, a link broken across four lines.\n\n" +
+                      "Nothing here can put that back together. What works:\n\n" +
+                      "  - Open the PDF in Word, or upload it to Google Docs, and copy from\n" +
+                      "    there - both rebuild the table\n" +
+                      "  - Or ask the producer for the Word / Google Doc rather than the PDF\n\n" +
+                      "Then paste again. You should see one row per quote, reading as\n" +
+                      "sentences - not links, not numbers on their own.");
+                return;
+            }
+
             if (quotes.length === 0) {
                 setStatus("No quotes found. They need to be numbered - \"( 1 ) ...\" or \"1) ...\" " +
                           "- one per line. Press Help for what the form should look like.");
                 return;
             }
+
             setStatus(quotes.length + " quote(s), " + guests.length + " guest(s)." +
                       (guests.length === 0
                         ? "  |  No guest list found - add one under a line reading \"الضيوف:\"."

@@ -103,5 +103,38 @@ eq('a bare page number is not a quote', sb.parseFormQuotes('12\n2026\n').length,
 eq('a short heading is not a quote', sb.parseFormQuotes('المحاور').length, 0);
 eq('nothing pasted, nothing found', sb.parseFormQuotes('').length, 0);
 
+console.log('\n-- a form copied out of a PDF, which comes apart --');
+// This is the real paste: the table lost its structure, so every cell is on
+// its own line, "( 19 )" split into three, and the visuals table's Drive
+// links broke across four lines each. It reported 53 quotes.
+var BROKEN = [
+  'me=large',
+  'دلال',
+  '02:04:05',
+  ')',
+  '19',
+  '(',
+  'نتيامو',
+  'https://drive.google.com/file/d/',
+  'Bot13/view?usp=drive',
+  'link_',
+  '02:04:23',
+  'https://drive.google.com/file/d/1iDUcr9culjmqxx-9R6AB1TsNnmT',
+  'VpoKP/view?usp=drive',
+  'w7H1l1/view?usp=drive_link'
+].join('\n');
+
+var broken = sb.parseFormQuotes(BROKEN);
+eq('not one link is taken as a quote',
+   broken.filter(function (q) { return /https?:|drive\.google|usp=/.test(q.text); }).length, 0);
+eq('and it says the paste came apart', broken.looksFragmented, true);
+eq('counting what it threw away', broken.droppedFragments >= 3, true);
+
+console.log('\n-- a form that copied cleanly is not accused of it --');
+eq('the good paste is not flagged', sb.parseFormQuotes(FORM).looksFragmented, false);
+eq('and nothing was thrown away from it', sb.parseFormQuotes(FORM).droppedFragments, 0);
+eq('a real quote holding a colon and digits still comes through',
+   sb.parseFormQuotes('( 1 ) قال في 2021: إن الانتخابات تأجلت مرتين').length, 1);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

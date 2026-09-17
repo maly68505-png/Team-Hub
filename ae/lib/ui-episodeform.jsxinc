@@ -104,12 +104,40 @@
                 gi.subItems[1].text = guests[g].role;
             }
 
-            saveBtn.enabled = quotes.length > 0;
+            saveBtn.enabled = quotes.length > 0 && !quotes.looksFragmented;
+
+            // A paste that came apart is checked BEFORE an empty result: when
+            // it comes apart badly enough nothing survives at all, and "no
+            // quotes found - they need to be numbered" sends the reader off to
+            // fix numbering that was never the problem.
+            if (quotes.looksFragmented) {
+                setStatus("This paste came out in pieces - " + quotes.length + " \"quote(s)\" " +
+                          "from it, most of them fragments. Copying a table out of a PDF loses " +
+                          "its structure. Open the form in Word or Google Docs and copy from " +
+                          "there, or ask the producer for the document instead of the PDF.");
+                alert("That paste came apart.\n\n" +
+                      "It produced " + quotes.length + " \"quotes\"" +
+                      (quotes.droppedFragments > 0
+                        ? ", after throwing away " + quotes.droppedFragments + " line(s) that " +
+                          "were links or punctuation"
+                        : "") + " - which is what a PDF table looks like once it has been " +
+                      "copied: every cell on its own line, the numbering split off from its " +
+                      "own text, a link broken across four lines.\n\n" +
+                      "Nothing here can put that back together. What works:\n\n" +
+                      "  - Open the PDF in Word, or upload it to Google Docs, and copy from\n" +
+                      "    there - both rebuild the table\n" +
+                      "  - Or ask the producer for the Word / Google Doc rather than the PDF\n\n" +
+                      "Then paste again. You should see one row per quote, reading as\n" +
+                      "sentences - not links, not numbers on their own.");
+                return;
+            }
+
             if (quotes.length === 0) {
                 setStatus("No quotes found. They need to be numbered - \"( 1 ) ...\" or \"1) ...\" " +
                           "- one per line. Press Help for what the form should look like.");
                 return;
             }
+
             setStatus(quotes.length + " quote(s), " + guests.length + " guest(s)." +
                       (guests.length === 0
                         ? "  |  No guest list found - add one under a line reading \"الضيوف:\"."

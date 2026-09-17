@@ -606,9 +606,12 @@
     var TC_TAIL = /[\s\t]+\(?((?:[0-9\u0660-\u0669]{1,2}:)?[0-9\u0660-\u0669]{1,2}:[0-9\u0660-\u0669]{2})\)?\s*$/;
     var MIN_QUOTE = 12;
 
+    var LINKISH = /https?:\/\/|www\.|drive\.google|\/view\?|usp=|\.com\/|\.jpg|\.png|\.mp4/i;
+
     function parseFormQuotes(text) {
         var lines = String(text || "").split(/\r\n|\r|\n/);
         var out = [], inGuests = false, i, h;
+        var fragments = 0, shortOnes = 0;
         var heads = GUEST_HEADINGS.split(",");
 
         // A form numbers its quotes. Where it does, an unnumbered line is the
@@ -652,8 +655,25 @@
             if (L.length < MIN_QUOTE) { continue; }
             if (!isNaN(digitsToInt(L))) { continue; }
 
+            // Nobody quotes a link. Forms carry a whole table of them for the
+            // visuals, and copying a table out of a PDF breaks every one into
+            // pieces long enough to pass for a quote.
+            if (LINKISH.test(L)) { fragments++; continue; }
+            if (!/[A-Za-z\u0600-\u06FF]/.test(L)) { fragments++; continue; }
+
+            if (L.length < 40) { shortOnes++; }
             out.push({ index: out.length + 1, text: L, timecode: tc });
         }
+
+        // Copying a table out of a PDF loses its structure: every cell lands
+        // on its own line, numbering splits off from the text it belonged to,
+        // and a link breaks across four lines. What comes back is not quotes,
+        // and reporting fifty-three of them as if it were is the worst answer.
+        // Everything being thrown away is the strongest sign of all, not the
+        // weakest: requiring a survivor meant the worst pastes went unflagged.
+        out.looksFragmented = (fragments >= 3) ||
+            (out.length > 0 && (shortOnes / out.length) > 0.5);
+        out.droppedFragments = fragments;
         return out;
     }
 
