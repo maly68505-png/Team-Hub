@@ -240,5 +240,22 @@ eq('arabic digits count as numbers too',
 eq('the elections sheet still reads nine quotes', rq.length, 9);
 eq('and still finds the right column', rq[0].text.indexOf('السلطة تُريد'), 0);
 
+console.log('\n-- a guest number with no guest list behind it --');
+// EpisodeForm writes "2" in the speaker column, meaning the second guest. With
+// no episode-info.txt beside the file there is nothing to look that up in, and
+// the card would have printed "2" under the quote as the speaker's name.
+var numbered = 'المتحدث,نص الاقتباس\n' +
+               '2,اقتباس طويل بما يكفي ليكون اقتباساً حقيقياً\n' +
+               '1,اقتباس تاني طويل بما يكفي ليكون اقتباساً\n';
+var w = [];
+var nq = sb.parseQuotesFile(new FileStub('quotes.csv', numbered), w);
+eq('the number is not written through as a name', [nq[0].speaker, nq[1].speaker], ['', '']);
+eq('and it says why', w.length === 1 && /no guest list/.test(w[0]), true);
+
+var named = 'المتحدث,نص الاقتباس\n' +
+            'محمد مشينش,اقتباس طويل بما يكفي ليكون اقتباساً حقيقياً\n';
+eq('a real name is left exactly as written',
+   sb.parseQuotesFile(new FileStub('quotes.csv', named), [])[0].speaker, 'محمد مشينش');
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

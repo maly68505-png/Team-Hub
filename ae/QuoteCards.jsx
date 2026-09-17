@@ -830,7 +830,7 @@
         // "3" or a surname in the speaker column becomes the guest's full name
         // and title, taken from the producer's own form.
         var guests = parseGuestList(guestListBeside(file));
-        var resolved = 0;
+        var resolved = 0, unresolved = 0;
 
         var quotes = [];
         for (i = 0; i < texts.length; i++) {
@@ -843,6 +843,14 @@
                     if (ro === "") { ro = g.role; }
                 }
             }
+            // A bare number is a reference to a guest list, not a name. With
+            // no list to resolve it against, writing it through would print
+            // "2" under the quote as though that were who said it.
+            if (sp !== "" && !isNaN(digitsToInt(sp))) {
+                unresolved++;
+                sp = "";
+                ro = "";
+            }
             quotes.push({
                 index: i + 1,
                 text: texts[i],
@@ -854,6 +862,12 @@
         if (resolved > 0) {
             warnings.push(resolved + " speaker(s) filled in from the guest list beside the " +
                           "quote file - check the Name column before building.");
+        }
+        if (unresolved > 0) {
+            warnings.push(unresolved + " row(s) have a guest NUMBER in the speaker column but " +
+                          "there is no guest list to look it up in. Put episode-info.txt " +
+                          "(\"الضيوف:\" then one guest per line) next to the quote file, or " +
+                          "those cards keep the template's name.");
         }
         return quotes;
     }

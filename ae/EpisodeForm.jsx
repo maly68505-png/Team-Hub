@@ -827,7 +827,7 @@
         // "3" or a surname in the speaker column becomes the guest's full name
         // and title, taken from the producer's own form.
         var guests = parseGuestList(guestListBeside(file));
-        var resolved = 0;
+        var resolved = 0, unresolved = 0;
 
         var quotes = [];
         for (i = 0; i < texts.length; i++) {
@@ -840,6 +840,14 @@
                     if (ro === "") { ro = g.role; }
                 }
             }
+            // A bare number is a reference to a guest list, not a name. With
+            // no list to resolve it against, writing it through would print
+            // "2" under the quote as though that were who said it.
+            if (sp !== "" && !isNaN(digitsToInt(sp))) {
+                unresolved++;
+                sp = "";
+                ro = "";
+            }
             quotes.push({
                 index: i + 1,
                 text: texts[i],
@@ -851,6 +859,12 @@
         if (resolved > 0) {
             warnings.push(resolved + " speaker(s) filled in from the guest list beside the " +
                           "quote file - check the Name column before building.");
+        }
+        if (unresolved > 0) {
+            warnings.push(unresolved + " row(s) have a guest NUMBER in the speaker column but " +
+                          "there is no guest list to look it up in. Put episode-info.txt " +
+                          "(\"الضيوف:\" then one guest per line) next to the quote file, or " +
+                          "those cards keep the template's name.");
         }
         return quotes;
     }
@@ -1878,11 +1892,12 @@
                 return;
             }
 
-            setStatus(quotes.length + " quote(s), " + guests.length + " guest(s)." +
+            setStatus(quotes.length + " اقتباس، " + guests.length + " ضيف." +
                       (guests.length === 0
-                        ? "  |  No guest list found - add one under a line reading \"الضيوف:\"."
-                        : "  |  Check the numbering above, then type who said what.") +
-                      "  Nothing has been written yet.");
+                        ? "  |  ⚠️ مفيش قايمة ضيوف — الصقها تحت الاقتباسات تحت سطر فيه " +
+                          "\"الضيوف:\"، وإلا أرقام الضيوف مش هتتحول لأسماء."
+                        : "  |  راجع الترقيم فوق، وبعدين اكتب مين قال إيه.") +
+                      "  لسه مفيش حاجة اتكتبت.");
         }
 
         function doSave() {
@@ -1916,17 +1931,33 @@
                 if (trim(keys[i] || "") !== "") { filled++; }
             }
 
-            setStatus("Written to " + dest.fsName);
-            alert("Episode folder ready\n\n" +
-                  "quotes.csv          " + quotes.length + " quote(s)\n" +
-                  (info !== "" ? "episode-info.txt    " + guests.length + " guest(s)\n" : "") +
+            setStatus("اتكتب في " + dest.fsName);
+            alert("فولدر الحلقة جاهز\n\n" +
+                  "quotes.csv          " + quotes.length + " اقتباس\n" +
+                  (info !== ""
+                    ? "episode-info.txt    " + guests.length + " ضيف\n"
+                    : "") +
                   "\n" +
+                  // Numbers in the speaker column mean nothing without the list
+                  // they point at - the card would print "2" as the name.
+                  (guests.length === 0
+                    ? "⚠️  مفيش قايمة ضيوف!\n\n" +
+                      "أرقام الضيوف مش هتتحول لأسماء من غيرها. الصق قايمة\n" +
+                      "الضيوف تحت الاقتباسات في نفس المربع، بالشكل ده:\n\n" +
+                      "    الضيوف:\n" +
+                      "      - الاسم الكامل — الصفة\n" +
+                      "      - الاسم الكامل — الصفة\n\n" +
+                      "واضغط Read و Save تاني.\n\n"
+                    : "") +
                   (filled === quotes.length && filled > 0
-                    ? "Every quote has a guest against it."
-                    : "Speaker column filled for " + filled + " of " + quotes.length +
-                      " quote(s).\nOpen quotes.csv and put a guest number on the rest, or the " +
-                      "cards keep the template's name.") +
-                  "\n\nNext: put the clips in this folder, then run QuoteCards.jsx.");
+                    ? "كل اقتباس قدامه ضيفه. ✅\n"
+                    : "عمود المتحدث اتملى في " + filled + " من " + quotes.length + ".\n" +
+                      "افتح quotes.csv وحط رقم الضيف في الباقي، وإلا الكروت\n" +
+                      "هتفضل باسم القالب.\n") +
+                  "\nالخطوة الجاية: حط الكليبات في نفس الفولدر، وشغّل QuoteCards.jsx.\n\n" +
+                  "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n\n" +
+                  "Episode folder ready: " + quotes.length + " quote(s), " +
+                  guests.length + " guest(s), speaker column filled for " + filled + ".");
         }
 
         // After Effects has no PDF or Word reader, and no script can add one.
