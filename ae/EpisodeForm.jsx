@@ -1800,9 +1800,9 @@
         found.margins = [12, 16, 12, 12];
 
         var quoteList = found.add("listbox", undefined, [], {
-            numberOfColumns: 3, showHeaders: true,
-            columnTitles: ["#", "Timecode", "Quote"],
-            columnWidths: [30, 90, 460]
+            numberOfColumns: 4, showHeaders: true,
+            columnTitles: ["#", "Timecode", "الضيف / Guest", "Quote"],
+            columnWidths: [30, 80, 150, 320]
         });
         quoteList.preferredSize.height = 150;
 
@@ -1832,9 +1832,13 @@
         orderTxt.alignment = ["fill", "center"];
 
         var orderHelp = win.add("statictext", undefined,
-            "One guest number per quote, in order: 2,1,3,3,1,2,3,2,2 - the form does not say " +
-            "who said which, so this is the one part only someone who watched can fill in. " +
-            "Leave it empty to fill the column in later.", { multiline: true });
+            "رقم الضيف من قايمة الضيوف تحت (١ أو ٢ أو ٣) — واحد لكل اقتباس بالترتيب: " +
+            "2,1,3,3,1,2,3,2,2\n" +
+            "مش رقم الكليب ولا رقم الاقتباس. وتقدر تكتب جزء من الاسم بدل الرقم: " +
+            "مشينش,دلال,محارمة\n" +
+            "شوف عمود \"الضيف\" فوق وهو بيتملى وانت بتكتب — ده اللي هيتكتب على الكرت.",
+            { multiline: true });
+        orderHelp.preferredSize.height = 46;
         orderHelp.alignment = ["fill", "top"];
 
         var status = win.add("statictext", undefined, "Paste the form and press Read.");
@@ -1851,17 +1855,36 @@
 
         function setStatus(m) { status.text = m; }
 
-        function doRead() {
-            quotes = parseFormQuotes(pasteBox.text);
-            guests = parseGuestList(pasteBox.text);
-
+        /**
+         * Redraws the quote table, showing which guest each quote will get.
+         *
+         * Three different numbers live in this job - the quote's row, the
+         * clip's position, and the guest's place in the list - and only the
+         * last one goes in "who said what". Naming the guest against each
+         * quote, here, is worth more than any explanation of which is which.
+         */
+        function fillQuoteList() {
+            var keys = trim(orderTxt.text).split(/[\s,;\-]+/);
             quoteList.removeAll();
             for (var i = 0; i < quotes.length; i++) {
                 var it = quoteList.add("item", String(quotes[i].index));
                 it.subItems[0].text = quotes[i].timecode;
-                it.subItems[1].text = quotes[i].text.length > 90
-                    ? quotes[i].text.substring(0, 90) + "..." : quotes[i].text;
+
+                var key = trim(keys[i] || "");
+                var g = key !== "" ? resolveGuest(key, guests) : null;
+                it.subItems[1].text = g ? g.name
+                    : (key === "" ? "— ؟ —" : "\u26A0 \"" + key + "\" مش في القايمة");
+
+                it.subItems[2].text = quotes[i].text.length > 70
+                    ? quotes[i].text.substring(0, 70) + "..." : quotes[i].text;
             }
+        }
+
+        function doRead() {
+            quotes = parseFormQuotes(pasteBox.text);
+            guests = parseGuestList(pasteBox.text);
+
+            fillQuoteList();
             guestList.removeAll();
             for (var g = 0; g < guests.length; g++) {
                 var gi = guestList.add("item", String(g + 1));
@@ -2067,6 +2090,11 @@
                 pasteBox.text = raw;
                 doRead();
             } catch (e) { setStatus("Could not read that file: " + e.toString()); }
+        };
+
+        // Live, as they type: the point is to see the pairing, not to submit it
+        orderTxt.onChanging = orderTxt.onChange = function () {
+            if (quotes.length) { fillQuoteList(); }
         };
 
         readBtn.onClick = doRead;
