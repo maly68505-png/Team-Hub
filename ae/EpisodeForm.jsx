@@ -1967,8 +1967,19 @@
             var done = (filled === quotes.length && filled > 0 && guests.length > 0 &&
                         countNote === "");
 
+            // A dialog is for something that needs doing. When nothing does,
+            // it is a box in the way of the next step - which is what it had
+            // become: every run ending in a modal, read as a complaint.
+            if (done) {
+                setStatus("✅  فولدر الحلقة جاهز — " + quotes.length + " اقتباس، " +
+                          guests.length + " ضيف، وكل اقتباس قدامه ضيفه.   |   " +
+                          "اتكتب في " + dest.fsName + "   |   " +
+                          "الخطوة الجاية: حط الكليبات في نفس الفولدر وشغّل QuoteCards.jsx");
+                return;
+            }
+
             setStatus("اتكتب في " + dest.fsName);
-            alert((done ? "✅  فولدر الحلقة جاهز" : "فولدر الحلقة اتكتب — وفاضل حاجة") + "\n\n" +
+            alert("فولدر الحلقة اتكتب — وفاضل حاجة\n\n" +
                   "quotes.csv          " + quotes.length + " اقتباس\n" +
                   (info !== ""
                     ? "episode-info.txt    " + guests.length + " ضيف\n"
@@ -1994,6 +2005,7 @@
                           "Save تاني. أو افتح quotes.csv واملا العمود بإيدك.\n"
                         : "افتح quotes.csv وحط رقم الضيف في الباقي.\n") +
                       "من غير ده الكروت هتفضل باسم القالب.\n") +
+                  "\n(الرسالة دي مش بتظهر لما يبقى مفيش حاجة ناقصة.)\n" +
                   "\nالخطوة الجاية: حط الكليبات في نفس الفولدر، وشغّل QuoteCards.jsx.\n\n" +
                   "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n\n" +
                   "Episode folder ready: " + quotes.length + " quote(s), " +
