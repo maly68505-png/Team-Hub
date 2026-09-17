@@ -527,6 +527,27 @@
         return out;
     }
 
+    /** A leading bullet and/or list number: "- ", "2-", "١. ", "3) ". */
+    function stripListMark(line) {
+        var out = trim(String(line).replace(/^[\-\u2013\u2014\u2022\*\u00b7]+\s*/, ""));
+        out = trim(out.replace(/^[\(\[]?\s*[0-9\u0660-\u0669]{1,2}\s*[\)\]\.\-\u2013\u2014:]\s*/, ""));
+        return out;
+    }
+
+    /**
+     * "Name — Title" or "Name، Title", with the name short enough to be one.
+     * Only a dash counts for a line that also carries a list number: a quote
+     * can open with a comma inside the first few words, and mistaking one for
+     * a guest puts a sentence where a person's name goes.
+     */
+    function looksLikeGuestEntry(body) {
+        if (body.length > 200) { return false; }
+        var dash = body.search(/\s[\u2013\u2014-]\s/);
+        if (dash > 0 && dash <= 60) { return true; }
+        var glued = body.search(/[\u2013\u2014]/);
+        return glued > 0 && glued <= 60;
+    }
+
     function lastNumberedQuote(lines) {
         var last = -1;
         for (var i = 0; i < lines.length; i++) {
@@ -562,17 +583,29 @@
             // a pasted guest list arrives with none - and three guests read as
             // zero. What ends the block is running into something that is
             // plainly not a guest: a numbered quote, or a paragraph.
+            // A numbered line inside the guest block is usually a numbered
+            // GUEST, not the next quote: producers number the names as often
+            // as they bullet them. Telling them apart on the dash is safe,
+            // because a name and its job title are separated by one and a
+            // quote of prose is not.
             var qh = L.match(NUM_HEAD);
-            if (qh && trim(L.substring(qh[0].length)).length >= MIN_QUOTE) {
-                inBlock = false;
-                continue;
+            if (qh) {
+                var body = trim(L.substring(qh[0].length));
+                if (body.length >= MIN_QUOTE && !looksLikeGuestEntry(body)) {
+                    inBlock = false;
+                    continue;
+                }
             }
             if (L.length > 200 || out.length >= 20) { inBlock = false; continue; }
 
             // The next section's heading ends the list. These forms head every
             // section with a short line ending in a colon - "المحاور:" - and
             // without this the whole of the next section reads as guests.
-            var noBullet = trim(L.replace(/^[\-\u2013\u2014\u2022\*\u00b7]+\s*/, ""));
+            // Strip the bullet, then the list number under it. "2-الدكتورة"
+            // has no space after the dash, so it never read as a numbered
+            // line at all - the "2-" simply stayed glued to the guest's name
+            // and got printed on the card that way.
+            var noBullet = stripListMark(L);
             if (noBullet.length < 40 && /[:\uFF1A]\s*$/.test(noBullet)) {
                 inBlock = false;
                 continue;
@@ -580,6 +613,7 @@
 
             var bullet = noBullet;
             if (bullet === "") { continue; }
+
 
             // "Name - Title" wins over "Name, Title": a title can hold commas
             // of its own, and this one does.

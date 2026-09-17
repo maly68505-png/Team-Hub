@@ -16,7 +16,8 @@ var sb = new Function('VIDEO_EXT', 'MIN_MATCH_SCORE', 'TOL',
   block + '\nreturn { parseFormQuotes: parseFormQuotes, parseGuestList: parseGuestList,' +
   ' buildQuotesCSV: buildQuotesCSV, buildGuestsText: buildGuestsText,' +
   ' csvField: csvField, digitsToInt: digitsToInt, parseCSVText: parseCSVText,' +
-  ' parseQuotesFile: parseQuotesFile, splitAnswers: splitAnswers };'
+  ' parseQuotesFile: parseQuotesFile, splitAnswers: splitAnswers,' +
+  ' stripListMark: stripListMark };'
 )("mp4,mov", 2, 0.0005);
 
 var pass = 0, fail = 0;
@@ -226,6 +227,54 @@ var csvRun = sb.buildQuotesCSV(eight, '12345678');
 var rowsRun = sb.parseCSVText(csvRun);
 eq('one guest number per row, in order',
    [rowsRun[1][2], rowsRun[4][2], rowsRun[8][2]], ['1', '4', '8']);
+
+// ------------------------------------------------ a NUMBERED guest list
+//
+// Producers number the names as often as they bullet them, and the number
+// arrives glued to the name - "2-الدكتورة دلال عريقات" - because there is no
+// space after the dash. Only the bullet was stripped, so the number went onto
+// the card in front of the guest's name. Numbered with a space was worse: the
+// line matched the numbered-quote pattern and ended the guest block, so the
+// list read as empty.
+console.log('\n-- the guest list numbered instead of bulleted --');
+
+function firstGuest(text) {
+  var g = sb.parseGuestList(text);
+  return g.length ? g[0].name : null;
+}
+var HEAD = '- الضيوف:\n';
+
+eq('a plain bullet, as before',
+   firstGuest(HEAD + '-الدكتورة دلال عريقات، عضو المجلس الثوري'), 'الدكتورة دلال عريقات');
+eq('a number glued to a dash',
+   firstGuest(HEAD + '2-الدكتورة دلال عريقات، عضو المجلس الثوري'), 'الدكتورة دلال عريقات');
+eq('a number, a dot and a space',
+   firstGuest(HEAD + '1. الدكتورة دلال عريقات — عضو المجلس الثوري'), 'الدكتورة دلال عريقات');
+eq('a number in brackets',
+   firstGuest(HEAD + '( 3 ) محمد مشينش — محلل سياسي'), 'محمد مشينش');
+eq('an Arabic-Indic number',
+   firstGuest(HEAD + '١-محمد مشينش، محلل سياسي'), 'محمد مشينش');
+eq('all three of them, numbered',
+   sb.parseGuestList(HEAD + '1-أ أ، ب ب\n2-ج ج، د د\n3-هـ هـ، و و\n').length, 3);
+eq('the title is unharmed by the stripping',
+   sb.parseGuestList(HEAD + '2-الدكتورة دلال عريقات، عضو المجلس الثوري')[0].role,
+   'عضو المجلس الثوري');
+
+console.log('\n-- and a real numbered quote still ends the list --');
+// prose, no dash: this is a quote, not "name — title"
+var afterQuote = sb.parseGuestList(
+  HEAD + '1-محمد مشينش، محلل سياسي\n' +
+  '( 2 ) من المحتمل تأجيل الانتخابات في ظل الواقع الذي تعيشه الأراضي\n');
+eq('the guest is kept', afterQuote.length, 1);
+eq('and the quote is not made into one', afterQuote[0].name, 'محمد مشينش');
+
+console.log('\n-- stripping a list mark, on its own --');
+eq('bullet', sb.stripListMark('- اسم'), 'اسم');
+eq('number and dash, glued', sb.stripListMark('2-اسم'), 'اسم');
+eq('number and dot', sb.stripListMark('10. اسم'), 'اسم');
+eq('bullet then number', sb.stripListMark('- 2- اسم'), 'اسم');
+eq('a name starting with no mark is untouched', sb.stripListMark('الدكتورة دلال'), 'الدكتورة دلال');
+eq('a year in the name is not a list mark', sb.stripListMark('2021 وما بعدها'), '2021 وما بعدها');
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
