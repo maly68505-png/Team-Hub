@@ -7,6 +7,7 @@ The layer is never recreated. Its masks, effects, transforms and keyframes all
 survive — this is an automated "replace footage", not a re-comp.
 
 ```
+ae/EpisodeForm.jsx           turns the producer's weekly form into quotes.csv
 ae/QuoteCards.jsx            builds one card per quote from a template comp
 ae/PersonReplacer_Auto.jsx   zero-setup swap - finds everything itself
 ae/PersonReplacer.jsx        full swap panel - browse for folder, comp and script
@@ -14,11 +15,11 @@ ae/lib/                      shared source both are built from
 ae/build.js                  rebuilds both .jsx files from ae/lib
 ae/tests/                    logic tests (parser, matcher, auto-discovery)
 examples/example_script.srt  a sample timecode script
-examples/episode-template/   the weekly episode folder, ready to copy
 docs/WORKFLOW.md             folder layout + step-by-step
 docs/QUICKSTART-AR.md        دليل التشغيل السريع بالعربي
+docs/EPISODEFORM-AR.md       دليل تحويل استمارة البروديوسر بالعربي
 docs/QUOTECARDS-AR.md        دليل مولّد كروت الاقتباسات بالعربي
-docs/EPISODEFORM-AR.md       من استمارة البروديوسر لكروت الاقتباسات
+examples/_NEW-EPISODE/       فولدر حلقة فاضي - انسخه كل أسبوع
 ```
 
 ## Which file do I use?
@@ -26,16 +27,14 @@ docs/EPISODEFORM-AR.md       من استمارة البروديوسر لكروت
 **`QuoteCards.jsx`** — you have one card design and a list of quotes, and you
 want a card per quote. It duplicates your template comp once per quote, swaps
 in the speaker clip and sets the quote text, keeping the masks, effects and
-type styling. Templates that hide the guest and the quote inside precomps
+type styling. A card usually carries three pieces of text - the quote, the
+guest's name and their job title - and each one is pointed at its own layer,
+so the name changes with the guest instead of staying on whoever the template
+was mocked up with. Templates that hide the guest and the quote inside precomps
 (`REPLACE-FOOTAGE`, `REPLACE-PARAGRAPH`) work: layers are found through the
 whole comp tree, and those precomps are copied per card so the cards stay
 independent of each other. Clip order decides who appears: 1st clip to quote 1, 2nd to
-quote 2, and so on. The guest's name and job title go on their own layers,
-read from a speaker column in the quote list and resolved against a guest
-roster, so nine cards do not all carry the same name. Cut-out clips are
-paired to their originals by filename rather than by folder order. Every
-choice is remembered, and written beside the quote list so it travels with
-the episode folder. The other two tools swap footage along a timeline instead —
+quote 2, and so on. The other two tools swap footage along a timeline instead —
 pick between them below.
 
 **`PersonReplacer_Auto.jsx`** — nothing to configure. Save your project, open
@@ -175,9 +174,6 @@ user copies one file and nothing else.
 node ae/tests/parse.test.js       # 46 assertions
 node ae/tests/discovery.test.js   # 11 assertions
 node ae/tests/quotes.test.js      # 19 assertions
-node ae/tests/speakers.test.js    # 63 assertions
-node ae/tests/pairing.test.js     # 30 assertions
-node ae/tests/setup.test.js       # 33 assertions
 node ae/tests/nested.test.js      # 48 assertions
 node ae/tests/timing.test.js      # 16 assertions
 node ae/tests/text.test.js        # 20 assertions
@@ -199,33 +195,6 @@ tool's own log file.
 header detection, headerless files), and reading quotes out of `.csv`, `.txt`
 and `.srt` — including against the real generated `examples/episode-elections`
 files, asserting both formats yield the same nine quotes.
-
-`speakers.test.js` covers who said the quote: finding the speaker and job
-title columns by their heading rather than their contents, reading the guest
-roster out of an `episode-info.txt` beside the quote list, and turning a guest
-number — `2`, or the Arabic `٢` — into that guest's full name and title. It
-covers the refusals as hard as the matches: a number past the end of the
-roster, a value fitting two guests, and a bare number with no roster all come
-back blank with a reason, because a wrong name under a real person's face is
-worse than no name. Arabic folding is covered too — `normalize()` erases
-Arabic completely, so it could never have matched an Arabic heading.
-
-`pairing.test.js` covers which cut-out belongs to which clip. Folder order
-was the only rule, and it held only while both folders were named the same
-way — send the clips through an external keyer and they come back as
-`8f3a2b1c.webm` in whatever order the service finished them. Pairing is by
-name first, then by the number that ends the name (`Aktbas_002` is
-`Aktbas_2`), and only then by order — and `clip1` is asserted never to match
-`clip10`, an ambiguous name is not a match at all, and everything that did
-fall back on order is marked so it can be checked before rendering.
-
-`setup.test.js` covers the setup that travels with the episode folder — the
-round trip through `QuoteCards_setup.txt`, a hand-edited file, and matching a
-stored label back to a layer after the template has been re-worded (the label
-carries a sample of the layer's current text, which changes every week; the
-layer does not). It also asserts against the panel's own source that no path
-is ever written into that file: a fixture would keep passing after someone
-added one.
 
 `nested.test.js` builds a miniature AE object model shaped like a real
 template — a render comp pulling its guest from a `REPLACE-FOOTAGE` precomp and

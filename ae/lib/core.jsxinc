@@ -1,18 +1,7 @@
     var SCRIPT_NAME = "Person Replacer";
     var SETTINGS_SECTION = "PersonReplacer";
-    var VIDEO_EXT = "mp4,mov,m4v,avi,mkv,mxf,webm,mpg,mpeg,wmv,mts,m2ts,r3d,braw,dv,3gp";
-
-    // Which CSV headings name the speaker and their job title. The column is
-    // recognised by its HEADING only - never by what is in it, because a wrong
-    // guess writes a row number or a timecode onto a real person's card.
-    var SPEAKER_HEADS = "\u0627\u0644\u0645\u062a\u062d\u062f\u062b,\u0627\u0644\u0636\u064a\u0641,\u0627\u0644\u0645\u062a\u0643\u0644\u0645,\u0627\u0644\u0642\u0627\u0626\u0644,\u0627\u0644\u0627\u0633\u0645,speaker,name,guest,who";
-    var TITLE_HEADS = "\u0627\u0644\u0635\u0641\u0629,\u0627\u0644\u0648\u0638\u064a\u0641\u0629,\u0627\u0644\u0645\u0646\u0635\u0628,\u0627\u0644\u062a\u0639\u0631\u064a\u0641,title,role,job,position";
-    var GUEST_HEADS = "\u0627\u0644\u0636\u064a\u0648\u0641,\u0636\u064a\u0648\u0641,guests,panel";
-    var GUEST_FILES = "episode-info.txt,episode-info.md,episode_info.txt,guests.txt,guests.md";
-    // what an exporter tacks onto a cut-out's filename
-    var ALPHA_MARKERS = "alpha,matte,cutout,cut,key,keyed,rgba,transparent,nobg,noback";
     var QC_SETTINGS = "QuoteCards";
-    var SETUP_FILE = "QuoteCards_setup.txt";
+    var VIDEO_EXT = "mp4,mov,m4v,avi,mkv,mxf,webm,mpg,mpeg,wmv,mts,m2ts,r3d,braw,dv,3gp";
     var MIN_MATCH_SCORE = 2;
     var TOL = 0.0005; // seconds, float-compare tolerance
 
@@ -24,34 +13,6 @@
 
     function normalize(s) {
         return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "");
-    }
-
-    /** Arabic-Indic and Persian digits written the way parseInt reads them. */
-    function toWesternDigits(s) {
-        return String(s)
-            .replace(/[\u0660-\u0669]/g, function (d) {
-                return String(d.charCodeAt(0) - 0x0660);
-            })
-            .replace(/[\u06F0-\u06F9]/g, function (d) {
-                return String(d.charCodeAt(0) - 0x06F0);
-            });
-    }
-
-    /**
-     * normalize() throws away every non-Latin letter, which turns any Arabic
-     * heading or guest name into an empty string - so it could never be
-     * compared against anything. This keeps Arabic letters and folds the
-     * spellings that differ only on screen: the alef forms, the taa marbuta,
-     * the alef maqsura, harakat and tatweel.
-     */
-    function foldText(s) {
-        s = toWesternDigits(String(s)).toLowerCase();
-        s = s.replace(/[\u064B-\u0652\u0640\u0670]/g, "");
-        s = s.replace(/[\u0622\u0623\u0625\u0671]/g, "\u0627");
-        s = s.replace(/\u0629/g, "\u0647");
-        s = s.replace(/[\u0649\u06CC]/g, "\u064A");
-        s = s.replace(/[^0-9a-z\u0621-\u064A]+/g, "");
-        return s;
     }
 
     function pad(n, w) {
@@ -328,143 +289,79 @@
         return files;
     }
 
-    /**
-     * Pairs each clip with its cut-out version BY NAME, falling back to folder
-     * order only when the names say nothing.
-     *
-     * Order alone was the whole rule, and it quietly broke the moment the
-     * cut-outs came back from an external keyer named 8f3a2b1c.webm: one
-     * guest's cut-out lands on another guest's card, and nobody notices until
-     * they look at the face.
-     *
-     * Returns an array parallel to `clips` of { file, how }, how being
-     * "name", "number" or "order".
-     */
-    function pairAlphaClips(clips, alphas) {
-        var used = {}, pairs = [], i;
-        var cBase = [], aBase = [];
-        for (i = 0; i < clips.length; i++) { cBase.push(baseName(clips[i].name)); }
-        for (i = 0; i < alphas.length; i++) {
-            aBase.push(stripAlphaMarker(baseName(alphas[i].name)));
-        }
-        for (i = 0; i < clips.length; i++) { pairs.push({ file: null, how: "" }); }
-
-        // the same name, give or take the _alpha on the end
-        matchPass(function (c, a) {
-            var fc = foldText(c);
-            return fc !== "" && fc === foldText(a);
-        }, "name");
-
-        // one name inside the other - but clip1 is NOT clip10, so a trailing
-        // number that disagrees vetoes the match however well the rest reads
-        matchPass(function (c, a) {
-            var fc = foldText(c), fa = foldText(a);
-            if (fc === "" || fa === "") { return false; }
-            if (fc.indexOf(fa) === -1 && fa.indexOf(fc) === -1) { return false; }
-            var tc = trailingNumber(c), ta = trailingNumber(a);
-            return !(tc && ta && tc.n !== ta.n);
-        }, "name");
-
-        // the number that ENDS the name: Aktbas_002 is Aktbas_2
-        matchPass(function (c, a) {
-            var tc = trailingNumber(c), ta = trailingNumber(a);
-            if (!tc || !ta || tc.n !== ta.n) { return false; }
-            var pc = foldText(tc.prefix), pa = foldText(ta.prefix);
-            return pc === pa || pc === "" || pa === "";
-        }, "number");
-
-        // whatever is left falls back on order, which is what the warning is for
-        var next = 0;
-        for (i = 0; i < clips.length; i++) {
-            if (pairs[i].file) { continue; }
-            while (next < alphas.length && used[next]) { next++; }
-            if (next >= alphas.length) { break; }
-            used[next] = true;
-            pairs[i] = { file: alphas[next], how: "order" };
-        }
-        return pairs;
-
-        /** Takes a match only when exactly one unused cut-out fits. */
-        function matchPass(fits, how) {
-            for (var c = 0; c < clips.length; c++) {
-                if (pairs[c].file) { continue; }
-                var hit = -1, n = 0;
-                for (var a = 0; a < alphas.length; a++) {
-                    if (used[a]) { continue; }
-                    if (fits(cBase[c], aBase[a])) { hit = a; n++; }
-                }
-                if (n === 1) { used[hit] = true; pairs[c] = { file: alphas[hit], how: how }; }
-            }
-        }
+    /** Every run of digits in a file's stem, as numbers: "Aktbas_002" -> "2". */
+    function digitsOf(name) {
+        var m = String(baseName(name)).match(/\d+/g);
+        if (!m) { return ""; }
+        var out = [];
+        for (var i = 0; i < m.length; i++) { out.push(String(parseInt(m[i], 10))); }
+        return out.join("-");
     }
 
-    /** "Aktbas_001_alpha" -> "Aktbas_001". A marker needs a separator before
-     *  it, so a name that merely ends in "key" is left whole. */
-    function stripAlphaMarker(base) {
-        var marks = ALPHA_MARKERS.split(","), out = base, changed = true;
-        while (changed) {
-            changed = false;
-            for (var i = 0; i < marks.length; i++) {
-                var re = new RegExp("[\\s_\\-\\.]+" + marks[i] + "$", "i");
-                if (re.test(out)) { out = out.replace(re, ""); changed = true; }
+    /**
+     * Does `longS` start with `whole` at a stem boundary? A plain indexOf===0
+     * lets "clip1" claim "clip10_alpha", which is the clip2-before-clip10 trap
+     * wearing a different hat: the number has to end where the stem ends.
+     */
+    function startsWithStem(longS, whole) {
+        if (whole === "" || longS.indexOf(whole) !== 0) { return false; }
+        if (!/\d$/.test(whole)) { return true; }
+        return !/^\d/.test(longS.charAt(whole.length));
+    }
+
+    /**
+     * How well a cut-out file answers to a clip file. normalize() is no use
+     * here - it strips an Arabic file name to "" and then everything matches
+     * everything - so this compares the stems as they are.
+     */
+    function alphaMatchScore(clip, alphaFile) {
+        var a = trim(baseName(clip.name)).toLowerCase();
+        var b = trim(baseName(alphaFile.name)).toLowerCase();
+        if (a === "" || b === "") { return 0; }
+        if (a === b) { return 100; }
+        // "01_dalal.mp4" -> "01_dalal_alpha.mov": one stem starts the other.
+        if (startsWithStem(b, a) || startsWithStem(a, b)) { return 90; }
+        // Numbering is what survives a trip through an outside keying tool.
+        var da = digitsOf(clip.name), db = digitsOf(alphaFile.name);
+        if (da !== "" && da === db) { return 70; }
+        return 0;
+    }
+
+    /**
+     * Pairs each clip with its cut-out. Position alone is how this worked, and
+     * position is exactly what a trip through an external keyer destroys - the
+     * files come back named after a job id, in whatever order they finished.
+     * A cut-out on the wrong card is invisible until someone recognises the
+     * face, so match on the name first and say plainly when that failed.
+     */
+    function pairAlphaClips(files, alphaFiles, warnings) {
+        var used = {}, out = [], byName = 0, i, j;
+        for (i = 0; i < files.length; i++) {
+            var best = -1, bestScore = 0;
+            for (j = 0; j < alphaFiles.length; j++) {
+                if (used[j]) { continue; }
+                var sc = alphaMatchScore(files[i], alphaFiles[j]);
+                if (sc > bestScore) { bestScore = sc; best = j; }
             }
+            if (best >= 0) { used[best] = true; out.push(alphaFiles[best]); byName++; }
+            else { out.push(null); }
+        }
+        var spare = [];
+        for (j = 0; j < alphaFiles.length; j++) { if (!used[j]) { spare.push(alphaFiles[j]); } }
+        var next = 0, byPosition = 0;
+        for (i = 0; i < out.length; i++) {
+            if (out[i] === null && next < spare.length) { out[i] = spare[next++]; byPosition++; }
+        }
+        if (alphaFiles.length > 0 && byName === 0) {
+            warnings.push("No cut-out file name answers to a clip name, so they were paired by " +
+                          "POSITION. Check the Alpha column row by row before building - a " +
+                          "cut-out on the wrong card is not obvious once it is rendered.");
+        } else if (byPosition > 0) {
+            warnings.push(byName + " cut-out(s) matched by name, " + byPosition + " placed by " +
+                          "position because nothing answered to the clip name. Check those rows " +
+                          "in the Alpha column.");
         }
         return out;
-    }
-
-    /** The number at the very end of a name, with whatever came before it. */
-    function trailingNumber(s) {
-        var w = toWesternDigits(String(s));
-        var m = /([0-9]+)\s*$/.exec(w);
-        if (!m) { return null; }
-        return { n: parseInt(m[1], 10), prefix: w.substring(0, m.index) };
-    }
-
-    /**
-     * The episode setup file - the layer choices, written beside the quote
-     * list so they travel with the folder. Paths are deliberately NOT in it:
-     * they differ on every machine, the layers do not.
-     */
-    function setupToText(pairs) {
-        var out = ["# " + SETUP_FILE + " - written by Quote Cards, read back automatically.",
-                   "# It travels with the episode folder. Paths are left out on purpose.",
-                   ""];
-        for (var i = 0; i < pairs.length; i++) {
-            var key = pairs[i][0], val = pairs[i][1];
-            if (val === "" || val == null) { continue; }
-            while (key.length < 12) { key += " "; }
-            out.push(key + val);
-        }
-        return out.join("\n") + "\n";
-    }
-
-    function parseSetupText(text) {
-        var lines = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-        var map = {};
-        for (var i = 0; i < lines.length; i++) {
-            var line = trim(lines[i]);
-            if (line === "" || line.charAt(0) === "#") { continue; }
-            var m = /^(\S+)\s+([\s\S]*)$/.exec(line);
-            if (!m) { continue; }
-            map[m[1].toLowerCase()] = trim(m[2]);
-        }
-        return map;
-    }
-
-    /**
-     * Two layer labels naming the same layer. The sample of the layer's
-     * current text is part of the label, and the template's wording drifts
-     * between episodes, so it is cut off before comparing.
-     */
-    function sameTargetLabel(a, b) {
-        return labelKey(a) === labelKey(b);
-    }
-
-    function labelKey(s) {
-        var t = String(s == null ? "" : s);
-        var cut = t.indexOf("   -   \"");
-        if (cut >= 0) { t = t.substring(0, cut); }
-        return trim(t.replace(/\s+/g, " ")).toLowerCase();
     }
 
     /** Minimal RFC4180 reader: quoted fields, doubled quotes, embedded newlines. */
@@ -497,23 +394,37 @@
         return out;
     }
 
+    /** Every filled cell in this column is just a number. */
+    function isNumericColumn(rows, c) {
+        var seen = 0;
+        for (var r = 1; r < rows.length; r++) {
+            if (rows[r].length <= c) { continue; }
+            var v = trim(rows[r][c]);
+            if (v === "") { continue; }
+            seen++;
+            if (!/^[0-9\u0660-\u0669]+$/.test(v)) { return false; }
+        }
+        return seen > 0;
+    }
+
     /**
-     * The column carrying the quotes is simply the wordiest one - but an
-     * Arabic job title runs longer than some quotes, so any column already
-     * claimed by name or heading is kept out of the contest.
+     * The column carrying the quotes is the wordiest one, ignoring any column
+     * in `skip`. A guest's job title can easily run longer than the quote it
+     * sits under - "member of the Revolutionary Council of Fatah and professor
+     * of diplomacy..." beats most quotes - and then the wordiest-column rule
+     * writes the title across the card as though it were the quote. Columns a
+     * header has already claimed are taken out of the running.
      */
-    function pickTextColumn(rows, exclude) {
-        var widest = 0, c, x;
+    function pickTextColumn(rows, skip) {
+        var widest = 0, c;
         for (var r = 0; r < rows.length; r++) { widest = Math.max(widest, rows[r].length); }
         var best = -1, bestScore = -1;
         for (c = 0; c < widest; c++) {
-            var skip = false;
-            if (exclude) {
-                for (x = 0; x < exclude.length; x++) {
-                    if (exclude[x] === c) { skip = true; break; }
-                }
-            }
-            if (skip) { continue; }
+            if (skip && skip[c]) { continue; }
+            // A column of bare row numbers is not a column of quotes. On a
+            // blank sheet it is the only one with anything in it, and it used
+            // to win - nine cards reading "1", "2", "3" and nothing to say so.
+            if (isNumericColumn(rows, c)) { continue; }
             var total = 0, n = 0;
             for (var i = 1; i < rows.length; i++) {          // skip a header row
                 if (rows[i].length <= c) { continue; }
@@ -527,201 +438,309 @@
     }
 
     /**
-     * Which column carries what, decided by the HEADING alone. Guessing from
-     * the contents is how a row number or a timecode ends up printed under a
-     * real person's face, so a column that is not named is simply not used.
-     * Returns -1 when no heading matches.
+     * normalize() keeps only a-z0-9, so it flattens any Arabic string to "" -
+     * and indexOf("") matches everything. Header and layer names here are
+     * routinely Arabic, so they get a plain case-insensitive substring test.
      */
-    function headerColumn(rows, headsCSV, taken) {
-        if (!rows.length) { return -1; }
-        var head = rows[0], hints = headsCSV.split(","), pass, h, c;
-        var folded = [];
-        for (c = 0; c < head.length; c++) { folded.push(foldText(head[c])); }
+    function looseHas(text, needle) {
+        needle = trim(needle);
+        if (needle === "") { return false; }
+        return String(text).toLowerCase().indexOf(needle.toLowerCase()) !== -1;
+    }
 
-        for (pass = 0; pass < 3; pass++) {
-            for (h = 0; h < hints.length; h++) {
-                var want = foldText(hints[h]);
-                if (want === "") { continue; }
-                if (pass === 2 && want.length < 4) { continue; }
-                for (c = 0; c < folded.length; c++) {
-                    if (c === taken || folded[c] === "") { continue; }
-                    var hit = (pass === 0) ? folded[c] === want
-                            : (pass === 1) ? folded[c].substring(0, want.length) === want
-                            : folded[c].indexOf(want) !== -1;
-                    if (hit) { return c; }
-                }
+    var SPEAKER_HINTS = "المتحدث,متحدث,الضيف,ضيف,الاسم,اسم,speaker,name,guest,person";
+    var ROLE_HINTS = "الصفة,صفة,الوظيفة,وظيفة,المنصب,منصب,title,role,job,position,subtitle";
+
+    /**
+     * The column holding the speaker's name (or their job title), identified
+     * by its HEADER only. Guessing from the values instead would cheerfully
+     * write a timecode or a row number across the card, so an unlabelled
+     * column is left alone and the panel says the names were not touched.
+     * Returns -1 when no header names one.
+     */
+    function pickLabelledColumn(rows, hintCSV, skip) {
+        if (rows.length < 2) { return -1; }
+        var hints = hintCSV.split(",");
+        for (var h = 0; h < hints.length; h++) {
+            for (var c = 0; c < rows[0].length; c++) {
+                if (c === skip) { continue; }
+                if (looseHas(trim(rows[0][c]), hints[h])) { return c; }
             }
         }
         return -1;
     }
 
     /**
-     * Reads the guest roster - the list under a line saying "الضيوف" - out of
-     * an episode-info.txt sitting next to the quote list. Name and title are
-     * split on a dash, because the title itself carries commas.
-     * Returns [{ name, title }].
+     * The guests, read out of the producer's own form.
+     *
+     * A form lists them once, under a heading, as "Name - Title". The quote
+     * table in the same form does NOT say who said what - that is the one
+     * thing nobody can read off the paper - so the speaker column still has
+     * to be filled in by someone who watched the episode. What it should not
+     * take is typing a name and an eighty-nine character title nine times:
+     * with the guests known, "2" or a surname in that column is enough.
+     *
+     * Returns [{ name, role }].
      */
-    function parseGuestList(text) {
-        var lines = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-        var start = -1, i;
-        for (i = 0; i < lines.length; i++) {
-            var f = foldText(lines[i]);
-            if (f === "") { continue; }
-            var heads = GUEST_HEADS.split(","), hit = false;
-            for (var h = 0; h < heads.length; h++) {
-                if (f.indexOf(foldText(heads[h])) !== -1) { hit = true; break; }
-            }
-            // a heading names the list; a line that already IS a guest does not
-            if (hit && f.length < 40) { start = i + 1; break; }
-        }
+    var GUEST_HEADINGS = "الضيوف,الضيف,المتحدثون,guests,speakers,panel";
 
-        var loose = (start < 0);
-        var out = [];
-        for (i = loose ? 0 : start; i < lines.length; i++) {
-            var raw = trim(lines[i]);
-            if (raw === "") {
-                if (out.length && !loose) { break; }
+    function parseGuestList(text) {
+        var lines = String(text || "").split(/\r\n|\r|\n/);
+        var out = [], inBlock = false, i;
+        for (i = 0; i < lines.length; i++) {
+            var raw = lines[i];
+            var L = trim(raw);
+            if (L === "") { continue; }
+
+            var heads = GUEST_HEADINGS.split(","), isHead = false;
+            for (var h = 0; h < heads.length; h++) {
+                if (looseHas(L, heads[h]) && L.length < 40) { isHead = true; break; }
+            }
+            if (isHead) { inBlock = true; continue; }
+            if (!inBlock) { continue; }
+
+            // A bullet used to be required to stay in the block. Word and
+            // Google Docs treat list bullets as formatting, not characters, so
+            // a pasted guest list arrives with none - and three guests read as
+            // zero. What ends the block is running into something that is
+            // plainly not a guest: a numbered quote, or a paragraph.
+            var qh = L.match(NUM_HEAD);
+            if (qh && trim(L.substring(qh[0].length)).length >= MIN_QUOTE) {
+                inBlock = false;
                 continue;
             }
-            if (!loose && isSectionOrQuoteLine(raw, out.length)) { break; }
+            if (L.length > 200 || out.length >= 20) { inBlock = false; continue; }
 
-            var line = raw.replace(/^[\-\u2022\u00b7\*\u25cf\u25aa\s]+/, "");
-            line = line.replace(/^[0-9\u0660-\u0669]+\s*[\.\)\-]\s*/, "");
-            line = trim(line);
-            if (line === "") { continue; }
-
-            var split = splitNameAndTitle(line);
-            if (loose) {
-                // With no heading to anchor on, only take lines that are
-                // plainly a guest: "name - title", or a short bare name.
-                if (!split.title && (line.length > 60 || line.indexOf(":") !== -1)) { continue; }
+            // The next section's heading ends the list. These forms head every
+            // section with a short line ending in a colon - "المحاور:" - and
+            // without this the whole of the next section reads as guests.
+            var noBullet = trim(L.replace(/^[\-\u2013\u2014\u2022\*\u00b7]+\s*/, ""));
+            if (noBullet.length < 40 && /[:\uFF1A]\s*$/.test(noBullet)) {
+                inBlock = false;
+                continue;
             }
-            if (split.name === "") { continue; }
-            out.push(split);
+
+            var bullet = trim(L.replace(/^[\-\u2013\u2014\u2022\*\u00b7]+\s*/, ""));
+            if (bullet === "") { continue; }
+
+            // "Name - Title" wins over "Name, Title": a title can hold commas
+            // of its own, and this one does.
+            var name = trim(bullet), role = "";
+            var dash = bullet.search(/\s[\u2013\u2014-]\s/);
+            if (dash > 0) {
+                name = trim(bullet.substring(0, dash));
+                role = trim(bullet.substring(dash).replace(/^\s[\u2013\u2014-]\s/, ""));
+            } else {
+                var comma = bullet.indexOf("،");
+                if (comma < 0) { comma = bullet.indexOf(","); }
+                if (comma > 0) {
+                    name = trim(bullet.substring(0, comma));
+                    role = trim(bullet.substring(comma + 1));
+                }
+            }
+            if (name !== "") { out.push({ name: name, role: role }); }
         }
         return out;
     }
 
-    function isSectionOrQuoteLine(raw, have) {
-        if (raw.length > 200) { return have > 0; }
-        var western = toWesternDigits(raw);
-        if (/^\s*[\(\[]?\s*[0-9]+\s*[\)\]\-\.]/.test(western)) { return true; }
-        if (/:\s*$/.test(raw)) { return true; }
-        return false;
+    /**
+     * Turns what someone typed in the speaker column into a guest. Accepts the
+     * guest's number in the list, any part of their name, or the whole name.
+     * Returns null when it matches nobody - a wrong name is worse than none.
+     */
+    function resolveGuest(value, guests) {
+        var v = trim(value || "");
+        if (v === "" || !guests || guests.length === 0) { return null; }
+
+        var n = parseInt(v.replace(/[\u0660-\u0669]/g, function (d) {
+            return String(d.charCodeAt(0) - 0x0660);
+        }), 10);
+        if (!isNaN(n) && String(n) === v.replace(/[\u0660-\u0669]/g, function (d) {
+            return String(d.charCodeAt(0) - 0x0660);
+        }) && n >= 1 && n <= guests.length) {
+            return guests[n - 1];
+        }
+
+        var i, hit = null, hits = 0;
+        for (i = 0; i < guests.length; i++) {
+            if (guests[i].name === v) { return guests[i]; }
+        }
+        for (i = 0; i < guests.length; i++) {
+            if (looseHas(guests[i].name, v) || looseHas(v, guests[i].name)) {
+                hit = guests[i]; hits++;
+            }
+        }
+        return hits === 1 ? hit : null;      // ambiguous is not a match
     }
 
-    function splitNameAndTitle(line) {
-        var m = line.split(/\s*[\u2014\u2013\u2012]\s*/);
-        if (m.length < 2) { m = line.split(/\s+-\s+/); }
-        if (m.length < 2) { m = line.split(/\s*[\u060c,]\s*/); }
-        var name = trim(m[0]);
-        var title = (m.length > 1) ? trim(m.slice(1).join(" - ")) : "";
-        return { name: name, title: title };
+    // --------------------------------------------- reading a producer's form
+
+    /** Latin or Arabic-Indic digits as a number, or NaN. */
+    function digitsToInt(str) {
+        var t = trim(str).replace(/[\u0660-\u0669]/g, function (d) {
+            return String(d.charCodeAt(0) - 0x0660);
+        });
+        return /^[0-9]+$/.test(t) ? parseInt(t, 10) : NaN;
     }
 
     /**
-     * Turns whatever the "المتحدث" column holds - a guest number, an Arabic
-     * numeral, part of a name, or the whole name - into the name and title
-     * that go on the card.
+     * Pulls the quotes out of a producer's form pasted in as plain text.
      *
-     * It never guesses: a value matching two guests, or a bare number with no
-     * roster to read it against, comes back with an empty name and a reason.
-     * A wrong name under a real person's face is worse than no name.
+     * A form numbers them - "( 1 ) ...", "(1) ...", "1) ...", "1- ..." - and
+     * carries the timecode alongside, in its own column or at the end of the
+     * line. Both the numbering and the timecode are stripped: the numbering is
+     * the row number, and the timecode is for the editor, not for the card.
+     *
+     * The guests are listed in the same document, so anything under a guests
+     * heading is left out - otherwise three names come through as quotes.
+     *
+     * Returns [{ index, text, timecode }].
      */
-    function resolveSpeaker(raw, guests) {
-        raw = trim(raw == null ? "" : raw);
-        if (raw === "") { return null; }
-        var have = guests && guests.length ? guests.length : 0;
-        var western = trim(toWesternDigits(raw));
+    var NUM_HEAD = /^[\(\[\{]?\s*([0-9\u0660-\u0669]{1,3})\s*[\)\]\}\.\-:\u2013\u2014]\s+/;
+    var TC_TAIL = /[\s\t]+\(?((?:[0-9\u0660-\u0669]{1,2}:)?[0-9\u0660-\u0669]{1,2}:[0-9\u0660-\u0669]{2})\)?\s*$/;
+    var MIN_QUOTE = 12;
 
-        if (/^[0-9]+$/.test(western)) {
-            var n = parseInt(western, 10);
-            if (have && n >= 1 && n <= have) {
-                return { name: guests[n - 1].name, title: guests[n - 1].title, from: "number" };
+    var LINKISH = /https?:\/\/|www\.|drive\.google|\/view\?|usp=|\.com\/|\.jpg|\.png|\.mp4/i;
+
+    function parseFormQuotes(text) {
+        var lines = String(text || "").split(/\r\n|\r|\n/);
+        var out = [], inGuests = false, i, h;
+        var fragments = 0, shortOnes = 0;
+        var heads = GUEST_HEADINGS.split(",");
+
+        // A form numbers its quotes. Where it does, an unnumbered line is the
+        // table's own heading or a stray caption - taking those too is how
+        // "أبرز الاقتباسات" ended up as quote 1 and pushed every card along by
+        // one. Only fall back to unnumbered lines when nothing is numbered.
+        var numbered = false;
+        for (i = 0; i < lines.length; i++) {
+            var probe = trim(lines[i]).replace(TC_TAIL, "");
+            var ph = probe.match(NUM_HEAD);
+            if (ph && trim(probe.substring(ph[0].length)).length >= MIN_QUOTE) {
+                numbered = true;
+                break;
             }
-            return { name: "", title: "", from: "number", why: have
-                ? "\"" + raw + "\" is not one of the " + have + " guests in the guest list"
-                : "\"" + raw + "\" is a guest number, but there is no guest list " +
-                  "(episode-info.txt) next to the quote list to read it against" };
         }
 
-        if (have) {
-            var needle = foldText(raw), hits = [];
-            for (var i = 0; i < have; i++) {
-                var hay = foldText(guests[i].name);
-                if (hay === "" || needle === "") { continue; }
-                if (hay === needle || hay.indexOf(needle) !== -1 || needle.indexOf(hay) !== -1) {
-                    hits.push(i);
+        for (i = 0; i < lines.length; i++) {
+            var L = trim(lines[i]);
+            if (L === "") { inGuests = false; continue; }
+
+            var isHead = false;
+            for (h = 0; h < heads.length; h++) {
+                if (looseHas(L, heads[h]) && L.length < 40) { isHead = true; break; }
+            }
+            if (isHead) { inGuests = true; continue; }
+
+            var bulleted = /^[\-\u2013\u2014\u2022\*\u00b7]/.test(L);
+            if (inGuests && bulleted) { continue; }
+            if (inGuests && !bulleted) { inGuests = false; }
+
+            var tc = "";
+            var tcHit = L.match(TC_TAIL);
+            if (tcHit) { tc = trim(tcHit[1]); L = trim(L.substring(0, L.length - tcHit[0].length)); }
+
+            var numHit = L.match(NUM_HEAD);
+            if (numHit) { L = trim(L.substring(numHit[0].length)); }
+            else if (numbered) { continue; }        // scaffolding, not a quote
+
+            // A bare number with nothing after it is a row marker, not a quote,
+            // and a stray heading is shorter than any real quote.
+            if (L.length < MIN_QUOTE) { continue; }
+            if (!isNaN(digitsToInt(L))) { continue; }
+
+            // Nobody quotes a link. Forms carry a whole table of them for the
+            // visuals, and copying a table out of a PDF breaks every one into
+            // pieces long enough to pass for a quote.
+            if (LINKISH.test(L)) { fragments++; continue; }
+            if (!/[A-Za-z\u0600-\u06FF]/.test(L)) { fragments++; continue; }
+
+            if (L.length < 40) { shortOnes++; }
+            out.push({ index: out.length + 1, text: L, timecode: tc });
+        }
+
+        // Copying a table out of a PDF loses its structure: every cell lands
+        // on its own line, numbering splits off from the text it belonged to,
+        // and a link breaks across four lines. What comes back is not quotes,
+        // and reporting fifty-three of them as if it were is the worst answer.
+        // Everything being thrown away is the strongest sign of all, not the
+        // weakest: requiring a survivor meant the worst pastes went unflagged.
+        out.looksFragmented = (fragments >= 3) ||
+            (out.length > 0 && (shortOnes / out.length) > 0.5);
+        out.droppedFragments = fragments;
+        return out;
+    }
+
+    /** One CSV field, quoted only when it has to be. */
+    function csvField(v) {
+        var t = String(v === undefined || v === null ? "" : v);
+        return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+    }
+
+    /**
+     * The quote sheet the card tool reads. `order` is the guests' numbers in
+     * quote order - "2,1,3,3" - which is the one thing the form cannot say.
+     */
+    function buildQuotesCSV(quotes, order) {
+        var keys = String(order || "").split(/[\s,;\-]+/);
+        var rows = ["\ufeff" + ["#", "التوقيت", "المتحدث", "الصفة", "نص الاقتباس"].join(",")];
+        for (var i = 0; i < quotes.length; i++) {
+            var who = trim(keys[i] || "");
+            rows.push([
+                csvField(i + 1),
+                csvField(quotes[i].timecode || ""),
+                csvField(who),
+                "",
+                csvField(quotes[i].text)
+            ].join(","));
+        }
+        return rows.join("\n") + "\n";
+    }
+
+    /** The guest list, in the shape the card tool reads back. */
+    function buildGuestsText(guests, title, host) {
+        var out = [];
+        out.push("عنوان الحلقة: " + trim(title || ""));
+        out.push("المقدم: " + trim(host || ""));
+        out.push("");
+        out.push("الضيوف:");
+        for (var i = 0; i < guests.length; i++) {
+            out.push("  - " + guests[i].name +
+                     (trim(guests[i].role) !== "" ? " — " + guests[i].role : ""));
+        }
+        return out.join("\n") + "\n";
+    }
+
+    /** The producer's form sitting next to the quote list, if there is one. */
+    var GUEST_FILES = "episode-info.txt,guests.txt,الضيوف.txt";
+
+    function guestListBeside(file) {
+        try {
+            if (!file || !file.parent) { return ""; }
+            var names = GUEST_FILES.split(",");
+            for (var i = 0; i < names.length; i++) {
+                var f = new File(file.parent.fsName + "/" + trim(names[i]));
+                if (f.exists && f.open("r")) {
+                    var raw = f.read();
+                    f.close();
+                    return raw;
                 }
             }
-            if (hits.length === 1) {
-                return { name: guests[hits[0]].name, title: guests[hits[0]].title, from: "roster" };
-            }
-            if (hits.length > 1) {
-                var who = [];
-                for (var k = 0; k < hits.length; k++) { who.push(guests[hits[k]].name); }
-                return { name: "", title: "", from: "ambiguous",
-                         why: "\"" + raw + "\" fits more than one guest (" + who.join(" / ") +
-                              ") - left blank rather than guessed" };
-            }
-        }
-        return { name: raw, title: "", from: "literal" };
-    }
-
-    /** The guest roster sitting next to the quote list, or null. */
-    function findGuestFile(quotesFile) {
-        var names = GUEST_FILES.split(",");
-        try {
-            var dir = quotesFile.parent;
-            if (!dir) { return null; }
-            for (var i = 0; i < names.length; i++) {
-                var f = new File(dir.fsName + "/" + names[i]);
-                if (f.exists) { return f; }
-            }
         } catch (e) {}
-        return null;
-    }
-
-    function readGuestFile(file, warnings) {
-        try {
-            if (!file.open("r")) {
-                warnings.push("Could not open the guest list: " + file.fsName);
-                return [];
-            }
-            var raw = file.read();
-            file.close();
-            return parseGuestList(raw.replace(/^\uFEFF/, ""));
-        } catch (e) {
-            warnings.push("Could not read the guest list: " + e.toString());
-            return [];
-        }
+        return "";
     }
 
     /**
      * Reads the quote list. Accepts:
-     *   .csv  - the wordiest column is taken as the quote text, and a column
-     *           HEADED with a speaker or title name supplies who said it
+     *   .csv  - the wordiest column is taken as the quote text
      *   .srt  - the "# ..." comment carried under each timecode block
      *   .txt  - one quote per paragraph, or per line when there are no blanks
-     *
-     * Returns [{ index, text, speaker, title, speakerRaw }]. `meta` is filled
-     * in with what was found, so the panel can say "the column is there but
-     * empty" rather than the useless "no names".
+     * A .csv can also carry the speaker's name and job title in their own
+     * labelled columns; without them every card keeps the name the template
+     * was mocked up with.
+     * Returns [{ index, text, speaker, role, speakerColumn }].
      */
-    function parseQuotesFile(file, warnings, meta, guests) {
-        meta = meta || {};
-        meta.speakerColumn = -1;
-        meta.titleColumn = -1;
-        meta.speakerHeader = "";
-        meta.titleHeader = "";
-        meta.named = 0;
-        meta.guests = guests || [];
-        meta.guestFile = "";
-        meta.unresolved = [];
-        return parseQuotesBody(file, warnings, meta, guests);
-    }
-
-    function parseQuotesBody(file, warnings, meta, guests) {
+    function parseQuotesFile(file, warnings) {
         if (!file.open("r")) {
             warnings.push("Could not open the quotes file: " + file.fsName);
             return [];
@@ -730,21 +749,24 @@
         file.close();
         raw = raw.replace(/^\uFEFF/, "");
 
-        var texts = [], speakers = [], titles = [], i;
+        var texts = [], speakers = [], roles = [], speakerHeader = "", i;
         var ext = extOf(file.name);
 
         if (ext === "csv" || ext === "tsv") {
             var rows = parseCSVText(ext === "tsv" ? raw.replace(/\t/g, ",") : raw);
             if (rows.length === 0) { return []; }
 
-            var sCol = headerColumn(rows, SPEAKER_HEADS, -1);
-            var tCol = headerColumn(rows, TITLE_HEADS, sCol);
-            meta.speakerColumn = sCol;
-            meta.titleColumn = tCol;
-            if (sCol >= 0) { meta.speakerHeader = trim(rows[0][sCol]); }
-            if (tCol >= 0) { meta.titleHeader = trim(rows[0][tCol]); }
+            // Claim the named columns first, then pick the quote from what is
+            // left. Done the other way round, a long job title wins the
+            // "wordiest column" contest and lands on the quote layer.
+            var speakerCol = pickLabelledColumn(rows, SPEAKER_HINTS, -1);
+            var roleCol = pickLabelledColumn(rows, ROLE_HINTS, -1);
+            if (roleCol === speakerCol) { roleCol = -1; }
+            var skip = {};
+            if (speakerCol >= 0) { skip[speakerCol] = true; }
+            if (roleCol >= 0) { skip[roleCol] = true; }
 
-            var col = pickTextColumn(rows, [sCol, tCol]);
+            var col = pickTextColumn(rows, skip);
             var start = 1;
             var head = rows[0].length > col ? trim(rows[0][col]) : "";
             var bodyLen = 0, bodyN = 0;
@@ -755,16 +777,20 @@
             if (head !== "" && avg > 0 && head.length >= avg * 0.6) {
                 start = 0;                                   // no header after all
             }
-            // a recognised heading settles it: row 0 IS the header
-            if (sCol >= 0 || tCol >= 0) { start = 1; }
+            // A header that names a column IS a header, whatever the length
+            // heuristic above decided about the quote column.
+            if (speakerCol >= 0 || roleCol >= 0) { start = 1; }
+            if (speakerCol >= 0) { speakerHeader = trim(rows[0][speakerCol]); }
 
             for (i = start; i < rows.length; i++) {
                 if (rows[i].length > col) {
                     var v = trim(rows[i][col]);
                     if (v !== "") {
                         texts.push(v);
-                        speakers.push(sCol >= 0 && rows[i].length > sCol ? trim(rows[i][sCol]) : "");
-                        titles.push(tCol >= 0 && rows[i].length > tCol ? trim(rows[i][tCol]) : "");
+                        speakers.push(speakerCol >= 0 && rows[i].length > speakerCol
+                            ? trim(rows[i][speakerCol]) : "");
+                        roles.push(roleCol >= 0 && rows[i].length > roleCol
+                            ? trim(rows[i][roleCol]) : "");
                     }
                 }
             }
@@ -795,34 +821,47 @@
             }
         }
 
-        // The roster turns "2" into a name and a title, so nobody retypes a
-        // long Arabic name and job description nine times over.
-        if (!guests) {
-            var gFile = findGuestFile(file);
-            if (gFile) {
-                guests = readGuestFile(gFile, warnings);
-                meta.guestFile = gFile.name;
-            } else {
-                guests = [];
-            }
-        }
-        meta.guests = guests;
+        // "3" or a surname in the speaker column becomes the guest's full name
+        // and title, taken from the producer's own form.
+        var guests = parseGuestList(guestListBeside(file));
+        var resolved = 0, unresolved = 0;
 
         var quotes = [];
         for (i = 0; i < texts.length; i++) {
-            var rawSpeaker = (i < speakers.length) ? speakers[i] : "";
-            var rawTitle = (i < titles.length) ? titles[i] : "";
-            var who = resolveSpeaker(rawSpeaker, guests);
-            var name = who ? who.name : "";
-            var title = rawTitle !== "" ? rawTitle : (who ? who.title : "");
-            if (who && who.why) {
-                meta.unresolved.push("Quote " + (i + 1) + ": " + who.why);
+            var sp = speakers[i] || "", ro = roles[i] || "";
+            if (guests.length) {
+                var g = resolveGuest(sp, guests);
+                if (g) {
+                    if (g.name !== sp) { resolved++; }
+                    sp = g.name;
+                    if (ro === "") { ro = g.role; }
+                }
             }
-            if (name !== "") { meta.named++; }
+            // A bare number is a reference to a guest list, not a name. With
+            // no list to resolve it against, writing it through would print
+            // "2" under the quote as though that were who said it.
+            if (sp !== "" && !isNaN(digitsToInt(sp))) {
+                unresolved++;
+                sp = "";
+                ro = "";
+            }
             quotes.push({
-                index: i + 1, text: texts[i],
-                speaker: name, title: title, speakerRaw: rawSpeaker
+                index: i + 1,
+                text: texts[i],
+                speaker: sp,
+                role: ro,
+                speakerColumn: speakerHeader
             });
+        }
+        if (resolved > 0) {
+            warnings.push(resolved + " speaker(s) filled in from the guest list beside the " +
+                          "quote file - check the Name column before building.");
+        }
+        if (unresolved > 0) {
+            warnings.push(unresolved + " row(s) have a guest NUMBER in the speaker column but " +
+                          "there is no guest list to look it up in. Put episode-info.txt " +
+                          "(\"الضيوف:\" then one guest per line) next to the quote file, or " +
+                          "those cards keep the template's name.");
         }
         return quotes;
     }
@@ -951,7 +990,6 @@
                     offered[nested.id] = true;
                     out.push({
                         comp: nested, layer: null, index: 0, sample: "", isEmpty: true,
-                        name: nested.name,
                         label: path + "  >  " + nested.name +
                                "   (EMPTY comp - the clip gets added here)"
                     });
@@ -962,7 +1000,6 @@
                     var sample = isText ? layerTextValue(L) : "";
                     out.push({
                         comp: comp, layer: L, index: L.index, sample: sample, isEmpty: false,
-                        name: L.name,
                         label: where + (sample !== ""
                             ? "   -   \"" + (sample.length > 42
                                 ? sample.substring(0, 42) + "..." : sample) + "\""
@@ -1004,7 +1041,7 @@
      * every card sharing the same precomps - change one card, change them all.
      * `mapping` comes back filled in as original item id -> its clone.
      */
-    function deepDuplicate(comp, cloneIds, mapping, suffix) {
+    function deepDuplicate(comp, cloneIds, mapping, suffix, log) {
         if (mapping[comp.id]) { return mapping[comp.id]; }
         var clone = comp.duplicate();
         if (suffix) { clone.name = comp.name + " " + suffix; }
@@ -1013,9 +1050,88 @@
             var L = clone.layer(i);
             var src = layerSource(L);
             if (!(src instanceof CompItem) || !cloneIds[src.id]) { continue; }
-            L.replaceSource(deepDuplicate(src, cloneIds, mapping, suffix), false);
+            var remap = captureTimeRemap(L);
+            L.replaceSource(deepDuplicate(src, cloneIds, mapping, suffix, log), false);
+            restoreTimeRemap(L, remap, clone.name + " / " + L.name, log);
         }
         return clone;
+    }
+
+    /**
+     * A template animates its quote box by TIME REMAPPING the comp that holds
+     * it, not by keyframing it in place. Replacing that layer's source is
+     * allowed to rewrite the remap keyframes, and a card whose remap has been
+     * rewritten opens at the wrong moment - or looks like it never opens at
+     * all. Copy them off before the swap.
+     */
+    function captureTimeRemap(layer) {
+        try {
+            if (!layer.timeRemapEnabled) { return null; }
+            var p = layer.property("ADBE Time Remapping");
+            if (!p || p.numKeys === 0) { return null; }
+            var keys = [];
+            for (var i = 1; i <= p.numKeys; i++) {
+                keys.push({
+                    t: p.keyTime(i),
+                    v: p.keyValue(i),
+                    inType: p.keyInInterpolationType(i),
+                    outType: p.keyOutInterpolationType(i)
+                });
+            }
+            return {
+                keys: keys,
+                startTime: layer.startTime,
+                inPoint: layer.inPoint,
+                outPoint: layer.outPoint
+            };
+        } catch (e) { return null; }
+    }
+
+    /** Puts back what captureTimeRemap took, and says so when it was needed. */
+    function restoreTimeRemap(layer, saved, where, log) {
+        if (!saved) { return false; }
+        try {
+            var p = layer.property("ADBE Time Remapping");
+            if (!p) { return false; }
+            var disturbed = (p.numKeys !== saved.keys.length);
+            if (!disturbed) {
+                for (var c = 1; c <= p.numKeys; c++) {
+                    if (Math.abs(p.keyTime(c) - saved.keys[c - 1].t) > TOL ||
+                        Math.abs(p.keyValue(c) - saved.keys[c - 1].v) > TOL) {
+                        disturbed = true;
+                        break;
+                    }
+                }
+            }
+            if (!disturbed && Math.abs(layer.inPoint - saved.inPoint) <= TOL &&
+                Math.abs(layer.outPoint - saved.outPoint) <= TOL) {
+                return false;
+            }
+
+            while (p.numKeys > 0) { p.removeKey(1); }
+            var i;
+            for (i = 0; i < saved.keys.length; i++) {
+                p.setValueAtTime(saved.keys[i].t, saved.keys[i].v);
+            }
+            for (i = 1; i <= p.numKeys; i++) {
+                try {
+                    p.setInterpolationTypeAtKey(i, saved.keys[i - 1].inType,
+                                                   saved.keys[i - 1].outType);
+                } catch (eI) {}
+            }
+            layer.startTime = saved.startTime;
+            layer.inPoint = saved.inPoint;
+            layer.outPoint = saved.outPoint;
+            if (log) {
+                log.push("    time remap on \"" + where + "\" was rewritten by the source " +
+                         "swap - put back (" + saved.keys.length + " key(s), in " +
+                         saved.inPoint.toFixed(2) + "s out " + saved.outPoint.toFixed(2) + "s)");
+            }
+            return true;
+        } catch (e) {
+            if (log) { log.push("    note: could not restore the time remap: " + e.toString()); }
+            return false;
+        }
     }
 
     /** Every comp clone made during one deepDuplicate pass. */
@@ -1109,7 +1225,17 @@
             var p = layer.property(groupName).property(propName);
             var v = p.value;
             var txt = (v instanceof Array) ? "[" + v.join(", ") + "]" : String(v);
-            return txt + (p.numKeys > 0 ? "  (" + p.numKeys + " keys)" : "");
+            var extra = (p.numKeys > 0 ? "  (" + p.numKeys + " keys)" : "");
+            // An expression reading another layer's inPoint/outPoint retimes
+            // itself per card, because each clip is a different length. That
+            // is invisible in the comp and has to show up here.
+            try {
+                if (p.expressionEnabled && trim(p.expression) !== "") {
+                    var ex = trim(p.expression).replace(/[\r\n]+/g, " ");
+                    extra += "  (expr: " + (ex.length > 90 ? ex.substring(0, 90) + "..." : ex) + ")";
+                }
+            } catch (eEx) {}
+            return txt + extra;
         } catch (e) {
             return "-";
         }
@@ -1202,7 +1328,8 @@
                         var doc = L.property("ADBE Text Properties").property("ADBE Text Document").value;
                         boxInfo = "   " + (doc.boxText
                             ? "BOX " + doc.boxTextSize[0] + "x" + doc.boxTextSize[1]
-                            : "POINT TEXT (cannot auto-fit)") + "   size=" + doc.fontSize;
+                            : "POINT TEXT (cannot auto-fit)") + "   size=" + doc.fontSize +
+                            "   font=" + doc.font;
                     } catch (e4) {}
                     out.push(pad4 + "      text:   \"" +
                              (words.length > 60 ? words.substring(0, 60) + "..." : words) +
@@ -1317,33 +1444,107 @@
      */
     var ROTO_HINTS = "samurai,roto";
 
-    function disableRotoEffects(layer, log) {
-        var n = 0;
+    /** The name of the first live Roto Brush / Object Matte on a layer, or "". */
+    function rotoEffectName(layer) {
         try {
             var fx = layer.property("ADBE Effect Parade");
+            var hits = ROTO_HINTS.split(",");
             for (var i = 1; i <= fx.numProperties; i++) {
                 var e = fx.property(i);
+                if (!e.enabled) { continue; }
                 var mn = "", nm = "";
                 try { mn = normalize(e.matchName); } catch (x1) {}
                 try { nm = normalize(e.name); } catch (x2) {}
-                var hits = ROTO_HINTS.split(",");
-                var match = false;
                 for (var h = 0; h < hits.length; h++) {
                     var want = normalize(hits[h]);
-                    if (mn.indexOf(want) !== -1 || nm.indexOf(want) !== -1) { match = true; break; }
+                    if (want !== "" && (mn.indexOf(want) !== -1 || nm.indexOf(want) !== -1)) {
+                        return e.name;
+                    }
                 }
-                if (!match && nm.indexOf("objectmatte") !== -1) { match = true; }
-                if (match && e.enabled) {
-                    e.enabled = false;
-                    n++;
-                    log.push("    turned off \"" + e.name + "\" - its Roto Brush strokes were " +
-                             "painted on the template's own clip and mean nothing on yours");
-                }
+                if (nm.indexOf("objectmatte") !== -1) { return e.name; }
             }
-        } catch (e2) {
-            log.push("    note: could not check for Roto Brush: " + e2.toString());
+        } catch (e2) {}
+        return "";
+    }
+
+    /** Is `want` this comp, or anywhere inside it? */
+    function compContains(comp, want, depth) {
+        if (!(comp instanceof CompItem) || depth > 8) { return false; }
+        if (comp === want) { return true; }
+        for (var i = 1; i <= comp.numLayers; i++) {
+            if (compContains(layerSource(comp.layer(i)), want, depth + 1)) { return true; }
         }
-        return n;
+        return false;
+    }
+
+    /** The layer in `card` that shows `wantComp`, directly or nested. */
+    function layerShowing(card, wantComp) {
+        if (!card || !wantComp) { return null; }
+        for (var i = 1; i <= card.numLayers; i++) {
+            if (compContains(layerSource(card.layer(i)), wantComp, 0)) { return card.layer(i); }
+        }
+        return null;
+    }
+
+    /**
+     * Moves the guest's cut-out layer BEHIND the quote box, instead of
+     * switching it off.
+     *
+     * Switching it off cost far more than it fixed. The template draws the
+     * guest twice: a desaturated copy at the bottom of the stack, tinted by an
+     * adjustment layer, which is the background - and this one, in full
+     * colour, above the red circle. Turn this one off and every card loses the
+     * guest's real colours and drops him behind the circle, to fix a bleed on
+     * one card.
+     *
+     * The strokes are still stale, so this layer can still let a piece of the
+     * clip through where it should not. Below the box it no longer matters:
+     * the box is drawn after it and covers it. Above the red circle it still
+     * sits, so the guest keeps his colours and stays in front - which is the
+     * whole point of that layer.
+     */
+    function moveMattesBehindBox(card, boxLayer, footageComp, log, moveProblems) {
+        if (!card || !boxLayer) { return 0; }
+        moveProblems = moveProblems || [];
+        var pending = [], i;
+        for (i = 1; i <= card.numLayers; i++) {
+            var L = card.layer(i);
+            if (L === boxLayer) { continue; }
+            if (L.index > boxLayer.index) { continue; }     // already behind it
+
+            // Any layer in front of the box that draws the guest's footage can
+            // cover the box. Whether a Roto Brush can be SEEN on it is beside
+            // the point - one card moved and another did not, on the same run,
+            // because the effect went unrecognised there. Showing the footage
+            // is the property that matters.
+            var shows = footageComp && compContains(layerSource(L), footageComp, 0);
+            var fx = rotoEffectName(L);
+            if (!shows && fx === "") { continue; }
+            pending.push({ layer: L, name: L.name, why: fx !== "" ? "its \"" + fx + "\"" : "it" });
+        }
+        var done = 0;
+        for (i = 0; i < pending.length; i++) {
+            var L = pending[i].layer, wasLocked = false;
+            try {
+                // After Effects refuses to move a locked layer, and the refusal
+                // reads like nothing happened. One card out of nine behaving
+                // differently is what a stray lock looks like from outside.
+                try { wasLocked = L.locked; L.locked = false; } catch (eL) {}
+                L.moveAfter(boxLayer);
+                done++;
+                log.push("    moved \"" + pending[i].name + "\" behind \"" + boxLayer.name +
+                         "\" - " + pending[i].why + " was painted on the template's own clip, so " +
+                         "it can bleed over the box. Behind it, the box always wins; the guest " +
+                         "keeps his colours and stays in front of the circle." +
+                         (wasLocked ? "  (the layer was LOCKED - unlocked to move it)" : ""));
+            } catch (e) {
+                moveProblems.push("\"" + pending[i].name + "\": " + e.toString());
+                log.push("    *** could not move \"" + pending[i].name + "\" behind the box: " +
+                         e.toString());
+            }
+            try { L.locked = wasLocked; } catch (eR) {}
+        }
+        return done;
     }
 
     /**

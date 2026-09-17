@@ -25,19 +25,8 @@
 
     var SCRIPT_NAME = "Person Replacer";
     var SETTINGS_SECTION = "PersonReplacer";
-    var VIDEO_EXT = "mp4,mov,m4v,avi,mkv,mxf,webm,mpg,mpeg,wmv,mts,m2ts,r3d,braw,dv,3gp";
-
-    // Which CSV headings name the speaker and their job title. The column is
-    // recognised by its HEADING only - never by what is in it, because a wrong
-    // guess writes a row number or a timecode onto a real person's card.
-    var SPEAKER_HEADS = "\u0627\u0644\u0645\u062a\u062d\u062f\u062b,\u0627\u0644\u0636\u064a\u0641,\u0627\u0644\u0645\u062a\u0643\u0644\u0645,\u0627\u0644\u0642\u0627\u0626\u0644,\u0627\u0644\u0627\u0633\u0645,speaker,name,guest,who";
-    var TITLE_HEADS = "\u0627\u0644\u0635\u0641\u0629,\u0627\u0644\u0648\u0638\u064a\u0641\u0629,\u0627\u0644\u0645\u0646\u0635\u0628,\u0627\u0644\u062a\u0639\u0631\u064a\u0641,title,role,job,position";
-    var GUEST_HEADS = "\u0627\u0644\u0636\u064a\u0648\u0641,\u0636\u064a\u0648\u0641,guests,panel";
-    var GUEST_FILES = "episode-info.txt,episode-info.md,episode_info.txt,guests.txt,guests.md";
-    // what an exporter tacks onto a cut-out's filename
-    var ALPHA_MARKERS = "alpha,matte,cutout,cut,key,keyed,rgba,transparent,nobg,noback";
     var QC_SETTINGS = "QuoteCards";
-    var SETUP_FILE = "QuoteCards_setup.txt";
+    var VIDEO_EXT = "mp4,mov,m4v,avi,mkv,mxf,webm,mpg,mpeg,wmv,mts,m2ts,r3d,braw,dv,3gp";
     var MIN_MATCH_SCORE = 2;
     var TOL = 0.0005; // seconds, float-compare tolerance
 
@@ -49,34 +38,6 @@
 
     function normalize(s) {
         return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "");
-    }
-
-    /** Arabic-Indic and Persian digits written the way parseInt reads them. */
-    function toWesternDigits(s) {
-        return String(s)
-            .replace(/[\u0660-\u0669]/g, function (d) {
-                return String(d.charCodeAt(0) - 0x0660);
-            })
-            .replace(/[\u06F0-\u06F9]/g, function (d) {
-                return String(d.charCodeAt(0) - 0x06F0);
-            });
-    }
-
-    /**
-     * normalize() throws away every non-Latin letter, which turns any Arabic
-     * heading or guest name into an empty string - so it could never be
-     * compared against anything. This keeps Arabic letters and folds the
-     * spellings that differ only on screen: the alef forms, the taa marbuta,
-     * the alef maqsura, harakat and tatweel.
-     */
-    function foldText(s) {
-        s = toWesternDigits(String(s)).toLowerCase();
-        s = s.replace(/[\u064B-\u0652\u0640\u0670]/g, "");
-        s = s.replace(/[\u0622\u0623\u0625\u0671]/g, "\u0627");
-        s = s.replace(/\u0629/g, "\u0647");
-        s = s.replace(/[\u0649\u06CC]/g, "\u064A");
-        s = s.replace(/[^0-9a-z\u0621-\u064A]+/g, "");
-        return s;
     }
 
     function pad(n, w) {
@@ -353,143 +314,79 @@
         return files;
     }
 
-    /**
-     * Pairs each clip with its cut-out version BY NAME, falling back to folder
-     * order only when the names say nothing.
-     *
-     * Order alone was the whole rule, and it quietly broke the moment the
-     * cut-outs came back from an external keyer named 8f3a2b1c.webm: one
-     * guest's cut-out lands on another guest's card, and nobody notices until
-     * they look at the face.
-     *
-     * Returns an array parallel to `clips` of { file, how }, how being
-     * "name", "number" or "order".
-     */
-    function pairAlphaClips(clips, alphas) {
-        var used = {}, pairs = [], i;
-        var cBase = [], aBase = [];
-        for (i = 0; i < clips.length; i++) { cBase.push(baseName(clips[i].name)); }
-        for (i = 0; i < alphas.length; i++) {
-            aBase.push(stripAlphaMarker(baseName(alphas[i].name)));
-        }
-        for (i = 0; i < clips.length; i++) { pairs.push({ file: null, how: "" }); }
-
-        // the same name, give or take the _alpha on the end
-        matchPass(function (c, a) {
-            var fc = foldText(c);
-            return fc !== "" && fc === foldText(a);
-        }, "name");
-
-        // one name inside the other - but clip1 is NOT clip10, so a trailing
-        // number that disagrees vetoes the match however well the rest reads
-        matchPass(function (c, a) {
-            var fc = foldText(c), fa = foldText(a);
-            if (fc === "" || fa === "") { return false; }
-            if (fc.indexOf(fa) === -1 && fa.indexOf(fc) === -1) { return false; }
-            var tc = trailingNumber(c), ta = trailingNumber(a);
-            return !(tc && ta && tc.n !== ta.n);
-        }, "name");
-
-        // the number that ENDS the name: Aktbas_002 is Aktbas_2
-        matchPass(function (c, a) {
-            var tc = trailingNumber(c), ta = trailingNumber(a);
-            if (!tc || !ta || tc.n !== ta.n) { return false; }
-            var pc = foldText(tc.prefix), pa = foldText(ta.prefix);
-            return pc === pa || pc === "" || pa === "";
-        }, "number");
-
-        // whatever is left falls back on order, which is what the warning is for
-        var next = 0;
-        for (i = 0; i < clips.length; i++) {
-            if (pairs[i].file) { continue; }
-            while (next < alphas.length && used[next]) { next++; }
-            if (next >= alphas.length) { break; }
-            used[next] = true;
-            pairs[i] = { file: alphas[next], how: "order" };
-        }
-        return pairs;
-
-        /** Takes a match only when exactly one unused cut-out fits. */
-        function matchPass(fits, how) {
-            for (var c = 0; c < clips.length; c++) {
-                if (pairs[c].file) { continue; }
-                var hit = -1, n = 0;
-                for (var a = 0; a < alphas.length; a++) {
-                    if (used[a]) { continue; }
-                    if (fits(cBase[c], aBase[a])) { hit = a; n++; }
-                }
-                if (n === 1) { used[hit] = true; pairs[c] = { file: alphas[hit], how: how }; }
-            }
-        }
+    /** Every run of digits in a file's stem, as numbers: "Aktbas_002" -> "2". */
+    function digitsOf(name) {
+        var m = String(baseName(name)).match(/\d+/g);
+        if (!m) { return ""; }
+        var out = [];
+        for (var i = 0; i < m.length; i++) { out.push(String(parseInt(m[i], 10))); }
+        return out.join("-");
     }
 
-    /** "Aktbas_001_alpha" -> "Aktbas_001". A marker needs a separator before
-     *  it, so a name that merely ends in "key" is left whole. */
-    function stripAlphaMarker(base) {
-        var marks = ALPHA_MARKERS.split(","), out = base, changed = true;
-        while (changed) {
-            changed = false;
-            for (var i = 0; i < marks.length; i++) {
-                var re = new RegExp("[\\s_\\-\\.]+" + marks[i] + "$", "i");
-                if (re.test(out)) { out = out.replace(re, ""); changed = true; }
+    /**
+     * Does `longS` start with `whole` at a stem boundary? A plain indexOf===0
+     * lets "clip1" claim "clip10_alpha", which is the clip2-before-clip10 trap
+     * wearing a different hat: the number has to end where the stem ends.
+     */
+    function startsWithStem(longS, whole) {
+        if (whole === "" || longS.indexOf(whole) !== 0) { return false; }
+        if (!/\d$/.test(whole)) { return true; }
+        return !/^\d/.test(longS.charAt(whole.length));
+    }
+
+    /**
+     * How well a cut-out file answers to a clip file. normalize() is no use
+     * here - it strips an Arabic file name to "" and then everything matches
+     * everything - so this compares the stems as they are.
+     */
+    function alphaMatchScore(clip, alphaFile) {
+        var a = trim(baseName(clip.name)).toLowerCase();
+        var b = trim(baseName(alphaFile.name)).toLowerCase();
+        if (a === "" || b === "") { return 0; }
+        if (a === b) { return 100; }
+        // "01_dalal.mp4" -> "01_dalal_alpha.mov": one stem starts the other.
+        if (startsWithStem(b, a) || startsWithStem(a, b)) { return 90; }
+        // Numbering is what survives a trip through an outside keying tool.
+        var da = digitsOf(clip.name), db = digitsOf(alphaFile.name);
+        if (da !== "" && da === db) { return 70; }
+        return 0;
+    }
+
+    /**
+     * Pairs each clip with its cut-out. Position alone is how this worked, and
+     * position is exactly what a trip through an external keyer destroys - the
+     * files come back named after a job id, in whatever order they finished.
+     * A cut-out on the wrong card is invisible until someone recognises the
+     * face, so match on the name first and say plainly when that failed.
+     */
+    function pairAlphaClips(files, alphaFiles, warnings) {
+        var used = {}, out = [], byName = 0, i, j;
+        for (i = 0; i < files.length; i++) {
+            var best = -1, bestScore = 0;
+            for (j = 0; j < alphaFiles.length; j++) {
+                if (used[j]) { continue; }
+                var sc = alphaMatchScore(files[i], alphaFiles[j]);
+                if (sc > bestScore) { bestScore = sc; best = j; }
             }
+            if (best >= 0) { used[best] = true; out.push(alphaFiles[best]); byName++; }
+            else { out.push(null); }
+        }
+        var spare = [];
+        for (j = 0; j < alphaFiles.length; j++) { if (!used[j]) { spare.push(alphaFiles[j]); } }
+        var next = 0, byPosition = 0;
+        for (i = 0; i < out.length; i++) {
+            if (out[i] === null && next < spare.length) { out[i] = spare[next++]; byPosition++; }
+        }
+        if (alphaFiles.length > 0 && byName === 0) {
+            warnings.push("No cut-out file name answers to a clip name, so they were paired by " +
+                          "POSITION. Check the Alpha column row by row before building - a " +
+                          "cut-out on the wrong card is not obvious once it is rendered.");
+        } else if (byPosition > 0) {
+            warnings.push(byName + " cut-out(s) matched by name, " + byPosition + " placed by " +
+                          "position because nothing answered to the clip name. Check those rows " +
+                          "in the Alpha column.");
         }
         return out;
-    }
-
-    /** The number at the very end of a name, with whatever came before it. */
-    function trailingNumber(s) {
-        var w = toWesternDigits(String(s));
-        var m = /([0-9]+)\s*$/.exec(w);
-        if (!m) { return null; }
-        return { n: parseInt(m[1], 10), prefix: w.substring(0, m.index) };
-    }
-
-    /**
-     * The episode setup file - the layer choices, written beside the quote
-     * list so they travel with the folder. Paths are deliberately NOT in it:
-     * they differ on every machine, the layers do not.
-     */
-    function setupToText(pairs) {
-        var out = ["# " + SETUP_FILE + " - written by Quote Cards, read back automatically.",
-                   "# It travels with the episode folder. Paths are left out on purpose.",
-                   ""];
-        for (var i = 0; i < pairs.length; i++) {
-            var key = pairs[i][0], val = pairs[i][1];
-            if (val === "" || val == null) { continue; }
-            while (key.length < 12) { key += " "; }
-            out.push(key + val);
-        }
-        return out.join("\n") + "\n";
-    }
-
-    function parseSetupText(text) {
-        var lines = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-        var map = {};
-        for (var i = 0; i < lines.length; i++) {
-            var line = trim(lines[i]);
-            if (line === "" || line.charAt(0) === "#") { continue; }
-            var m = /^(\S+)\s+([\s\S]*)$/.exec(line);
-            if (!m) { continue; }
-            map[m[1].toLowerCase()] = trim(m[2]);
-        }
-        return map;
-    }
-
-    /**
-     * Two layer labels naming the same layer. The sample of the layer's
-     * current text is part of the label, and the template's wording drifts
-     * between episodes, so it is cut off before comparing.
-     */
-    function sameTargetLabel(a, b) {
-        return labelKey(a) === labelKey(b);
-    }
-
-    function labelKey(s) {
-        var t = String(s == null ? "" : s);
-        var cut = t.indexOf("   -   \"");
-        if (cut >= 0) { t = t.substring(0, cut); }
-        return trim(t.replace(/\s+/g, " ")).toLowerCase();
     }
 
     /** Minimal RFC4180 reader: quoted fields, doubled quotes, embedded newlines. */
@@ -522,23 +419,37 @@
         return out;
     }
 
+    /** Every filled cell in this column is just a number. */
+    function isNumericColumn(rows, c) {
+        var seen = 0;
+        for (var r = 1; r < rows.length; r++) {
+            if (rows[r].length <= c) { continue; }
+            var v = trim(rows[r][c]);
+            if (v === "") { continue; }
+            seen++;
+            if (!/^[0-9\u0660-\u0669]+$/.test(v)) { return false; }
+        }
+        return seen > 0;
+    }
+
     /**
-     * The column carrying the quotes is simply the wordiest one - but an
-     * Arabic job title runs longer than some quotes, so any column already
-     * claimed by name or heading is kept out of the contest.
+     * The column carrying the quotes is the wordiest one, ignoring any column
+     * in `skip`. A guest's job title can easily run longer than the quote it
+     * sits under - "member of the Revolutionary Council of Fatah and professor
+     * of diplomacy..." beats most quotes - and then the wordiest-column rule
+     * writes the title across the card as though it were the quote. Columns a
+     * header has already claimed are taken out of the running.
      */
-    function pickTextColumn(rows, exclude) {
-        var widest = 0, c, x;
+    function pickTextColumn(rows, skip) {
+        var widest = 0, c;
         for (var r = 0; r < rows.length; r++) { widest = Math.max(widest, rows[r].length); }
         var best = -1, bestScore = -1;
         for (c = 0; c < widest; c++) {
-            var skip = false;
-            if (exclude) {
-                for (x = 0; x < exclude.length; x++) {
-                    if (exclude[x] === c) { skip = true; break; }
-                }
-            }
-            if (skip) { continue; }
+            if (skip && skip[c]) { continue; }
+            // A column of bare row numbers is not a column of quotes. On a
+            // blank sheet it is the only one with anything in it, and it used
+            // to win - nine cards reading "1", "2", "3" and nothing to say so.
+            if (isNumericColumn(rows, c)) { continue; }
             var total = 0, n = 0;
             for (var i = 1; i < rows.length; i++) {          // skip a header row
                 if (rows[i].length <= c) { continue; }
@@ -552,201 +463,309 @@
     }
 
     /**
-     * Which column carries what, decided by the HEADING alone. Guessing from
-     * the contents is how a row number or a timecode ends up printed under a
-     * real person's face, so a column that is not named is simply not used.
-     * Returns -1 when no heading matches.
+     * normalize() keeps only a-z0-9, so it flattens any Arabic string to "" -
+     * and indexOf("") matches everything. Header and layer names here are
+     * routinely Arabic, so they get a plain case-insensitive substring test.
      */
-    function headerColumn(rows, headsCSV, taken) {
-        if (!rows.length) { return -1; }
-        var head = rows[0], hints = headsCSV.split(","), pass, h, c;
-        var folded = [];
-        for (c = 0; c < head.length; c++) { folded.push(foldText(head[c])); }
+    function looseHas(text, needle) {
+        needle = trim(needle);
+        if (needle === "") { return false; }
+        return String(text).toLowerCase().indexOf(needle.toLowerCase()) !== -1;
+    }
 
-        for (pass = 0; pass < 3; pass++) {
-            for (h = 0; h < hints.length; h++) {
-                var want = foldText(hints[h]);
-                if (want === "") { continue; }
-                if (pass === 2 && want.length < 4) { continue; }
-                for (c = 0; c < folded.length; c++) {
-                    if (c === taken || folded[c] === "") { continue; }
-                    var hit = (pass === 0) ? folded[c] === want
-                            : (pass === 1) ? folded[c].substring(0, want.length) === want
-                            : folded[c].indexOf(want) !== -1;
-                    if (hit) { return c; }
-                }
+    var SPEAKER_HINTS = "المتحدث,متحدث,الضيف,ضيف,الاسم,اسم,speaker,name,guest,person";
+    var ROLE_HINTS = "الصفة,صفة,الوظيفة,وظيفة,المنصب,منصب,title,role,job,position,subtitle";
+
+    /**
+     * The column holding the speaker's name (or their job title), identified
+     * by its HEADER only. Guessing from the values instead would cheerfully
+     * write a timecode or a row number across the card, so an unlabelled
+     * column is left alone and the panel says the names were not touched.
+     * Returns -1 when no header names one.
+     */
+    function pickLabelledColumn(rows, hintCSV, skip) {
+        if (rows.length < 2) { return -1; }
+        var hints = hintCSV.split(",");
+        for (var h = 0; h < hints.length; h++) {
+            for (var c = 0; c < rows[0].length; c++) {
+                if (c === skip) { continue; }
+                if (looseHas(trim(rows[0][c]), hints[h])) { return c; }
             }
         }
         return -1;
     }
 
     /**
-     * Reads the guest roster - the list under a line saying "الضيوف" - out of
-     * an episode-info.txt sitting next to the quote list. Name and title are
-     * split on a dash, because the title itself carries commas.
-     * Returns [{ name, title }].
+     * The guests, read out of the producer's own form.
+     *
+     * A form lists them once, under a heading, as "Name - Title". The quote
+     * table in the same form does NOT say who said what - that is the one
+     * thing nobody can read off the paper - so the speaker column still has
+     * to be filled in by someone who watched the episode. What it should not
+     * take is typing a name and an eighty-nine character title nine times:
+     * with the guests known, "2" or a surname in that column is enough.
+     *
+     * Returns [{ name, role }].
      */
-    function parseGuestList(text) {
-        var lines = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-        var start = -1, i;
-        for (i = 0; i < lines.length; i++) {
-            var f = foldText(lines[i]);
-            if (f === "") { continue; }
-            var heads = GUEST_HEADS.split(","), hit = false;
-            for (var h = 0; h < heads.length; h++) {
-                if (f.indexOf(foldText(heads[h])) !== -1) { hit = true; break; }
-            }
-            // a heading names the list; a line that already IS a guest does not
-            if (hit && f.length < 40) { start = i + 1; break; }
-        }
+    var GUEST_HEADINGS = "الضيوف,الضيف,المتحدثون,guests,speakers,panel";
 
-        var loose = (start < 0);
-        var out = [];
-        for (i = loose ? 0 : start; i < lines.length; i++) {
-            var raw = trim(lines[i]);
-            if (raw === "") {
-                if (out.length && !loose) { break; }
+    function parseGuestList(text) {
+        var lines = String(text || "").split(/\r\n|\r|\n/);
+        var out = [], inBlock = false, i;
+        for (i = 0; i < lines.length; i++) {
+            var raw = lines[i];
+            var L = trim(raw);
+            if (L === "") { continue; }
+
+            var heads = GUEST_HEADINGS.split(","), isHead = false;
+            for (var h = 0; h < heads.length; h++) {
+                if (looseHas(L, heads[h]) && L.length < 40) { isHead = true; break; }
+            }
+            if (isHead) { inBlock = true; continue; }
+            if (!inBlock) { continue; }
+
+            // A bullet used to be required to stay in the block. Word and
+            // Google Docs treat list bullets as formatting, not characters, so
+            // a pasted guest list arrives with none - and three guests read as
+            // zero. What ends the block is running into something that is
+            // plainly not a guest: a numbered quote, or a paragraph.
+            var qh = L.match(NUM_HEAD);
+            if (qh && trim(L.substring(qh[0].length)).length >= MIN_QUOTE) {
+                inBlock = false;
                 continue;
             }
-            if (!loose && isSectionOrQuoteLine(raw, out.length)) { break; }
+            if (L.length > 200 || out.length >= 20) { inBlock = false; continue; }
 
-            var line = raw.replace(/^[\-\u2022\u00b7\*\u25cf\u25aa\s]+/, "");
-            line = line.replace(/^[0-9\u0660-\u0669]+\s*[\.\)\-]\s*/, "");
-            line = trim(line);
-            if (line === "") { continue; }
-
-            var split = splitNameAndTitle(line);
-            if (loose) {
-                // With no heading to anchor on, only take lines that are
-                // plainly a guest: "name - title", or a short bare name.
-                if (!split.title && (line.length > 60 || line.indexOf(":") !== -1)) { continue; }
+            // The next section's heading ends the list. These forms head every
+            // section with a short line ending in a colon - "المحاور:" - and
+            // without this the whole of the next section reads as guests.
+            var noBullet = trim(L.replace(/^[\-\u2013\u2014\u2022\*\u00b7]+\s*/, ""));
+            if (noBullet.length < 40 && /[:\uFF1A]\s*$/.test(noBullet)) {
+                inBlock = false;
+                continue;
             }
-            if (split.name === "") { continue; }
-            out.push(split);
+
+            var bullet = trim(L.replace(/^[\-\u2013\u2014\u2022\*\u00b7]+\s*/, ""));
+            if (bullet === "") { continue; }
+
+            // "Name - Title" wins over "Name, Title": a title can hold commas
+            // of its own, and this one does.
+            var name = trim(bullet), role = "";
+            var dash = bullet.search(/\s[\u2013\u2014-]\s/);
+            if (dash > 0) {
+                name = trim(bullet.substring(0, dash));
+                role = trim(bullet.substring(dash).replace(/^\s[\u2013\u2014-]\s/, ""));
+            } else {
+                var comma = bullet.indexOf("،");
+                if (comma < 0) { comma = bullet.indexOf(","); }
+                if (comma > 0) {
+                    name = trim(bullet.substring(0, comma));
+                    role = trim(bullet.substring(comma + 1));
+                }
+            }
+            if (name !== "") { out.push({ name: name, role: role }); }
         }
         return out;
     }
 
-    function isSectionOrQuoteLine(raw, have) {
-        if (raw.length > 200) { return have > 0; }
-        var western = toWesternDigits(raw);
-        if (/^\s*[\(\[]?\s*[0-9]+\s*[\)\]\-\.]/.test(western)) { return true; }
-        if (/:\s*$/.test(raw)) { return true; }
-        return false;
+    /**
+     * Turns what someone typed in the speaker column into a guest. Accepts the
+     * guest's number in the list, any part of their name, or the whole name.
+     * Returns null when it matches nobody - a wrong name is worse than none.
+     */
+    function resolveGuest(value, guests) {
+        var v = trim(value || "");
+        if (v === "" || !guests || guests.length === 0) { return null; }
+
+        var n = parseInt(v.replace(/[\u0660-\u0669]/g, function (d) {
+            return String(d.charCodeAt(0) - 0x0660);
+        }), 10);
+        if (!isNaN(n) && String(n) === v.replace(/[\u0660-\u0669]/g, function (d) {
+            return String(d.charCodeAt(0) - 0x0660);
+        }) && n >= 1 && n <= guests.length) {
+            return guests[n - 1];
+        }
+
+        var i, hit = null, hits = 0;
+        for (i = 0; i < guests.length; i++) {
+            if (guests[i].name === v) { return guests[i]; }
+        }
+        for (i = 0; i < guests.length; i++) {
+            if (looseHas(guests[i].name, v) || looseHas(v, guests[i].name)) {
+                hit = guests[i]; hits++;
+            }
+        }
+        return hits === 1 ? hit : null;      // ambiguous is not a match
     }
 
-    function splitNameAndTitle(line) {
-        var m = line.split(/\s*[\u2014\u2013\u2012]\s*/);
-        if (m.length < 2) { m = line.split(/\s+-\s+/); }
-        if (m.length < 2) { m = line.split(/\s*[\u060c,]\s*/); }
-        var name = trim(m[0]);
-        var title = (m.length > 1) ? trim(m.slice(1).join(" - ")) : "";
-        return { name: name, title: title };
+    // --------------------------------------------- reading a producer's form
+
+    /** Latin or Arabic-Indic digits as a number, or NaN. */
+    function digitsToInt(str) {
+        var t = trim(str).replace(/[\u0660-\u0669]/g, function (d) {
+            return String(d.charCodeAt(0) - 0x0660);
+        });
+        return /^[0-9]+$/.test(t) ? parseInt(t, 10) : NaN;
     }
 
     /**
-     * Turns whatever the "المتحدث" column holds - a guest number, an Arabic
-     * numeral, part of a name, or the whole name - into the name and title
-     * that go on the card.
+     * Pulls the quotes out of a producer's form pasted in as plain text.
      *
-     * It never guesses: a value matching two guests, or a bare number with no
-     * roster to read it against, comes back with an empty name and a reason.
-     * A wrong name under a real person's face is worse than no name.
+     * A form numbers them - "( 1 ) ...", "(1) ...", "1) ...", "1- ..." - and
+     * carries the timecode alongside, in its own column or at the end of the
+     * line. Both the numbering and the timecode are stripped: the numbering is
+     * the row number, and the timecode is for the editor, not for the card.
+     *
+     * The guests are listed in the same document, so anything under a guests
+     * heading is left out - otherwise three names come through as quotes.
+     *
+     * Returns [{ index, text, timecode }].
      */
-    function resolveSpeaker(raw, guests) {
-        raw = trim(raw == null ? "" : raw);
-        if (raw === "") { return null; }
-        var have = guests && guests.length ? guests.length : 0;
-        var western = trim(toWesternDigits(raw));
+    var NUM_HEAD = /^[\(\[\{]?\s*([0-9\u0660-\u0669]{1,3})\s*[\)\]\}\.\-:\u2013\u2014]\s+/;
+    var TC_TAIL = /[\s\t]+\(?((?:[0-9\u0660-\u0669]{1,2}:)?[0-9\u0660-\u0669]{1,2}:[0-9\u0660-\u0669]{2})\)?\s*$/;
+    var MIN_QUOTE = 12;
 
-        if (/^[0-9]+$/.test(western)) {
-            var n = parseInt(western, 10);
-            if (have && n >= 1 && n <= have) {
-                return { name: guests[n - 1].name, title: guests[n - 1].title, from: "number" };
+    var LINKISH = /https?:\/\/|www\.|drive\.google|\/view\?|usp=|\.com\/|\.jpg|\.png|\.mp4/i;
+
+    function parseFormQuotes(text) {
+        var lines = String(text || "").split(/\r\n|\r|\n/);
+        var out = [], inGuests = false, i, h;
+        var fragments = 0, shortOnes = 0;
+        var heads = GUEST_HEADINGS.split(",");
+
+        // A form numbers its quotes. Where it does, an unnumbered line is the
+        // table's own heading or a stray caption - taking those too is how
+        // "أبرز الاقتباسات" ended up as quote 1 and pushed every card along by
+        // one. Only fall back to unnumbered lines when nothing is numbered.
+        var numbered = false;
+        for (i = 0; i < lines.length; i++) {
+            var probe = trim(lines[i]).replace(TC_TAIL, "");
+            var ph = probe.match(NUM_HEAD);
+            if (ph && trim(probe.substring(ph[0].length)).length >= MIN_QUOTE) {
+                numbered = true;
+                break;
             }
-            return { name: "", title: "", from: "number", why: have
-                ? "\"" + raw + "\" is not one of the " + have + " guests in the guest list"
-                : "\"" + raw + "\" is a guest number, but there is no guest list " +
-                  "(episode-info.txt) next to the quote list to read it against" };
         }
 
-        if (have) {
-            var needle = foldText(raw), hits = [];
-            for (var i = 0; i < have; i++) {
-                var hay = foldText(guests[i].name);
-                if (hay === "" || needle === "") { continue; }
-                if (hay === needle || hay.indexOf(needle) !== -1 || needle.indexOf(hay) !== -1) {
-                    hits.push(i);
+        for (i = 0; i < lines.length; i++) {
+            var L = trim(lines[i]);
+            if (L === "") { inGuests = false; continue; }
+
+            var isHead = false;
+            for (h = 0; h < heads.length; h++) {
+                if (looseHas(L, heads[h]) && L.length < 40) { isHead = true; break; }
+            }
+            if (isHead) { inGuests = true; continue; }
+
+            var bulleted = /^[\-\u2013\u2014\u2022\*\u00b7]/.test(L);
+            if (inGuests && bulleted) { continue; }
+            if (inGuests && !bulleted) { inGuests = false; }
+
+            var tc = "";
+            var tcHit = L.match(TC_TAIL);
+            if (tcHit) { tc = trim(tcHit[1]); L = trim(L.substring(0, L.length - tcHit[0].length)); }
+
+            var numHit = L.match(NUM_HEAD);
+            if (numHit) { L = trim(L.substring(numHit[0].length)); }
+            else if (numbered) { continue; }        // scaffolding, not a quote
+
+            // A bare number with nothing after it is a row marker, not a quote,
+            // and a stray heading is shorter than any real quote.
+            if (L.length < MIN_QUOTE) { continue; }
+            if (!isNaN(digitsToInt(L))) { continue; }
+
+            // Nobody quotes a link. Forms carry a whole table of them for the
+            // visuals, and copying a table out of a PDF breaks every one into
+            // pieces long enough to pass for a quote.
+            if (LINKISH.test(L)) { fragments++; continue; }
+            if (!/[A-Za-z\u0600-\u06FF]/.test(L)) { fragments++; continue; }
+
+            if (L.length < 40) { shortOnes++; }
+            out.push({ index: out.length + 1, text: L, timecode: tc });
+        }
+
+        // Copying a table out of a PDF loses its structure: every cell lands
+        // on its own line, numbering splits off from the text it belonged to,
+        // and a link breaks across four lines. What comes back is not quotes,
+        // and reporting fifty-three of them as if it were is the worst answer.
+        // Everything being thrown away is the strongest sign of all, not the
+        // weakest: requiring a survivor meant the worst pastes went unflagged.
+        out.looksFragmented = (fragments >= 3) ||
+            (out.length > 0 && (shortOnes / out.length) > 0.5);
+        out.droppedFragments = fragments;
+        return out;
+    }
+
+    /** One CSV field, quoted only when it has to be. */
+    function csvField(v) {
+        var t = String(v === undefined || v === null ? "" : v);
+        return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+    }
+
+    /**
+     * The quote sheet the card tool reads. `order` is the guests' numbers in
+     * quote order - "2,1,3,3" - which is the one thing the form cannot say.
+     */
+    function buildQuotesCSV(quotes, order) {
+        var keys = String(order || "").split(/[\s,;\-]+/);
+        var rows = ["\ufeff" + ["#", "التوقيت", "المتحدث", "الصفة", "نص الاقتباس"].join(",")];
+        for (var i = 0; i < quotes.length; i++) {
+            var who = trim(keys[i] || "");
+            rows.push([
+                csvField(i + 1),
+                csvField(quotes[i].timecode || ""),
+                csvField(who),
+                "",
+                csvField(quotes[i].text)
+            ].join(","));
+        }
+        return rows.join("\n") + "\n";
+    }
+
+    /** The guest list, in the shape the card tool reads back. */
+    function buildGuestsText(guests, title, host) {
+        var out = [];
+        out.push("عنوان الحلقة: " + trim(title || ""));
+        out.push("المقدم: " + trim(host || ""));
+        out.push("");
+        out.push("الضيوف:");
+        for (var i = 0; i < guests.length; i++) {
+            out.push("  - " + guests[i].name +
+                     (trim(guests[i].role) !== "" ? " — " + guests[i].role : ""));
+        }
+        return out.join("\n") + "\n";
+    }
+
+    /** The producer's form sitting next to the quote list, if there is one. */
+    var GUEST_FILES = "episode-info.txt,guests.txt,الضيوف.txt";
+
+    function guestListBeside(file) {
+        try {
+            if (!file || !file.parent) { return ""; }
+            var names = GUEST_FILES.split(",");
+            for (var i = 0; i < names.length; i++) {
+                var f = new File(file.parent.fsName + "/" + trim(names[i]));
+                if (f.exists && f.open("r")) {
+                    var raw = f.read();
+                    f.close();
+                    return raw;
                 }
             }
-            if (hits.length === 1) {
-                return { name: guests[hits[0]].name, title: guests[hits[0]].title, from: "roster" };
-            }
-            if (hits.length > 1) {
-                var who = [];
-                for (var k = 0; k < hits.length; k++) { who.push(guests[hits[k]].name); }
-                return { name: "", title: "", from: "ambiguous",
-                         why: "\"" + raw + "\" fits more than one guest (" + who.join(" / ") +
-                              ") - left blank rather than guessed" };
-            }
-        }
-        return { name: raw, title: "", from: "literal" };
-    }
-
-    /** The guest roster sitting next to the quote list, or null. */
-    function findGuestFile(quotesFile) {
-        var names = GUEST_FILES.split(",");
-        try {
-            var dir = quotesFile.parent;
-            if (!dir) { return null; }
-            for (var i = 0; i < names.length; i++) {
-                var f = new File(dir.fsName + "/" + names[i]);
-                if (f.exists) { return f; }
-            }
         } catch (e) {}
-        return null;
-    }
-
-    function readGuestFile(file, warnings) {
-        try {
-            if (!file.open("r")) {
-                warnings.push("Could not open the guest list: " + file.fsName);
-                return [];
-            }
-            var raw = file.read();
-            file.close();
-            return parseGuestList(raw.replace(/^\uFEFF/, ""));
-        } catch (e) {
-            warnings.push("Could not read the guest list: " + e.toString());
-            return [];
-        }
+        return "";
     }
 
     /**
      * Reads the quote list. Accepts:
-     *   .csv  - the wordiest column is taken as the quote text, and a column
-     *           HEADED with a speaker or title name supplies who said it
+     *   .csv  - the wordiest column is taken as the quote text
      *   .srt  - the "# ..." comment carried under each timecode block
      *   .txt  - one quote per paragraph, or per line when there are no blanks
-     *
-     * Returns [{ index, text, speaker, title, speakerRaw }]. `meta` is filled
-     * in with what was found, so the panel can say "the column is there but
-     * empty" rather than the useless "no names".
+     * A .csv can also carry the speaker's name and job title in their own
+     * labelled columns; without them every card keeps the name the template
+     * was mocked up with.
+     * Returns [{ index, text, speaker, role, speakerColumn }].
      */
-    function parseQuotesFile(file, warnings, meta, guests) {
-        meta = meta || {};
-        meta.speakerColumn = -1;
-        meta.titleColumn = -1;
-        meta.speakerHeader = "";
-        meta.titleHeader = "";
-        meta.named = 0;
-        meta.guests = guests || [];
-        meta.guestFile = "";
-        meta.unresolved = [];
-        return parseQuotesBody(file, warnings, meta, guests);
-    }
-
-    function parseQuotesBody(file, warnings, meta, guests) {
+    function parseQuotesFile(file, warnings) {
         if (!file.open("r")) {
             warnings.push("Could not open the quotes file: " + file.fsName);
             return [];
@@ -755,21 +774,24 @@
         file.close();
         raw = raw.replace(/^\uFEFF/, "");
 
-        var texts = [], speakers = [], titles = [], i;
+        var texts = [], speakers = [], roles = [], speakerHeader = "", i;
         var ext = extOf(file.name);
 
         if (ext === "csv" || ext === "tsv") {
             var rows = parseCSVText(ext === "tsv" ? raw.replace(/\t/g, ",") : raw);
             if (rows.length === 0) { return []; }
 
-            var sCol = headerColumn(rows, SPEAKER_HEADS, -1);
-            var tCol = headerColumn(rows, TITLE_HEADS, sCol);
-            meta.speakerColumn = sCol;
-            meta.titleColumn = tCol;
-            if (sCol >= 0) { meta.speakerHeader = trim(rows[0][sCol]); }
-            if (tCol >= 0) { meta.titleHeader = trim(rows[0][tCol]); }
+            // Claim the named columns first, then pick the quote from what is
+            // left. Done the other way round, a long job title wins the
+            // "wordiest column" contest and lands on the quote layer.
+            var speakerCol = pickLabelledColumn(rows, SPEAKER_HINTS, -1);
+            var roleCol = pickLabelledColumn(rows, ROLE_HINTS, -1);
+            if (roleCol === speakerCol) { roleCol = -1; }
+            var skip = {};
+            if (speakerCol >= 0) { skip[speakerCol] = true; }
+            if (roleCol >= 0) { skip[roleCol] = true; }
 
-            var col = pickTextColumn(rows, [sCol, tCol]);
+            var col = pickTextColumn(rows, skip);
             var start = 1;
             var head = rows[0].length > col ? trim(rows[0][col]) : "";
             var bodyLen = 0, bodyN = 0;
@@ -780,16 +802,20 @@
             if (head !== "" && avg > 0 && head.length >= avg * 0.6) {
                 start = 0;                                   // no header after all
             }
-            // a recognised heading settles it: row 0 IS the header
-            if (sCol >= 0 || tCol >= 0) { start = 1; }
+            // A header that names a column IS a header, whatever the length
+            // heuristic above decided about the quote column.
+            if (speakerCol >= 0 || roleCol >= 0) { start = 1; }
+            if (speakerCol >= 0) { speakerHeader = trim(rows[0][speakerCol]); }
 
             for (i = start; i < rows.length; i++) {
                 if (rows[i].length > col) {
                     var v = trim(rows[i][col]);
                     if (v !== "") {
                         texts.push(v);
-                        speakers.push(sCol >= 0 && rows[i].length > sCol ? trim(rows[i][sCol]) : "");
-                        titles.push(tCol >= 0 && rows[i].length > tCol ? trim(rows[i][tCol]) : "");
+                        speakers.push(speakerCol >= 0 && rows[i].length > speakerCol
+                            ? trim(rows[i][speakerCol]) : "");
+                        roles.push(roleCol >= 0 && rows[i].length > roleCol
+                            ? trim(rows[i][roleCol]) : "");
                     }
                 }
             }
@@ -820,34 +846,47 @@
             }
         }
 
-        // The roster turns "2" into a name and a title, so nobody retypes a
-        // long Arabic name and job description nine times over.
-        if (!guests) {
-            var gFile = findGuestFile(file);
-            if (gFile) {
-                guests = readGuestFile(gFile, warnings);
-                meta.guestFile = gFile.name;
-            } else {
-                guests = [];
-            }
-        }
-        meta.guests = guests;
+        // "3" or a surname in the speaker column becomes the guest's full name
+        // and title, taken from the producer's own form.
+        var guests = parseGuestList(guestListBeside(file));
+        var resolved = 0, unresolved = 0;
 
         var quotes = [];
         for (i = 0; i < texts.length; i++) {
-            var rawSpeaker = (i < speakers.length) ? speakers[i] : "";
-            var rawTitle = (i < titles.length) ? titles[i] : "";
-            var who = resolveSpeaker(rawSpeaker, guests);
-            var name = who ? who.name : "";
-            var title = rawTitle !== "" ? rawTitle : (who ? who.title : "");
-            if (who && who.why) {
-                meta.unresolved.push("Quote " + (i + 1) + ": " + who.why);
+            var sp = speakers[i] || "", ro = roles[i] || "";
+            if (guests.length) {
+                var g = resolveGuest(sp, guests);
+                if (g) {
+                    if (g.name !== sp) { resolved++; }
+                    sp = g.name;
+                    if (ro === "") { ro = g.role; }
+                }
             }
-            if (name !== "") { meta.named++; }
+            // A bare number is a reference to a guest list, not a name. With
+            // no list to resolve it against, writing it through would print
+            // "2" under the quote as though that were who said it.
+            if (sp !== "" && !isNaN(digitsToInt(sp))) {
+                unresolved++;
+                sp = "";
+                ro = "";
+            }
             quotes.push({
-                index: i + 1, text: texts[i],
-                speaker: name, title: title, speakerRaw: rawSpeaker
+                index: i + 1,
+                text: texts[i],
+                speaker: sp,
+                role: ro,
+                speakerColumn: speakerHeader
             });
+        }
+        if (resolved > 0) {
+            warnings.push(resolved + " speaker(s) filled in from the guest list beside the " +
+                          "quote file - check the Name column before building.");
+        }
+        if (unresolved > 0) {
+            warnings.push(unresolved + " row(s) have a guest NUMBER in the speaker column but " +
+                          "there is no guest list to look it up in. Put episode-info.txt " +
+                          "(\"الضيوف:\" then one guest per line) next to the quote file, or " +
+                          "those cards keep the template's name.");
         }
         return quotes;
     }
@@ -976,7 +1015,6 @@
                     offered[nested.id] = true;
                     out.push({
                         comp: nested, layer: null, index: 0, sample: "", isEmpty: true,
-                        name: nested.name,
                         label: path + "  >  " + nested.name +
                                "   (EMPTY comp - the clip gets added here)"
                     });
@@ -987,7 +1025,6 @@
                     var sample = isText ? layerTextValue(L) : "";
                     out.push({
                         comp: comp, layer: L, index: L.index, sample: sample, isEmpty: false,
-                        name: L.name,
                         label: where + (sample !== ""
                             ? "   -   \"" + (sample.length > 42
                                 ? sample.substring(0, 42) + "..." : sample) + "\""
@@ -1029,7 +1066,7 @@
      * every card sharing the same precomps - change one card, change them all.
      * `mapping` comes back filled in as original item id -> its clone.
      */
-    function deepDuplicate(comp, cloneIds, mapping, suffix) {
+    function deepDuplicate(comp, cloneIds, mapping, suffix, log) {
         if (mapping[comp.id]) { return mapping[comp.id]; }
         var clone = comp.duplicate();
         if (suffix) { clone.name = comp.name + " " + suffix; }
@@ -1038,9 +1075,88 @@
             var L = clone.layer(i);
             var src = layerSource(L);
             if (!(src instanceof CompItem) || !cloneIds[src.id]) { continue; }
-            L.replaceSource(deepDuplicate(src, cloneIds, mapping, suffix), false);
+            var remap = captureTimeRemap(L);
+            L.replaceSource(deepDuplicate(src, cloneIds, mapping, suffix, log), false);
+            restoreTimeRemap(L, remap, clone.name + " / " + L.name, log);
         }
         return clone;
+    }
+
+    /**
+     * A template animates its quote box by TIME REMAPPING the comp that holds
+     * it, not by keyframing it in place. Replacing that layer's source is
+     * allowed to rewrite the remap keyframes, and a card whose remap has been
+     * rewritten opens at the wrong moment - or looks like it never opens at
+     * all. Copy them off before the swap.
+     */
+    function captureTimeRemap(layer) {
+        try {
+            if (!layer.timeRemapEnabled) { return null; }
+            var p = layer.property("ADBE Time Remapping");
+            if (!p || p.numKeys === 0) { return null; }
+            var keys = [];
+            for (var i = 1; i <= p.numKeys; i++) {
+                keys.push({
+                    t: p.keyTime(i),
+                    v: p.keyValue(i),
+                    inType: p.keyInInterpolationType(i),
+                    outType: p.keyOutInterpolationType(i)
+                });
+            }
+            return {
+                keys: keys,
+                startTime: layer.startTime,
+                inPoint: layer.inPoint,
+                outPoint: layer.outPoint
+            };
+        } catch (e) { return null; }
+    }
+
+    /** Puts back what captureTimeRemap took, and says so when it was needed. */
+    function restoreTimeRemap(layer, saved, where, log) {
+        if (!saved) { return false; }
+        try {
+            var p = layer.property("ADBE Time Remapping");
+            if (!p) { return false; }
+            var disturbed = (p.numKeys !== saved.keys.length);
+            if (!disturbed) {
+                for (var c = 1; c <= p.numKeys; c++) {
+                    if (Math.abs(p.keyTime(c) - saved.keys[c - 1].t) > TOL ||
+                        Math.abs(p.keyValue(c) - saved.keys[c - 1].v) > TOL) {
+                        disturbed = true;
+                        break;
+                    }
+                }
+            }
+            if (!disturbed && Math.abs(layer.inPoint - saved.inPoint) <= TOL &&
+                Math.abs(layer.outPoint - saved.outPoint) <= TOL) {
+                return false;
+            }
+
+            while (p.numKeys > 0) { p.removeKey(1); }
+            var i;
+            for (i = 0; i < saved.keys.length; i++) {
+                p.setValueAtTime(saved.keys[i].t, saved.keys[i].v);
+            }
+            for (i = 1; i <= p.numKeys; i++) {
+                try {
+                    p.setInterpolationTypeAtKey(i, saved.keys[i - 1].inType,
+                                                   saved.keys[i - 1].outType);
+                } catch (eI) {}
+            }
+            layer.startTime = saved.startTime;
+            layer.inPoint = saved.inPoint;
+            layer.outPoint = saved.outPoint;
+            if (log) {
+                log.push("    time remap on \"" + where + "\" was rewritten by the source " +
+                         "swap - put back (" + saved.keys.length + " key(s), in " +
+                         saved.inPoint.toFixed(2) + "s out " + saved.outPoint.toFixed(2) + "s)");
+            }
+            return true;
+        } catch (e) {
+            if (log) { log.push("    note: could not restore the time remap: " + e.toString()); }
+            return false;
+        }
     }
 
     /** Every comp clone made during one deepDuplicate pass. */
@@ -1134,7 +1250,17 @@
             var p = layer.property(groupName).property(propName);
             var v = p.value;
             var txt = (v instanceof Array) ? "[" + v.join(", ") + "]" : String(v);
-            return txt + (p.numKeys > 0 ? "  (" + p.numKeys + " keys)" : "");
+            var extra = (p.numKeys > 0 ? "  (" + p.numKeys + " keys)" : "");
+            // An expression reading another layer's inPoint/outPoint retimes
+            // itself per card, because each clip is a different length. That
+            // is invisible in the comp and has to show up here.
+            try {
+                if (p.expressionEnabled && trim(p.expression) !== "") {
+                    var ex = trim(p.expression).replace(/[\r\n]+/g, " ");
+                    extra += "  (expr: " + (ex.length > 90 ? ex.substring(0, 90) + "..." : ex) + ")";
+                }
+            } catch (eEx) {}
+            return txt + extra;
         } catch (e) {
             return "-";
         }
@@ -1227,7 +1353,8 @@
                         var doc = L.property("ADBE Text Properties").property("ADBE Text Document").value;
                         boxInfo = "   " + (doc.boxText
                             ? "BOX " + doc.boxTextSize[0] + "x" + doc.boxTextSize[1]
-                            : "POINT TEXT (cannot auto-fit)") + "   size=" + doc.fontSize;
+                            : "POINT TEXT (cannot auto-fit)") + "   size=" + doc.fontSize +
+                            "   font=" + doc.font;
                     } catch (e4) {}
                     out.push(pad4 + "      text:   \"" +
                              (words.length > 60 ? words.substring(0, 60) + "..." : words) +
@@ -1342,33 +1469,107 @@
      */
     var ROTO_HINTS = "samurai,roto";
 
-    function disableRotoEffects(layer, log) {
-        var n = 0;
+    /** The name of the first live Roto Brush / Object Matte on a layer, or "". */
+    function rotoEffectName(layer) {
         try {
             var fx = layer.property("ADBE Effect Parade");
+            var hits = ROTO_HINTS.split(",");
             for (var i = 1; i <= fx.numProperties; i++) {
                 var e = fx.property(i);
+                if (!e.enabled) { continue; }
                 var mn = "", nm = "";
                 try { mn = normalize(e.matchName); } catch (x1) {}
                 try { nm = normalize(e.name); } catch (x2) {}
-                var hits = ROTO_HINTS.split(",");
-                var match = false;
                 for (var h = 0; h < hits.length; h++) {
                     var want = normalize(hits[h]);
-                    if (mn.indexOf(want) !== -1 || nm.indexOf(want) !== -1) { match = true; break; }
+                    if (want !== "" && (mn.indexOf(want) !== -1 || nm.indexOf(want) !== -1)) {
+                        return e.name;
+                    }
                 }
-                if (!match && nm.indexOf("objectmatte") !== -1) { match = true; }
-                if (match && e.enabled) {
-                    e.enabled = false;
-                    n++;
-                    log.push("    turned off \"" + e.name + "\" - its Roto Brush strokes were " +
-                             "painted on the template's own clip and mean nothing on yours");
-                }
+                if (nm.indexOf("objectmatte") !== -1) { return e.name; }
             }
-        } catch (e2) {
-            log.push("    note: could not check for Roto Brush: " + e2.toString());
+        } catch (e2) {}
+        return "";
+    }
+
+    /** Is `want` this comp, or anywhere inside it? */
+    function compContains(comp, want, depth) {
+        if (!(comp instanceof CompItem) || depth > 8) { return false; }
+        if (comp === want) { return true; }
+        for (var i = 1; i <= comp.numLayers; i++) {
+            if (compContains(layerSource(comp.layer(i)), want, depth + 1)) { return true; }
         }
-        return n;
+        return false;
+    }
+
+    /** The layer in `card` that shows `wantComp`, directly or nested. */
+    function layerShowing(card, wantComp) {
+        if (!card || !wantComp) { return null; }
+        for (var i = 1; i <= card.numLayers; i++) {
+            if (compContains(layerSource(card.layer(i)), wantComp, 0)) { return card.layer(i); }
+        }
+        return null;
+    }
+
+    /**
+     * Moves the guest's cut-out layer BEHIND the quote box, instead of
+     * switching it off.
+     *
+     * Switching it off cost far more than it fixed. The template draws the
+     * guest twice: a desaturated copy at the bottom of the stack, tinted by an
+     * adjustment layer, which is the background - and this one, in full
+     * colour, above the red circle. Turn this one off and every card loses the
+     * guest's real colours and drops him behind the circle, to fix a bleed on
+     * one card.
+     *
+     * The strokes are still stale, so this layer can still let a piece of the
+     * clip through where it should not. Below the box it no longer matters:
+     * the box is drawn after it and covers it. Above the red circle it still
+     * sits, so the guest keeps his colours and stays in front - which is the
+     * whole point of that layer.
+     */
+    function moveMattesBehindBox(card, boxLayer, footageComp, log, moveProblems) {
+        if (!card || !boxLayer) { return 0; }
+        moveProblems = moveProblems || [];
+        var pending = [], i;
+        for (i = 1; i <= card.numLayers; i++) {
+            var L = card.layer(i);
+            if (L === boxLayer) { continue; }
+            if (L.index > boxLayer.index) { continue; }     // already behind it
+
+            // Any layer in front of the box that draws the guest's footage can
+            // cover the box. Whether a Roto Brush can be SEEN on it is beside
+            // the point - one card moved and another did not, on the same run,
+            // because the effect went unrecognised there. Showing the footage
+            // is the property that matters.
+            var shows = footageComp && compContains(layerSource(L), footageComp, 0);
+            var fx = rotoEffectName(L);
+            if (!shows && fx === "") { continue; }
+            pending.push({ layer: L, name: L.name, why: fx !== "" ? "its \"" + fx + "\"" : "it" });
+        }
+        var done = 0;
+        for (i = 0; i < pending.length; i++) {
+            var L = pending[i].layer, wasLocked = false;
+            try {
+                // After Effects refuses to move a locked layer, and the refusal
+                // reads like nothing happened. One card out of nine behaving
+                // differently is what a stray lock looks like from outside.
+                try { wasLocked = L.locked; L.locked = false; } catch (eL) {}
+                L.moveAfter(boxLayer);
+                done++;
+                log.push("    moved \"" + pending[i].name + "\" behind \"" + boxLayer.name +
+                         "\" - " + pending[i].why + " was painted on the template's own clip, so " +
+                         "it can bleed over the box. Behind it, the box always wins; the guest " +
+                         "keeps his colours and stays in front of the circle." +
+                         (wasLocked ? "  (the layer was LOCKED - unlocked to move it)" : ""));
+            } catch (e) {
+                moveProblems.push("\"" + pending[i].name + "\": " + e.toString());
+                log.push("    *** could not move \"" + pending[i].name + "\" behind the box: " +
+                         e.toString());
+            }
+            try { L.locked = wasLocked; } catch (eR) {}
+        }
+        return done;
     }
 
     /**
@@ -1586,7 +1787,7 @@
             return g;
         }
 
-        function pathRow(labelText, isFolder, prompt, onSet) {
+        function pathRow(labelText, isFolder, prompt) {
             var g = row(labelText);
             var txt = g.add("edittext", undefined, "");
             txt.alignment = ["fill", "center"];
@@ -1597,10 +1798,9 @@
                 var picked = isFolder ? Folder.selectDialog(prompt) : File.openDialog(prompt);
                 if (!picked) { return; }
                 txt.text = picked.fsName;
-                if (onSet) { onSet(); }
-                maybeScan();          // setting .text from code fires no onChange
+                adoptThenScan();      // setting .text from code fires no onChange
             };
-            txt.onChange = function () { if (onSet) { onSet(); } maybeScan(); };
+            txt.onChange = function () { adoptThenScan(); };
             return txt;
         }
 
@@ -1613,8 +1813,7 @@
         refreshBtn.preferredSize.width = 70;
 
         var videosTxt = pathRow("Clips folder:", true, "Where are the speaker clips?");
-        var quotesTxt = pathRow("Quotes file:", false, "The quote list (.csv / .txt / .srt)",
-                                function () { adoptEpisodeSetup(); });
+        var quotesTxt = pathRow("Quotes file:", false, "The quote list (.csv / .txt / .srt)");
         var alphaTxt = pathRow("Alpha clips:", true,
             "Optional: the pre-keyed / cut-out version of each clip");
 
@@ -1635,9 +1834,9 @@
         var nameDrop = nameGroup.add("dropdownlist", undefined, []);
         nameDrop.alignment = ["fill", "center"];
 
-        var titleGroup = row("Title layer:");
-        var titleDrop = titleGroup.add("dropdownlist", undefined, []);
-        titleDrop.alignment = ["fill", "center"];
+        var roleGroup = row("Title layer:");
+        var roleDrop = roleGroup.add("dropdownlist", undefined, []);
+        roleDrop.alignment = ["fill", "center"];
 
         var opts = win.add("panel", undefined, "Options");
         opts.orientation = "column";
@@ -1675,8 +1874,9 @@
             return ["auto", "straight", "premul-white", "premul-black"][i];
         }
         var cbAlphaPath = opts.add("checkbox", undefined,
-            "Switch the template over to the cut-out clip (turn its alpha layers on, and turn " +
-            "off Roto Brush that was painted on the template's own footage)");
+            "Keep the template's Roto Brush / Object Matte behind the quote box - it was painted " +
+            "on the template's own clip, so it can bleed over the box - and switch on the " +
+            "cut-out layers if you supplied cut-outs");
         cbAlphaPath.value = true;
         var cbFitText = opts.add("checkbox", undefined,
             "Shrink the type until the quote fits its text box");
@@ -1688,7 +1888,7 @@
         var list = win.add("listbox", undefined, [], {
             numberOfColumns: 5, showHeaders: true,
             columnTitles: ["#", "Clip", "Alpha", "Name", "Quote"],
-            columnWidths: [30, 150, 150, 150, 260]
+            columnWidths: [30, 150, 150, 130, 240]
         });
         list.preferredSize.height = 190;
         list.alignment = ["fill", "fill"];
@@ -1710,7 +1910,7 @@
         // ---- state ----------------------------------------------------------
 
         var compList = [], videoTargets = [], textTargets = [], plan = [], planWarnings = [];
-        var alphaFiles = [], quoteMeta = {}, adopted = "";
+        var alphaFiles = [];
 
         function setStatus(m) { status.text = m; }
 
@@ -1744,7 +1944,14 @@
             for (var i = 0; i < videoTargets.length; i++) {
                 videoDrop.add("item", videoTargets[i].label);
             }
-            if (videoTargets.length) { videoDrop.selection = bestGuess(videoTargets, "footage,video,guest,person,clip"); }
+            // The empty cut-out slot is usually called REPLACE-ALPHA-FOOTAGE,
+            // so it answers to "footage" and, sitting above the real clip in
+            // the tree, it used to win. The template's own guest was then
+            // never swapped and the clip was dropped into a comp whose layers
+            // are switched off - the guest stays put and nothing says why.
+            var videoIdx = videoTargets.length
+                ? bestGuess(videoTargets, "footage,video,guest,person,clip", true) : -1;
+            if (videoTargets.length) { videoDrop.selection = videoIdx; }
             else { videoDrop.add("item", "-- no footage layer anywhere in this comp --"); videoDrop.selection = 0; }
 
             alphaDrop.removeAll();
@@ -1754,8 +1961,10 @@
             for (var a = 0; a < videoTargets.length; a++) {
                 alphaDrop.add("item", videoTargets[a].label);
             }
+            // ...and the same target must never be both, or the clip is
+            // written twice into one place and the other slot stays empty.
             var alphaHit = videoTargets.length
-                ? guessIndex(videoTargets, "alpha,matte,luma,cutout,key") : -1;
+                ? guessIndex(videoTargets, "alpha,matte,luma,cutout,key", false, videoIdx) : -1;
             alphaDrop.selection = (alphaHit >= 0) ? alphaHit + 1 : 0;
 
             textTargets = collectTargets(comp, true);
@@ -1768,186 +1977,78 @@
             var quoteIdx = textTargets.length ? bestTextGuess(textTargets) : -1;
             textDrop.selection = textTargets.length ? quoteIdx + 1 : 0;
 
-            // The name and the title are picked by LAYER NAME, never by
-            // length - and the quote layer is out of the running, so the
-            // guest's name cannot land on top of the quote.
-            fillTextDrop(nameDrop, "(leave the name alone)",
-                "name,speaker,guest,\u0627\u0644\u0627\u0633\u0645,\u0627\u0644\u0645\u062a\u062d\u062f\u062b,\u0627\u0644\u0636\u064a\u0641", quoteIdx);
-            fillTextDrop(titleDrop, "(leave the title alone)",
-                "title,role,job,position,\u0627\u0644\u0635\u0641\u0629,\u0627\u0644\u0648\u0638\u064a\u0641\u0629,\u0627\u0644\u0645\u0646\u0635\u0628", quoteIdx);
+            // The name and the title are only auto-picked when a layer is
+            // actually named for them. Guessing by length would land the
+            // speaker's name on the job title as often as not, and writing
+            // over the wrong line of a template is worse than doing nothing.
+            fillSideDrop(nameDrop, "(leave the name alone)", NAME_LAYER_HINTS, quoteIdx);
+            fillSideDrop(roleDrop, "(leave the title alone)", ROLE_LAYER_HINTS, quoteIdx);
         }
 
-        function fillTextDrop(drop, emptyLabel, hintCSV, skipIdx) {
+        var NAME_LAYER_HINTS = "المتحدث,متحدث,الضيف,ضيف,الاسم,اسم,speaker,name,guest";
+        var ROLE_LAYER_HINTS = "الصفة,صفة,الوظيفة,وظيفة,المنصب,منصب,title,role,job,position,subtitle";
+
+        function fillSideDrop(drop, leaveLabel, hintCSV, skipIndex) {
             drop.removeAll();
             drop.add("item", textTargets.length
-                ? emptyLabel
+                ? leaveLabel
                 : "-- no text layer anywhere in this comp --");
             for (var i = 0; i < textTargets.length; i++) {
                 drop.add("item", textTargets[i].label);
             }
-            var hit = textTargets.length ? guessLayerName(textTargets, hintCSV, skipIdx) : -1;
+            var hit = textTargets.length ? looseGuessIndex(textTargets, hintCSV, skipIndex) : -1;
             drop.selection = (hit >= 0) ? hit + 1 : 0;
         }
 
         /**
-         * Matches on the layer's own name, not its path or its current text.
-         * guessIndex() folds through normalize(), which drops every Arabic
-         * letter - so an Arabic layer name could never match anything there.
+         * Matches on the LAYER NAME with a plain substring test, so an Arabic
+         * layer name still matches - normalize() would flatten it to "" and
+         * then match the first layer in the list.
          */
-        function guessLayerName(targets, hintCSV, skipIdx) {
+        function looseGuessIndex(targets, hintCSV, skipIndex) {
             var hints = hintCSV.split(",");
             for (var h = 0; h < hints.length; h++) {
-                var want = foldText(hints[h]);
-                if (want === "") { continue; }
                 for (var i = 0; i < targets.length; i++) {
-                    if (i === skipIdx) { continue; }
-                    if (foldText(targets[i].name).indexOf(want) !== -1) { return i; }
+                    if (i === skipIndex || !targets[i].layer) { continue; }
+                    if (looseHas(targets[i].layer.name, hints[h])) { return i; }
                 }
             }
             return -1;
         }
 
-        // -------------------------------------------------- remembering setup
-
         /**
-         * The panel's choices, as the setup file and the machine settings
-         * both store them. The paths are separate on purpose: they belong to
-         * one machine, the layer choices belong to the episode.
+         * A setup file next to the quote list is how a second editor, on a
+         * different machine, inherits the layer choices instead of guessing
+         * them. Only the choices are taken - the paths in it are somebody
+         * else's.
          */
-        function currentSetup() {
-            var t = template();
-            return [
-                ["template", t ? t.name : ""],
-                ["video", labelOf(videoDrop, videoTargets)],
-                ["alpha", labelOf(alphaDrop, videoTargets)],
-                ["text", labelOf(textDrop, textTargets)],
-                ["name", labelOf(nameDrop, textTargets)],
-                ["title", labelOf(titleDrop, textTargets)],
-                ["sort", cbSort.value ? "on" : "off"],
-                ["matte", cbMatte.value ? "on" : "off"],
-                ["reset", cbReset.value ? "on" : "off"],
-                ["fit", cbFit.value ? "on" : "off"],
-                ["alphapath", cbAlphaPath.value ? "on" : "off"],
-                ["fittext", cbFitText.value ? "on" : "off"],
-                ["folder", cbFolder.value ? "on" : "off"],
-                ["alphamode", alphaChoice()]
-            ];
-        }
-
-        function labelOf(drop, targets) {
-            if (!drop.selection || drop.selection.index === 0) { return ""; }
-            var t = targets[drop.selection.index - 1];
-            return t ? t.label : "";
-        }
-
-        /** Selects the entry naming this layer, or leaves the list alone. */
-        function selectLabel(drop, targets, want) {
-            if (want === "" || want == null) { return false; }
-            for (var i = 0; i < targets.length; i++) {
-                if (sameTargetLabel(targets[i].label, want)) { drop.selection = i + 1; return true; }
-            }
-            return false;
-        }
-
-        function setCheck(cb, v) { if (v === "on" || v === "off") { cb.value = (v === "on"); } }
-
-        function applySetup(map) {
-            var used = 0, i;
-            if (map.template) {
-                for (i = 0; i < compList.length; i++) {
-                    if (compList[i].name === map.template) {
-                        tplDrop.selection = i;
-                        refreshLayers();      // rebuilds the lists for THIS comp
-                        used++;
-                        break;
-                    }
-                }
-            }
-            if (selectLabel(videoDrop, videoTargets, map.video)) { used++; }
-            if (map.alpha) {
-                for (i = 0; i < videoTargets.length; i++) {
-                    if (sameTargetLabel(videoTargets[i].label, map.alpha)) {
-                        alphaDrop.selection = i + 1; used++; break;
-                    }
-                }
-            }
-            if (selectLabel(textDrop, textTargets, map.text)) { used++; }
-            if (selectLabel(nameDrop, textTargets, map.name)) { used++; }
-            if (selectLabel(titleDrop, textTargets, map.title)) { used++; }
-
-            setCheck(cbSort, map.sort);
-            setCheck(cbMatte, map.matte);
-            setCheck(cbReset, map.reset);
-            setCheck(cbFit, map.fit);
-            setCheck(cbAlphaPath, map.alphapath);
-            setCheck(cbFitText, map.fittext);
-            setCheck(cbFolder, map.folder);
-            if (map.alphamode) {
-                var modes = ["auto", "straight", "premul-white", "premul-black"];
-                for (i = 0; i < modes.length; i++) {
-                    if (modes[i] === map.alphamode) { alphaModeDrop.selection = i; break; }
-                }
-            }
-            return used;
-        }
-
-        /**
-         * The setup file sitting beside the quote list wins over whatever this
-         * machine happened to be left on. Picking the wrong Video layer was
-         * the mistake this team made most, and this closes it for everyone at
-         * once: the editor picks two paths and the rest is already right.
-         */
-        function adoptEpisodeSetup() {
-            adopted = "";
-            var qf = trim(quotesTxt.text);
-            if (qf === "") { return; }
+        var lastPresetTried = "";
+        function maybeAdoptPreset() {
+            var qp = trim(quotesTxt.text);
+            if (qp === "" || qp === lastPresetTried) { return ""; }
+            lastPresetTried = qp;
+            var pf = presetBeside(qp);
+            if (!pf) { return ""; }
             try {
-                var f = new File(qf);
-                if (!f.exists || !f.parent) { return; }
-                var setup = new File(f.parent.fsName + "/" + SETUP_FILE);
-                if (!setup.exists || !setup.open("r")) { return; }
-                var raw = setup.read();
-                setup.close();
-                if (applySetup(parseSetupText(raw.replace(/^\uFEFF/, ""))) > 0) {
-                    adopted = setup.name;
-                }
-            } catch (e) {}
-        }
-
-        function saveMachineSetup() {
-            try {
-                var pairs = currentSetup();
-                for (var i = 0; i < pairs.length; i++) {
-                    app.settings.saveSetting(QC_SETTINGS, pairs[i][0], String(pairs[i][1]));
-                }
-                app.settings.saveSetting(QC_SETTINGS, "clips", videosTxt.text);
-                app.settings.saveSetting(QC_SETTINGS, "quotes", quotesTxt.text);
-                app.settings.saveSetting(QC_SETTINGS, "alphafolder", alphaTxt.text);
-            } catch (e) {}
-        }
-
-        function loadMachineSetup() {
-            try {
-                if (!app.settings.haveSetting(QC_SETTINGS, "template")) { return; }
-                var keys = ["template", "video", "alpha", "text", "name", "title", "sort",
-                            "matte", "reset", "fit", "alphapath", "fittext", "folder",
-                            "alphamode"], map = {};
-                for (var i = 0; i < keys.length; i++) {
-                    if (app.settings.haveSetting(QC_SETTINGS, keys[i])) {
-                        map[keys[i]] = app.settings.getSetting(QC_SETTINGS, keys[i]);
-                    }
-                }
-                applySetup(map);
-                var paths = [["clips", videosTxt], ["quotes", quotesTxt], ["alphafolder", alphaTxt]];
-                for (var p = 0; p < paths.length; p++) {
-                    if (app.settings.haveSetting(QC_SETTINGS, paths[p][0])) {
-                        paths[p][1].text = app.settings.getSetting(QC_SETTINGS, paths[p][0]);
-                    }
-                }
-            } catch (e) {}
+                if (!pf.open("r")) { return ""; }
+                var raw = pf.read();
+                pf.close();
+                var hits = applySetup(textToSetup(raw));
+                return hits > 0
+                    ? "  |  setup adopted from " + PRESET_NAME + " next to the quote list (" +
+                      hits + " choice(s))"
+                    : "";
+            } catch (e) { return ""; }
         }
 
         /** Everything needed is filled in, so show the plan without being asked. */
+        function adoptThenScan() {
+            presetNote = maybeAdoptPreset();
+            maybeScan();
+        }
+
+        var presetNote = "";
+
         function maybeScan() {
             if (!template()) { return; }
             if (trim(videosTxt.text) === "" || trim(quotesTxt.text) === "") { return; }
@@ -1960,21 +2061,35 @@
          * from "matched the very first layer", which quietly left the alpha
          * slot unfilled.
          */
-        function guessIndex(targets, hintCSV) {
+        function guessIndex(targets, hintCSV, realOnly, skipIndex) {
             var hints = hintCSV.split(",");
             for (var h = 0; h < hints.length; h++) {
                 var want = normalize(hints[h]);
+                if (want === "") { continue; }        // "" matches every label
                 for (var i = 0; i < targets.length; i++) {
+                    if (i === skipIndex) { continue; }
+                    if (realOnly && targets[i].isEmpty) { continue; }
                     if (normalize(targets[i].label).indexOf(want) !== -1) { return i; }
                 }
             }
             return -1;
         }
 
-        /** Same, but falls back to the first layer when nothing is named. */
-        function bestGuess(targets, hintCSV) {
-            var i = guessIndex(targets, hintCSV);
-            return i < 0 ? 0 : i;
+        /**
+         * Same, but falls back to a layer that really exists before settling
+         * for an empty slot, and only then for the first thing in the list.
+         */
+        function bestGuess(targets, hintCSV, realOnly) {
+            var i = guessIndex(targets, hintCSV, realOnly);
+            if (i >= 0) { return i; }
+            if (realOnly) {
+                i = guessIndex(targets, hintCSV, false);
+                if (i >= 0) { return i; }
+                for (var k = 0; k < targets.length; k++) {
+                    if (!targets[k].isEmpty) { return k; }
+                }
+            }
+            return 0;
         }
 
         /**
@@ -1996,7 +2111,7 @@
         alphaDrop.onChange = function () { maybeScan(); };
         textDrop.onChange = function () { maybeScan(); };
         nameDrop.onChange = function () { maybeScan(); };
-        titleDrop.onChange = function () { maybeScan(); };
+        roleDrop.onChange = function () { maybeScan(); };
         refreshBtn.onClick = function () { refreshComps(); maybeScan(); };
 
         function selectedVideoTarget() {
@@ -2009,13 +2124,19 @@
             return videoTargets[alphaDrop.selection.index - 1] || null;
         }
 
-        function selectedTextTarget() { return pickedText(textDrop); }
-        function selectedNameTarget() { return pickedText(nameDrop); }
-        function selectedTitleTarget() { return pickedText(titleDrop); }
+        function selectedTextTarget() {
+            if (!textDrop.selection || textDrop.selection.index === 0) { return null; }
+            return textTargets[textDrop.selection.index - 1] || null;
+        }
 
-        function pickedText(drop) {
-            if (!drop.selection || drop.selection.index === 0) { return null; }
-            return textTargets[drop.selection.index - 1] || null;
+        function selectedNameTarget() {
+            if (!nameDrop.selection || nameDrop.selection.index === 0) { return null; }
+            return textTargets[nameDrop.selection.index - 1] || null;
+        }
+
+        function selectedRoleTarget() {
+            if (!roleDrop.selection || roleDrop.selection.index === 0) { return null; }
+            return textTargets[roleDrop.selection.index - 1] || null;
         }
 
         function doScan() {
@@ -2045,6 +2166,7 @@
             if (cbSort.value) { sortFilesNaturally(files); }
 
             alphaFiles = [];
+            var sameFolderNote = "";
             var aTarget = selectedAlphaTarget();
             var af = trim(alphaTxt.text);
             if (aTarget && af !== "") {
@@ -2056,10 +2178,18 @@
                     planWarnings.push("No clips found in the alpha folder - the cut-out will " +
                                       "keep the template's own alpha.");
                 }
+                // Pointing "Alpha clips" at the ordinary clips is not a cut-out
+                // route, it is the same video twice - and every card then warns
+                // about a missing alpha channel with no hint as to why.
+                if (aFolder.fsName === folder.fsName) {
+                    sameFolderNote = "  |  \"Alpha clips\" is the SAME folder as \"Clips " +
+                        "folder\" - those are the original videos, not cut-outs, so they carry " +
+                        "no transparency. Clear \"Alpha clips\" and set \"Alpha layer\" to " +
+                        "\"(no separate alpha layer)\" until you have real cut-outs.";
+                }
             }
 
-            quoteMeta = {};
-            var quotes = parseQuotesFile(qFile, planWarnings, quoteMeta);
+            var quotes = parseQuotesFile(qFile, planWarnings);
             if (quotes.length === 0) {
                 setStatus("No quotes read from \"" + qFile.name + "\" - press Help for the formats.");
                 return;
@@ -2070,14 +2200,15 @@
                 return;
             }
 
-            // Each cut-out goes to the clip whose NAME it shares. Handing them
-            // out in folder order put one guest's cut-out on another guest's
-            // card the moment an external keyer renamed the files.
-            var alphaPairs = pairAlphaClips(files, alphaFiles);
-            var byOrder = 0;
-            for (var pi = 0; pi < alphaPairs.length && pi < quotes.length; pi++) {
-                if (alphaPairs[pi].file && alphaPairs[pi].how === "order") { byOrder++; }
-            }
+            // Named first, position only as a last resort: files coming back
+            // from an outside keyer carry job ids, not the clip's name.
+            var warnBefore = planWarnings.length;
+            var alphaPairs = alphaFiles.length
+                ? pairAlphaClips(files, alphaFiles, planWarnings) : [];
+            // A pairing warning is useless in the log afterwards - it has to
+            // be on screen while the Alpha column is still there to check.
+            var pairNote = planWarnings.length > warnBefore
+                ? "  |  " + planWarnings[planWarnings.length - 1] : "";
 
             for (var i = 0; i < quotes.length; i++) {
                 var clip = (i < files.length) ? files[i] : null;
@@ -2085,19 +2216,16 @@
                     planWarnings.push("Quote " + (i + 1) + " has no clip: the folder holds only " +
                                       files.length + " clip(s).");
                 }
-                var pair = (i < alphaPairs.length) ? alphaPairs[i] : { file: null, how: "" };
-                var alphaClip = pair.file;
-                plan.push({ index: i + 1, quote: quotes[i], file: clip, alpha: alphaClip,
-                            alphaHow: pair.how, ok: !!clip });
+                var alphaClip = alphaPairs[i] || null;
+                plan.push({ index: i + 1, quote: quotes[i], file: clip, alpha: alphaClip, ok: !!clip });
 
                 var it = list.add("item", String(i + 1));
                 it.subItems[0].text = clip ? clip.name : "-- no clip --";
-                it.subItems[1].text = alphaClip
-                    ? alphaClip.name + (pair.how === "order" ? "   (by order)" : "")
+                it.subItems[1].text = alphaClip ? alphaClip.name
                     : (aTarget && af !== "" ? "-- none --" : "");
-                it.subItems[2].text = quotes[i].speaker !== ""
+                it.subItems[2].text = trim(quotes[i].speaker) !== ""
                     ? quotes[i].speaker
-                    : "-- no name --";
+                    : (selectedNameTarget() ? "-- no name --" : "");
                 it.subItems[3].text = quotes[i].text.length > 80
                     ? quotes[i].text.substring(0, 80) + "..."
                     : quotes[i].text;
@@ -2138,64 +2266,50 @@
             } else if (!selectedTextTarget()) {
                 note = "  |  text layer set to \"leave alone\" - the quotes will not be written";
             }
-            if (byOrder > 0) {
-                note += "  |  " + byOrder + " cut-out(s) could NOT be matched to a clip by name " +
-                        "and fell back on folder order - check the Alpha column row by row, or " +
-                        "rename each cut-out after its clip with _alpha on the end";
-            }
-            note += speakerNote(quotes.length);
 
-            saveMachineSetup();
-            setStatus((adopted !== "" ? "setup adopted from " + adopted +
-                       " next to the quote list  |  " : "") +
-                      ready + " card(s) ready out of " + plan.length + " quote(s)  |  " +
+            // One guest's name sitting on all nine cards is the quietest way
+            // for this to go wrong: the quote body changes, so the cards look
+            // built, and only the name gives it away.
+            var withSpeaker = 0;
+            for (var sp = 0; sp < quotes.length; sp++) {
+                if (trim(quotes[sp].speaker) !== "") { withSpeaker++; }
+            }
+            var nTarget = selectedNameTarget();
+
+            // Two slots aimed at one layer means the second write silently
+            // wipes the first - the quote replaced by a name, say.
+            var rTarget = selectedRoleTarget();
+            var quoteTarget = selectedTextTarget();
+            var clash = "";
+            if (nTarget && nTarget === quoteTarget) { clash = "\"Name layer\" and \"Text layer\""; }
+            else if (rTarget && rTarget === quoteTarget) { clash = "\"Title layer\" and \"Text layer\""; }
+            else if (nTarget && rTarget && nTarget === rTarget) { clash = "\"Name layer\" and \"Title layer\""; }
+            if (clash !== "") {
+                note += "  |  " + clash + " are the SAME layer - one would overwrite the " +
+                        "other. Point them at different layers.";
+            }
+
+            note += pairNote + sameFolderNote + presetNote;
+
+            if (nTarget && withSpeaker === 0) {
+                note += "  |  THE NAMES WILL NOT CHANGE: " +
+                        (trim(quotes[0].speakerColumn) !== ""
+                            ? "the column \"" + quotes[0].speakerColumn + "\" in your quote " +
+                              "file is empty - type a name into every row"
+                            : "your quote file has no speaker column - add one headed " +
+                              "\"المتحدث\" or \"Speaker\"") +
+                        ", so every card keeps the template's name.";
+            } else if (!nTarget && withSpeaker > 0) {
+                note += "  |  your file has " + withSpeaker + " speaker name(s) but \"Name layer\" " +
+                        "is \"(leave the name alone)\" - pick the name layer, or every card keeps " +
+                        "the template's name.";
+            }
+
+            setStatus(ready + " card(s) ready out of " + plan.length + " quote(s)  |  " +
                       files.length + " clip(s) in the folder" +
                       (files.length > quotes.length
                         ? "  |  " + (files.length - quotes.length) + " clip(s) unused"
                         : "") + note);
-        }
-
-        /**
-         * Why the Name column reads "-- no name --". A column that is missing
-         * and a column that is there but empty need different fixes, and the
-         * old blanket "no names" sent people looking in the wrong file.
-         */
-        function speakerNote(total) {
-            var nTarget = selectedNameTarget(), tTarget = selectedTitleTarget();
-            var named = quoteMeta.named || 0;
-            var out = "";
-
-            if (named === 0) {
-                if (quoteMeta.speakerColumn < 0) {
-                    out += "  |  NO SPEAKER COLUMN in the quote list - the guest name on every " +
-                           "card will stay whatever the template has. Add a column headed " +
-                           "\u0627\u0644\u0645\u062a\u062d\u062f\u062b (or Speaker / Name / Guest).";
-                } else {
-                    out += "  |  the \"" + quoteMeta.speakerHeader + "\" column is there but EMPTY - " +
-                           "fill it with the guest number for each quote" +
-                           (quoteMeta.guestFile !== ""
-                              ? " (1.." + quoteMeta.guests.length + ", from " + quoteMeta.guestFile + ")"
-                              : ", and put a guest list in episode-info.txt next to the quote list") + ".";
-                }
-            } else if (named < total) {
-                out += "  |  " + named + " of " + total + " quotes have a name";
-            }
-
-            if (named > 0 && !nTarget) {
-                out += "  |  names were read but \"Name layer\" is \"leave alone\" - " +
-                       "they will NOT be written on the cards";
-            }
-            if (named > 0 && quoteMeta.titleColumn < 0 && quoteMeta.guestFile === "" && tTarget) {
-                out += "  |  a Title layer is chosen but nothing supplies a job title";
-            }
-            if (quoteMeta.unresolved && quoteMeta.unresolved.length) {
-                out += "  |  " + quoteMeta.unresolved.length + " name(s) left blank: " +
-                       quoteMeta.unresolved[0];
-                for (var u = 0; u < quoteMeta.unresolved.length; u++) {
-                    planWarnings.push(quoteMeta.unresolved[u]);
-                }
-            }
-            return out;
         }
 
         function doCreate() {
@@ -2205,7 +2319,7 @@
             var vTarget = selectedVideoTarget();
             var tTarget = selectedTextTarget();
             var nTarget = selectedNameTarget();
-            var jTarget = selectedTitleTarget();
+            var rTarget = selectedRoleTarget();
             if (!vTarget) { setStatus("No footage layer to swap."); return; }
 
             // Only the comps on the way down to the guest and the quote get a
@@ -2224,6 +2338,32 @@
                     break;
                 }
             }
+            if (aTarget && aTarget === vTarget) {
+                // Saying "this is wrong" and stopping leaves the user to guess
+                // which of twenty entries is right. Name it.
+                var suggest = -1;
+                for (var sg = 0; sg < videoTargets.length; sg++) {
+                    if (!videoTargets[sg].isEmpty) { suggest = sg; break; }
+                }
+                var realHit = guessIndex(videoTargets, "footage,video,guest,person,clip", true);
+                if (realHit >= 0) { suggest = realHit; }
+
+                setStatus("\"Video layer\" and \"Alpha layer\" are the SAME slot" +
+                          (suggest >= 0 ? " - set Video layer to: " + videoTargets[suggest].label
+                                        : " - pick different ones") + ".");
+                alert("Video layer and Alpha layer both point at:\n\n    " + vTarget.label +
+                      "\n\nThat slot is empty, so the clip would be written into it twice and " +
+                      "the guest never swapped.\n\n" +
+                      (suggest >= 0
+                        ? "Set \"Video layer\" to:\n\n    " + videoTargets[suggest].label +
+                          "\n\nand leave \"Alpha layer\" where it is."
+                        : "This comp has no real footage layer - check you picked the comp you " +
+                          "actually render.") +
+                      "\n\nNo cut-out clips? Clear \"Alpha clips\" and set \"Alpha layer\" " +
+                      "to \"(no separate alpha layer)\" - the cards still build.");
+                return;
+            }
+
             var gaveAlphaFolder = trim(alphaTxt.text) !== "";
             if ((slot !== "" || gaveAlphaFolder) && (!aTarget || alphaFiles.length === 0)) {
                 var why = !aTarget
@@ -2243,9 +2383,9 @@
             var targetIds = {};
             targetIds[vTarget.comp.id] = true;
             if (tTarget) { targetIds[tTarget.comp.id] = true; }
-            if (nTarget) { targetIds[nTarget.comp.id] = true; }
-            if (jTarget) { targetIds[jTarget.comp.id] = true; }
             if (aTarget) { targetIds[aTarget.comp.id] = true; }
+            if (nTarget) { targetIds[nTarget.comp.id] = true; }
+            if (rTarget) { targetIds[rTarget.comp.id] = true; }
             var cloneIds = compsLeadingTo(comp, targetIds);
 
             var log = [];
@@ -2255,10 +2395,7 @@
             log.push("Alpha layer: " + (aTarget ? aTarget.label + "   (in comp \"" + aTarget.comp.name + "\")" : "none"));
             log.push("Text layer:  " + (tTarget ? tTarget.label + "   (in comp \"" + tTarget.comp.name + "\")" : "none"));
             log.push("Name layer:  " + (nTarget ? nTarget.label + "   (in comp \"" + nTarget.comp.name + "\")" : "none"));
-            log.push("Title layer: " + (jTarget ? jTarget.label + "   (in comp \"" + jTarget.comp.name + "\")" : "none"));
-            log.push("Guest list:  " + (quoteMeta.guestFile !== ""
-                ? quoteMeta.guestFile + "   (" + quoteMeta.guests.length + " guest(s))"
-                : "none next to the quote list"));
+            log.push("Title layer: " + (rTarget ? rTarget.label + "   (in comp \"" + rTarget.comp.name + "\")" : "none"));
             var cloneNames = [];
             for (var ci = 1; ci <= app.project.numItems; ci++) {
                 var it = app.project.item(ci);
@@ -2267,7 +2404,7 @@
             log.push("Comps copied per card: " + cloneNames.join(", "));
             log.push("");
 
-            var cache = {}, made = 0, skipped = 0, created = [];
+            var cache = {}, made = 0, skipped = 0, created = [], rotoOff = 0, mattePending = [];
 
             app.beginUndoGroup("Quote Cards - build " + plan.length + " cards");
             try {
@@ -2287,7 +2424,7 @@
 
                     var suffix = pad(row.index, 2);
                     var mapping = {};
-                    var card = deepDuplicate(comp, cloneIds, mapping, suffix);
+                    var card = deepDuplicate(comp, cloneIds, mapping, suffix, log);
                     var clones = mappedClones(mapping);
                     if (folderItem) {
                         for (var c = 0; c < clones.length; c++) { clones[c].parentFolder = folderItem; }
@@ -2322,13 +2459,7 @@
                                         "  hasAlpha=" + aHasAlpha +
                                         "  alphaMode=" + alphaModeName(alphaFootage.mainSource.alphaMode);
                             } catch (eA) {}
-                            log.push("    alpha: " + row.alpha.name +
-                                     "   (matched by " + row.alphaHow + ")   " + aDesc);
-                            if (row.alphaHow === "order") {
-                                log.push("    *** this cut-out was matched by POSITION, not by " +
-                                         "name - if the wrong guest is cut out on this card, " +
-                                         "that is why");
-                            }
+                            log.push("    alpha: " + row.alpha.name + "   " + aDesc);
 
                             // A cut-out clip with no alpha channel is just the
                             // original again - the guest keeps their background
@@ -2345,7 +2476,6 @@
                             if (cbFit.value) { fitToComp(aLayer, mapping[aTarget.comp.id], log); }
                             if (cbAlphaPath.value) {
                                 enableLayersShowing(card, mapping[aTarget.comp.id], log);
-                                disableRotoEffects(target, log);
                             }
                         }
                     } else if (aTarget && !row.alpha) {
@@ -2363,12 +2493,31 @@
                             if (cbFitText.value) { fitTextToBox(textLayer, log); }
                         }
                     }
+                    // Not conditional on having a cut-out: the strokes belong to
+                    // the clip that WAS there either way, and leaving them on is
+                    // what paints a piece of this clip over the quote box.
+                    if (cbAlphaPath.value) {
+                        var box = tTarget ? layerShowing(card, mapping[tTarget.comp.id]) : null;
+                        if (box) {
+                            var probs = [];
+                            var moved = moveMattesBehindBox(card, box,
+                                                            mapping[vTarget.comp.id], log, probs);
+                            rotoOff += moved;
+                            if (probs.length) {
+                                mattePending.push(suffix + " -> " + probs.join("; "));
+                            } else if (moved === 0) {
+                                log.push("    nothing in front of the box draws the guest");
+                                mattePending.push(suffix + " (nothing found in front of the box)");
+                            }
+                        } else {
+                            log.push("    note: could not find the layer holding the quote box, " +
+                                     "so the template's matte was left exactly as it was");
+                            mattePending.push(suffix + " (quote box not found)");
+                        }
+                    }
 
-                    // The name and the title are their own layers. Writing the
-                    // quote alone is how every card ended up carrying the same
-                    // guest - whoever the template was mocked up with.
-                    writeLine(nTarget, mapping, row.quote.speaker, "name", log);
-                    writeLine(jTarget, mapping, row.quote.title, "title", log);
+                    writeSideText(nTarget, "name", row.quote.speaker, mapping, log);
+                    writeSideText(rTarget, "title", row.quote.role, mapping, log);
 
                     if (cbMatte.value) {
                         var matte = buildMatteSetup(target, log);
@@ -2390,27 +2539,23 @@
                 for (var w = 0; w < planWarnings.length; w++) { log.push("  - " + planWarnings[w]); }
             }
 
-            var logPath = "", setupPath = "";
+            // The setup is worth more than the log to the next person who opens
+            // this episode folder on another machine.
+            saveToMachine();
+            var presetPath = writePreset(trim(quotesTxt.text), planWarnings);
+
+            var logPath = "";
             try {
                 var qf2 = new File(trim(quotesTxt.text));
                 var out = new File(qf2.parent.fsName + "/" + baseName(qf2.name) + "_cards_log.txt");
                 logPath = writeTextFile(out, log.join("\n"), planWarnings);
-
-                // The layer choices go next to the quote list so they travel
-                // with the episode folder: the next editor picks two paths and
-                // the lists are already right.
-                var setupOut = new File(qf2.parent.fsName + "/" + SETUP_FILE);
-                setupPath = writeTextFile(setupOut, setupToText(currentSetup()), planWarnings);
-                if (setupPath !== "") { adopted = setupOut.name; }
             } catch (e2) { planWarnings.push("Could not write the log: " + e2.toString()); }
-            saveMachineSetup();
 
             if (created.length) { created[0].openInViewer(); }
 
             setStatus("Created " + made + " card(s), skipped " + skipped +
                       (planWarnings.length ? ", " + planWarnings.length + " warning(s)" : "") +
-                      (logPath ? "  |  log: " + logPath : "") +
-                      (setupPath ? "  |  setup saved beside the quote list" : ""));
+                      (logPath ? "  |  log: " + logPath : ""));
             alert("Quote Cards\n\n" +
                   "Created: " + made + "     Skipped: " + skipped + "\n\n" +
                   "Footage -> " + vTarget.comp.name + " / " + vTarget.layer.name + "\n" +
@@ -2420,33 +2565,185 @@
                         : "NOT SWAPPED - no alpha layer chosen, so the cut-out is " +
                           "whatever the template already had") + "\n" +
                   "Text    -> " + (tTarget ? tTarget.comp.name + " / " + tTarget.layer.name : "not touched") + "\n" +
-                  "Name    -> " + (nTarget
-                        ? nTarget.layer.name + "   (" + (quoteMeta.named || 0) + " of " +
-                          plan.length + " cards named)"
-                        : "NOT WRITTEN - \"Name layer\" is left alone, so every card keeps " +
-                          "the template's guest name") + "\n" +
-                  "Title   -> " + (jTarget ? jTarget.layer.name : "not touched") +
+                  "Name    -> " + (nTarget ? nTarget.comp.name + " / " + nTarget.layer.name : "not touched") +
+                  "\n" +
+                  "Title   -> " + (rTarget ? rTarget.comp.name + " / " + rTarget.layer.name : "not touched") +
+                  (rotoOff > 0
+                        ? "\n\nMoved " + rotoOff + " layer(s) behind the quote box. Their Roto " +
+                          "Brush / Object Matte was painted on the template's own clip, so it " +
+                          "could bleed over the box. The guest keeps his colours and stays in " +
+                          "front of the red circle - he just cannot overlap the box any more."
+                        : "") +
+                  (mattePending.length
+                        ? "\n\nCOULD NOT DO THAT ON CARD(S): " + mattePending.join(", ") +
+                          "\nThose cards can still have a piece of the clip drawn over the box. " +
+                          "Send the log file and it will say why."
+                        : "") +
                   (planWarnings.length
                         ? "\n\nWarnings: " + planWarnings.length + "\n" +
                           planWarnings.slice(0, 4).join("\n") +
                           (planWarnings.length > 4 ? "\n..." : "")
                         : "") +
+                  (presetPath ? "\n\nSetup saved to " + PRESET_NAME + " next to the quote " +
+                                "list. Send that file with the episode and the next machine " +
+                                "picks up these same layer choices." : "") +
                   (logPath ? "\n\nDetails:\n" + logPath : "") +
                   "\n\nOne Ctrl/Cmd+Z undoes all of it.");
         }
 
-        /** Sets one of the short lines (name, job title), or says why not. */
-        function writeLine(target, mapping, value, what, log) {
+        /**
+         * Writes the speaker's name, or their job title, onto its own layer.
+         * The quote body is not the only text on one of these cards - leaving
+         * these two alone is exactly what puts one guest's name on all nine.
+         */
+        function writeSideText(target, what, value, mapping, log) {
             if (!target) { return; }
-            if (trim(value) === "") {
-                log.push("    " + what + " left as the template had it - nothing to write");
+            if (trim(value || "") === "") {
+                log.push("    note: no " + what + " for this card, the template's " +
+                         what + " is kept as it was");
                 return;
             }
             var layer = mapping[target.comp.id].layer(target.index);
             if (setLayerText(layer, value, log)) {
-                log.push("    " + what + " set on " + layer.name + ": " + value);
+                log.push("    " + what + " set: \"" + value + "\" on " + layer.name);
                 if (cbFitText.value) { fitTextToBox(layer, log); }
             }
+        }
+
+        // ------------------------------------------------- remembering the setup
+        //
+        // The layer choices belong to the TEMPLATE, not to the machine or the
+        // episode, so an editor should pick them once and never again - and a
+        // second editor on another machine should not have to guess them at
+        // all. They are stored by their full path label, which is the same
+        // wherever the project is opened.
+
+        var PRESET_NAME = "QuoteCards_setup.txt";
+
+        function currentSetup() {
+            var v = selectedVideoTarget(), a = selectedAlphaTarget();
+            var t = selectedTextTarget(), n = selectedNameTarget(), r = selectedRoleTarget();
+            return {
+                template: template() ? template().name : "",
+                video: v ? v.label : "",
+                alpha: a ? a.label : "",
+                text: t ? t.label : "",
+                name: n ? n.label : "",
+                title: r ? r.label : "",
+                sort: cbSort.value ? "1" : "0",
+                matte: cbMatte.value ? "1" : "0",
+                reset: cbReset.value ? "1" : "0",
+                fit: cbFit.value ? "1" : "0",
+                alphaPath: cbAlphaPath.value ? "1" : "0",
+                fitText: cbFitText.value ? "1" : "0",
+                folder: cbFolder.value ? "1" : "0",
+                alphaMode: String(alphaModeDrop.selection ? alphaModeDrop.selection.index : 0)
+            };
+        }
+
+        function setupToText(o) {
+            var out = [], k;
+            out.push("# Quote Cards setup - keep this next to the quote list.");
+            out.push("# It carries the layer choices, not any file path: paths differ");
+            out.push("# per machine, the template's layers do not.");
+            for (k in o) { if (o.hasOwnProperty(k)) { out.push(k + "\t" + o[k]); } }
+            return out.join("\n");
+        }
+
+        function textToSetup(txt) {
+            var o = {}, lines = String(txt).split(/\r\n|\r|\n/);
+            for (var i = 0; i < lines.length; i++) {
+                if (trim(lines[i]) === "" || lines[i].charAt(0) === "#") { continue; }
+                var tab = lines[i].indexOf("\t");
+                if (tab > 0) { o[trim(lines[i].substring(0, tab))] = lines[i].substring(tab + 1); }
+            }
+            return o;
+        }
+
+        /** Points a dropdown at the entry whose label matches, or leaves it be. */
+        function selectByLabel(drop, targets, label, offset) {
+            if (trim(label || "") === "") { return false; }
+            for (var i = 0; i < targets.length; i++) {
+                if (targets[i].label === label) { drop.selection = i + offset; return true; }
+            }
+            return false;
+        }
+
+        function applySetup(o) {
+            if (!o) { return 0; }
+            var hits = 0, i;
+            if (trim(o.template || "") !== "") {
+                for (i = 0; i < compList.length; i++) {
+                    if (compList[i].name === o.template) { tplDrop.selection = i; hits++; break; }
+                }
+                refreshLayers();                       // the lists belong to that comp
+            }
+            if (selectByLabel(videoDrop, videoTargets, o.video, 0)) { hits++; }
+            if (selectByLabel(alphaDrop, videoTargets, o.alpha, 1)) { hits++; }
+            if (selectByLabel(textDrop, textTargets, o.text, 1)) { hits++; }
+            if (selectByLabel(nameDrop, textTargets, o.name, 1)) { hits++; }
+            if (selectByLabel(roleDrop, textTargets, o.title, 1)) { hits++; }
+
+            function bool(v, cb) { if (v === "0" || v === "1") { cb.value = (v === "1"); } }
+            bool(o.sort, cbSort); bool(o.matte, cbMatte); bool(o.reset, cbReset);
+            bool(o.fit, cbFit); bool(o.alphaPath, cbAlphaPath); bool(o.fitText, cbFitText);
+            bool(o.folder, cbFolder);
+            var am = parseInt(o.alphaMode, 10);
+            if (!isNaN(am) && am >= 0 && am < 4) { alphaModeDrop.selection = am; }
+            return hits;
+        }
+
+        function presetBeside(quotesPath) {
+            try {
+                var qf = new File(trim(quotesPath));
+                if (!qf.parent) { return null; }
+                var pf = new File(qf.parent.fsName + "/" + PRESET_NAME);
+                return pf.exists ? pf : null;
+            } catch (e) { return null; }
+        }
+
+        /** Writes the setup next to the quote list, so it travels with the episode. */
+        function writePreset(quotesPath, problems) {
+            try {
+                var qf = new File(trim(quotesPath));
+                if (!qf.parent) { return ""; }
+                return writeTextFile(new File(qf.parent.fsName + "/" + PRESET_NAME),
+                                     setupToText(currentSetup()), problems);
+            } catch (e) { return ""; }
+        }
+
+        function saveToMachine() {
+            try {
+                var o = currentSetup(), k;
+                o.videosFolder = trim(videosTxt.text);
+                o.alphaFolder = trim(alphaTxt.text);
+                o.quotesFile = trim(quotesTxt.text);
+                for (k in o) {
+                    if (o.hasOwnProperty(k)) {
+                        app.settings.saveSetting(QC_SETTINGS, k, String(o[k]));
+                    }
+                }
+            } catch (e) {}
+        }
+
+        function loadFromMachine() {
+            try {
+                var o = {}, keys = ["template", "video", "alpha", "text", "name", "title",
+                    "sort", "matte", "reset", "fit", "alphaPath", "fitText", "folder",
+                    "alphaMode", "videosFolder", "alphaFolder", "quotesFile"];
+                var any = false;
+                for (var i = 0; i < keys.length; i++) {
+                    if (app.settings.haveSetting(QC_SETTINGS, keys[i])) {
+                        o[keys[i]] = app.settings.getSetting(QC_SETTINGS, keys[i]);
+                        any = true;
+                    }
+                }
+                if (!any) { return; }
+                if (trim(o.videosFolder || "") !== "") { videosTxt.text = o.videosFolder; }
+                if (trim(o.alphaFolder || "") !== "") { alphaTxt.text = o.alphaFolder; }
+                if (trim(o.quotesFile || "") !== "") { quotesTxt.text = o.quotesFile; }
+                applySetup(o);
+            } catch (e) {}
         }
 
         function doReport() {
@@ -2463,30 +2760,11 @@
             out.push("Chosen alpha layer: " + (selectedAlphaTarget() ? selectedAlphaTarget().label : "none"));
             out.push("Chosen text layer:  " + (selectedTextTarget() ? selectedTextTarget().label : "none"));
             out.push("Chosen name layer:  " + (selectedNameTarget() ? selectedNameTarget().label : "none"));
-            out.push("Chosen title layer: " + (selectedTitleTarget() ? selectedTitleTarget().label : "none"));
+            out.push("Chosen title layer: " + (selectedRoleTarget() ? selectedRoleTarget().label : "none"));
             out.push("");
             out.push("Clips folder: " + trim(videosTxt.text));
             out.push("Alpha folder: " + (trim(alphaTxt.text) || "(none)"));
             out.push("Quotes file:  " + trim(quotesTxt.text));
-            out.push("Setup file:   " + (adopted !== "" ? adopted + " (adopted)" : "none found"));
-            if (quoteMeta.speakerColumn >= 0) {
-                out.push("Speaker column: \"" + quoteMeta.speakerHeader + "\"  (column " +
-                         (quoteMeta.speakerColumn + 1) + ")");
-            } else {
-                out.push("Speaker column: none - no heading in the quote list names one");
-            }
-            out.push("Title column:   " + (quoteMeta.titleColumn >= 0
-                ? "\"" + quoteMeta.titleHeader + "\"  (column " + (quoteMeta.titleColumn + 1) + ")"
-                : "none"));
-            if (quoteMeta.guestFile) {
-                out.push("Guest list:   " + quoteMeta.guestFile);
-                for (var g = 0; g < quoteMeta.guests.length; g++) {
-                    out.push("  " + (g + 1) + ". " + quoteMeta.guests[g].name +
-                             "  -  " + quoteMeta.guests[g].title);
-                }
-            } else {
-                out.push("Guest list:   none next to the quote list");
-            }
             out.push("");
 
             var files = [];
@@ -2558,22 +2836,15 @@
                 "     .csv  the wordiest column is taken as the quote text\n" +
                 "     .txt  one quote per paragraph (or per line)\n" +
                 "     .srt  the \"# ...\" comment under each timecode block\n\n" +
-                "5. Who said it - a card carries three pieces of text, and each\n" +
-                "   one needs its own layer: the quote body (Text layer), the\n" +
-                "   guest's name (Name layer) and their job title (Title layer).\n" +
-                "   Leave any of them alone and the template's own wording stays.\n\n" +
-                "   In the quote list, head a column \u0627\u0644\u0645\u062a\u062d\u062f\u062b (or Speaker / Name /\n" +
-                "   Guest) and write just the GUEST NUMBER in it. Put the roster in\n" +
-                "   an episode-info.txt beside the quote list:\n\n" +
-                "       \u0627\u0644\u0636\u064a\u0648\u0641:\n" +
-                "         - <name> \u2014 <job title>\n" +
-                "         - <name> \u2014 <job title>\n\n" +
-                "   and \"2\" becomes the second guest's full name and title. A\n" +
-                "   value fitting two guests is left blank and reported - a wrong\n" +
-                "   name under a real face is worse than none.\n\n" +
-                "6. Scan shows each quote next to the clip and the name it will\n" +
-                "   get. Nothing is created yet.\n\n" +
-                "7. Create cards duplicates the template once per quote, swaps\n" +
+                "   A .csv can also name the guest. Head one column \"Speaker\"\n" +
+                "   (or \"المتحدث\") and another \"Title\" (or \"الصفة\"), then point\n" +
+                "   \"Name layer\" and \"Title layer\" at the lines on the card. Leave\n" +
+                "   either on \"leave alone\" and that line keeps whatever the\n" +
+                "   template said - which is how one guest's name ends up on\n" +
+                "   every card while the quotes all change correctly.\n\n" +
+                "5. Scan shows each quote next to the clip it will get.\n" +
+                "   Nothing is created yet.\n\n" +
+                "6. Create cards duplicates the template once per quote, swaps\n" +
                 "   the clip, and sets the text - keeping the font, size, colour\n" +
                 "   and alignment you already set, shrinking the type if the quote\n" +
                 "   is longer than the box it lands in.\n\n" +
@@ -2589,19 +2860,12 @@
                 "wired as an alpha track matte with Simple Choker and a blur.\n\n" +
                 "Arabic text needs After Effects' Middle Eastern text engine:\n" +
                 "Preferences > Type > Text Engine > South Asian and Middle Eastern.\n\n" +
-                "Nothing here has to be set twice. Every choice is remembered on\n" +
-                "this machine, and after each build the layer choices are written\n" +
-                "to " + SETUP_FILE + " beside the quote list. Send the episode\n" +
-                "folder on and the next editor picks the clips folder and the\n" +
-                "quote list - the lists set themselves. Paths are left out of\n" +
-                "that file on purpose: they differ per machine, the layers do not.\n\n" +
                 "Everything runs in one undo group: Ctrl/Cmd+Z reverts it all."
             );
         };
 
         refreshComps();
-        loadMachineSetup();      // pick up where this machine left off
-        adoptEpisodeSetup();     // but the episode folder's own setup wins
+        loadFromMachine();          // pick up where this machine left off
         maybeScan();
         win.onResizing = win.onResize = function () { this.layout.resize(); };
 

@@ -66,6 +66,26 @@ var TARGETS = [
 ' *   Preferences > Type > Text Engine > South Asian and Middle Eastern\n'
     },
     {
+        out: 'EpisodeForm.jsx',
+        ui: 'ui-episodeform.jsxinc',
+        fn: 'episodeForm',
+        header:
+' * Episode Form  -  After Effects\n' +
+' * -------------------------------\n' +
+' * Turns the producer\'s weekly form into the two files QuoteCards.jsx reads,\n' +
+' * so nobody retypes nine quotes and three job titles by hand.\n' +
+' *\n' +
+' * Paste the form in, press Read, say who said what, and save. You get\n' +
+' * quotes.csv and episode-info.txt, written as UTF-8 - which is the step\n' +
+' * that breaks when a spreadsheet exports them instead.\n' +
+' *\n' +
+' * HOW TO RUN IT:\n' +
+' *   File > Scripts > Run Script File...   and pick this file.\n' +
+' *\n' +
+' * Requires: Preferences > Scripting & Expressions > "Allow Scripts to Write\n' +
+' * Files and Access Network".\n'
+    },
+    {
         out: 'PersonReplacer_Auto.jsx',
         ui: 'ui-auto.jsxinc',
         fn: 'personReplacerAuto',

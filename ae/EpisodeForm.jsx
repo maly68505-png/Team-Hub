@@ -1,29 +1,24 @@
 /**
- * Person Replacer AUTO  -  After Effects
- * --------------------------------------
- * The zero-setup version. Nothing to configure, nothing to browse.
+ * Episode Form  -  After Effects
+ * -------------------------------
+ * Turns the producer's weekly form into the two files QuoteCards.jsx reads,
+ * so nobody retypes nine quotes and three job titles by hand.
+ *
+ * Paste the form in, press Read, say who said what, and save. You get
+ * quotes.csv and episode-info.txt, written as UTF-8 - which is the step
+ * that breaks when a spreadsheet exports them instead.
  *
  * HOW TO RUN IT:
- *   1. Save your After Effects project.
- *   2. Open the composition you want to work on.
- *   3. File > Scripts > Run Script File...   and pick this file.
+ *   File > Scripts > Run Script File...   and pick this file.
  *
- * It then finds, on its own:
- *   - the composition   (whichever one is open)
- *   - the videos folder (a folder with clips near your .aep)
- *   - the timecode script (.srt or .txt near your .aep)
- *
- * It shows you exactly what it found and what it will do, and touches
- * nothing until you press "Replace now". One Ctrl/Cmd+Z undoes everything.
- *
- * If it cannot find the folder or the script, two buttons let you point at
- * them once - it remembers nothing, it just re-scans.
+ * Requires: Preferences > Scripting & Expressions > "Allow Scripts to Write
+ * Files and Access Network".
  *
  * GENERATED FILE - do not edit directly.
  * Edit ae/lib/core.jsxinc or ae/lib/ui-*.jsxinc, then run: node ae/build.js
  */
 
-(function personReplacerAuto(thisObj) {
+(function episodeForm(thisObj) {
 
     var SCRIPT_NAME = "Person Replacer";
     var SETTINGS_SECTION = "PersonReplacer";
@@ -1768,418 +1763,373 @@
         }
     }
 
-    // ------------------------------------------------------------- discovery
-
-    var FOLDER_HINTS = "videos,video,footage,persons,people,person,clips,talent,media,source,sources";
-    var SCRIPT_EXT = "srt,txt";
-
-    function isHintFolder(folder) {
-        var n = normalize(folder.name);
-        var hints = FOLDER_HINTS.split(",");
-        for (var i = 0; i < hints.length; i++) {
-            if (n === normalize(hints[i])) { return true; }
-        }
-        return false;
-    }
-
-    function folderHasVideos(folder) {
-        var items = folder.getFiles();
-        if (!items) { return false; }
-        for (var i = 0; i < items.length; i++) {
-            if (!(items[i] instanceof Folder) && isVideoFile(items[i])) { return true; }
-        }
-        return false;
-    }
-
-    /** Folders we are willing to start looking from, best guess first. */
-    function startFolders() {
-        var roots = [], seen = {};
-        function push(f) {
-            if (!f || !f.exists) { return; }
-            if (seen[f.fsName]) { return; }
-            seen[f.fsName] = true;
-            roots.push(f);
-        }
-        try { if (app.project.file) { push(app.project.file.parent); } } catch (e) {}
-        try { push(new File($.fileName).parent); } catch (e) {}
-        try { if (app.project.file) { push(app.project.file.parent.parent); } } catch (e) {}
-        return roots;
-    }
-
-    /** Depth-limited hunt for the folder holding the person clips. */
-    function findVideosFolder(roots) {
-        var i, best = null;
-        // pass 1: a subfolder named like a videos folder that actually has clips
-        for (i = 0; i < roots.length; i++) {
-            best = hunt(roots[i], 0, true);
-            if (best) { return best; }
-        }
-        // pass 2: any folder with clips in it
-        for (i = 0; i < roots.length; i++) {
-            best = hunt(roots[i], 0, false);
-            if (best) { return best; }
-        }
-        return null;
-
-        function hunt(folder, depth, requireHint) {
-            if (!folder || !folder.exists || depth > 3) { return null; }
-            if (depth > 0 && folderHasVideos(folder)) {
-                if (!requireHint || isHintFolder(folder)) { return folder; }
-            }
-            if (depth === 0 && !requireHint && folderHasVideos(folder)) { return folder; }
-            var items = folder.getFiles();
-            if (!items) { return null; }
-            for (var k = 0; k < items.length; k++) {
-                if (!(items[k] instanceof Folder)) { continue; }
-                if (items[k].name.charAt(0) === ".") { continue; }
-                var hit = hunt(items[k], depth + 1, requireHint);
-                if (hit) { return hit; }
-            }
-            return null;
-        }
-    }
-
-    /**
-     * Finds the timecode script. When several candidates exist the one that
-     * parses into the most usable segments wins, so a stray readme.txt loses
-     * to a real script every time.
-     */
-    function findScriptFile(roots, fps) {
-        var candidates = [], seen = {};
-        for (var i = 0; i < roots.length; i++) { collect(roots[i], 0); }
-
-        var best = null, bestCount = 0;
-        for (var c = 0; c < candidates.length; c++) {
-            var warn = [];
-            var segs = parseScript(candidates[c], fps, warn);
-            var score = segs.length;
-            if (extOf(candidates[c].name) === "srt") { score += 0.5; }
-            if (score > bestCount) { bestCount = score; best = candidates[c]; }
-        }
-        return bestCount >= 1 ? best : null;
-
-        function collect(folder, depth) {
-            if (!folder || !folder.exists || depth > 3) { return; }
-            var items = folder.getFiles();
-            if (!items) { return; }
-            for (var k = 0; k < items.length; k++) {
-                var it = items[k];
-                if (it instanceof Folder) {
-                    if (it.name.charAt(0) !== ".") { collect(it, depth + 1); }
-                    continue;
-                }
-                if ((","+ SCRIPT_EXT + ",").indexOf("," + extOf(it.name) + ",") === -1) { continue; }
-                if (/_replace_log\.txt$/i.test(it.name)) { continue; }   // our own log
-                if (seen[it.fsName]) { continue; }
-                seen[it.fsName] = true;
-                candidates.push(it);
-            }
-        }
-    }
-
-    /** Active comp, else the busiest comp in the project. */
-    function pickComp() {
-        var active = app.project.activeItem;
-        if (active instanceof CompItem) { return active; }
-        var comps = listComps(), best = null;
-        for (var i = 0; i < comps.length; i++) {
-            if (!best || comps[i].numLayers > best.numLayers) { best = comps[i]; }
-        }
-        return best;
-    }
-
-    // ------------------------------------------------------------------- run
-
-    function discover() {
-        var ctx = { comp: null, folder: null, script: null, plan: [], warnings: [], files: [] };
-
-        ctx.comp = pickComp();
-        if (!ctx.comp) {
-            ctx.warnings.push("No composition in this project. Open your comp first.");
-            return ctx;
-        }
-
-        var roots = startFolders();
-        if (roots.length === 0) {
-            ctx.warnings.push("Save your After Effects project first, so the script knows where to look.");
-            return ctx;
-        }
-
-        ctx.folder = findVideosFolder(roots);
-        ctx.script = findScriptFile(roots, ctx.comp.frameRate);
-        if (ctx.folder) { scanVideos(ctx.folder, ctx.files, 0); }
-        if (ctx.folder && ctx.script) { buildPlan(ctx); }
-        return ctx;
-    }
-
-    function buildPlan(ctx) {
-        ctx.plan = [];
-        var segments = parseScript(ctx.script, ctx.comp.frameRate, ctx.warnings);
-        for (var i = 0; i < segments.length; i++) {
-            var seg = segments[i];
-            var file = pickFile(seg.person, seg.explicitFile, ctx.files);
-            var mid = (seg.inSec + seg.outSec) / 2;
-            var layer = layerAtTime(ctx.comp, mid, true);
-            ctx.plan.push({
-                index: i + 1, seg: seg, file: file, layer: layer,
-                ok: !!(file && layer)
-            });
-            if (!file) {
-                ctx.warnings.push("No clip matched \"" + seg.person + "\" at " +
-                                  secondsToTC(seg.inSec, ctx.comp.frameRate));
-            } else if (!layer) {
-                ctx.warnings.push("No footage layer live at " +
-                                  secondsToTC(mid, ctx.comp.frameRate) +
-                                  " for \"" + seg.person + "\"");
-            }
-        }
-    }
-
-    function readyCount(plan) {
-        var n = 0;
-        for (var i = 0; i < plan.length; i++) { if (plan[i].ok) { n++; } }
-        return n;
-    }
-
-    function applyPlan(ctx, options) {
-        var comp = ctx.comp;
-        var log = [];
-        log.push(SCRIPT_NAME + " (auto) - " + new Date().toString());
-        log.push("Comp: " + comp.name + "  (" + comp.frameRate + " fps)");
-        log.push("Videos: " + ctx.folder.fsName);
-        log.push("Script: " + ctx.script.fsName);
-        log.push("");
-
-        var cache = {}, applied = 0, skipped = 0;
-
-        app.beginUndoGroup(SCRIPT_NAME + " - replace people");
-        try {
-            // last-to-first, so splitting an earlier segment cannot shift a
-            // layer we already resolved for a later one
-            for (var i = ctx.plan.length - 1; i >= 0; i--) {
-                var row = ctx.plan[i], seg = row.seg;
-                var tag = "[" + row.index + "] " + secondsToTC(seg.inSec, comp.frameRate) +
-                          " -> " + secondsToTC(seg.outSec, comp.frameRate) + "  " + seg.person;
-
-                if (!row.ok) {
-                    log.push(tag + "  SKIPPED (" +
-                             (!row.file ? "no matching clip" : "no layer at that timecode") + ")");
-                    skipped++;
-                    continue;
-                }
-                var footage = importFootage(row.file, cache, ctx.warnings);
-                if (!footage) { log.push(tag + "  SKIPPED (import failed)"); skipped++; continue; }
-
-                var mid = (seg.inSec + seg.outSec) / 2;
-                var target = layerAtTime(comp, mid, true);
-                if (!target) {
-                    log.push(tag + "  SKIPPED (layer no longer live at that timecode)");
-                    skipped++;
-                    continue;
-                }
-
-                var oldName = target.name;
-                var oldSrcName = target.source ? target.source.name : "?";
-                var oldW = target.source ? target.source.width : 0;
-                var oldH = target.source ? target.source.height : 0;
-                var maskCount = countMasks(target);
-
-                if (options.split) { target = isolateRange(target, seg.inSec, seg.outSec); }
-                target.replaceSource(footage, false);
-
-                log.push(tag);
-                log.push("    layer " + target.index + ": " + oldName + "   " +
-                         oldSrcName + "  ->  " + row.file.name);
-                log.push("    masks preserved: " + maskCount);
-
-                if (options.scale) { compensateScale(target, oldW, oldH, log); }
-                if (options.matte) {
-                    if (maskCount === 0) {
-                        log.push("    note: no masks here - draw the cut-out on the [MATTE] layer");
-                    }
-                    var matte = buildMatteSetup(target, log);
-                    log.push("    matte layer created: " + matte.name);
-                }
-                applied++;
-            }
-        } catch (e) {
-            ctx.warnings.push("Aborted: " + e.toString() + (e.line ? " (line " + e.line + ")" : ""));
-        }
-        app.endUndoGroup();
-
-        log.push("");
-        log.push("Applied: " + applied + "   Skipped: " + skipped);
-        if (ctx.warnings.length) {
-            log.push("");
-            log.push("Warnings:");
-            for (var w = 0; w < ctx.warnings.length; w++) { log.push("  - " + ctx.warnings[w]); }
-        }
-
-        var logPath = "";
-        try {
-            var out = new File(ctx.script.parent.fsName + "/" +
-                               baseName(ctx.script.name) + "_replace_log.txt");
-            if (out.open("w")) { out.write(log.join("\n")); out.close(); logPath = out.fsName; }
-        } catch (e2) {}
-
-        return { applied: applied, skipped: skipped, logPath: logPath };
-    }
-
-    // -------------------------------------------------------------------- UI
-
-    function showReport(ctx) {
-        var dlg = new Window("dialog", SCRIPT_NAME, undefined, { resizeable: true });
-        dlg.orientation = "column";
-        dlg.alignChildren = ["fill", "top"];
-        dlg.margins = 16;
-        dlg.spacing = 10;
-
-        var head = dlg.add("statictext", undefined, "What I found");
-        try { head.graphics.font = ScriptUI.newFont(head.graphics.font.name, "BOLD", 15); } catch (e) {}
-
-        var info = dlg.add("panel");
-        info.orientation = "column";
-        info.alignChildren = ["left", "top"];
-        info.margins = [14, 14, 14, 12];
-        info.spacing = 3;
-
-        function line(label, value, ok) {
-            var g = info.add("group");
-            g.orientation = "row";
-            g.spacing = 6;
-            var mark = g.add("statictext", undefined, ok ? "OK" : "--");
-            mark.preferredSize.width = 26;
-            var l = g.add("statictext", undefined, label);
-            l.preferredSize.width = 96;
-            g.add("statictext", undefined, value);
-        }
-
-        line("Comp:", ctx.comp ? (ctx.comp.name + "   (" + ctx.comp.frameRate + " fps)") : "not found", !!ctx.comp);
-        line("Videos folder:", ctx.folder ? (ctx.folder.fsName + "   (" + ctx.files.length + " clips)") : "not found", !!ctx.folder);
-        line("Script file:", ctx.script ? ctx.script.fsName : "not found", !!ctx.script);
-
-        var ready = readyCount(ctx.plan);
-
-        var list = dlg.add("listbox", undefined, [], {
-            numberOfColumns: 6, showHeaders: true,
-            columnTitles: ["#", "In", "Out", "Person", "Clip", "Target layer"],
-            columnWidths: [28, 84, 84, 110, 180, 150]
-        });
-        list.preferredSize.height = 190;
-        list.alignment = ["fill", "fill"];
-
-        for (var i = 0; i < ctx.plan.length; i++) {
-            var row = ctx.plan[i];
-            var it = list.add("item", String(row.index));
-            it.subItems[0].text = secondsToTC(row.seg.inSec, ctx.comp.frameRate);
-            it.subItems[1].text = secondsToTC(row.seg.outSec, ctx.comp.frameRate);
-            it.subItems[2].text = row.seg.person;
-            it.subItems[3].text = row.file ? row.file.name : "-- no match --";
-            it.subItems[4].text = row.layer ? (row.layer.index + ": " + row.layer.name) : "-- no layer --";
-        }
-
-        var optRow = dlg.add("group");
-        optRow.orientation = "row";
-        optRow.alignChildren = ["left", "center"];
-        var cbSplit = optRow.add("checkbox", undefined, "Split to range");
-        cbSplit.value = true;
-        var cbMatte = optRow.add("checkbox", undefined, "Build matte");
-        cbMatte.value = true;
-        var cbScale = optRow.add("checkbox", undefined, "Fit scale");
-        cbScale.value = false;
-
-        var msg = dlg.add("statictext", undefined, "", { multiline: true });
-        msg.preferredSize.height = 30;
-        msg.alignment = ["fill", "top"];
-        if (!ctx.comp) {
-            msg.text = "Open the composition you want to work on, then run the script again.";
-        } else if (!ctx.folder || !ctx.script) {
-            msg.text = "Could not find " +
-                (!ctx.folder && !ctx.script ? "the videos folder or the timecode script" :
-                 (!ctx.folder ? "the videos folder" : "the timecode script")) +
-                " near your project. Use the buttons below to point at them once.";
-        } else {
-            msg.text = (ctx.plan.length === 0
-                ? "No timecode lines found in \"" + ctx.script.name + "\". Press \"Script file...\" " +
-                  "and pick the plain-text (.txt / .srt) file with your timecodes."
-                : ready + " of " + ctx.plan.length + " segments are ready to replace.") +
-                (ready < ctx.plan.length ? "  The rest will be skipped and listed in the log." : "");
-        }
-
-        var btns = dlg.add("group");
-        btns.orientation = "row";
-        btns.alignment = ["fill", "bottom"];
-        var pickFolderBtn = btns.add("button", undefined, "Videos folder...");
-        var pickScriptBtn = btns.add("button", undefined, "Script file...");
-        btns.add("statictext", undefined, "  ");
-        var cancelBtn = btns.add("button", undefined, "Cancel", { name: "cancel" });
-        var goBtn = btns.add("button", undefined, "Replace now", { name: "ok" });
-        goBtn.enabled = ready > 0;
-
-        function refresh() {
-            ctx.files = [];
-            ctx.warnings = [];
-            if (ctx.folder) { scanVideos(ctx.folder, ctx.files, 0); }
-            if (ctx.folder && ctx.script && ctx.comp) { buildPlan(ctx); }
-            dlg.close(2);   // reopened by the caller with fresh contents
-        }
-
-        pickFolderBtn.onClick = function () {
-            var f = Folder.selectDialog("Where are the person videos?");
-            if (f) { ctx.folder = f; refresh(); }
-        };
-        pickScriptBtn.onClick = function () {
-            var f = File.openDialog("Where is the timecode script?");
-            if (!f) { return; }
-            var problem = scriptFileProblem(f);
-            if (problem) { alert(problem); return; }
-            ctx.script = f;
-            refresh();
-        };
-        goBtn.onClick = function () {
-            ctx.options = { split: cbSplit.value, matte: cbMatte.value, scale: cbScale.value };
-            dlg.close(1);
-        };
-        cancelBtn.onClick = function () { dlg.close(0); };
-
-        dlg.onResizing = dlg.onResize = function () { this.layout.resize(); };
-        dlg.center();
-        return dlg.show();
-    }
-
-    function runAuto() {
-        var ctx = discover();
-        var result = showReport(ctx);
-        while (result === 2) { result = showReport(ctx); }   // user re-pointed a path
-        if (result !== 1) { return; }
-
-        var r = applyPlan(ctx, ctx.options);
-        alert(SCRIPT_NAME + "\n\n" +
-              "Replaced: " + r.applied + "\n" +
-              "Skipped:  " + r.skipped +
-              (ctx.warnings.length ? "\nWarnings: " + ctx.warnings.length : "") +
-              (r.logPath ? "\n\nDetails written to:\n" + r.logPath : "") +
-              "\n\nOne Ctrl/Cmd+Z undoes all of it.");
-    }
+    // ------------------------------------------------------------------- UI
 
     function build(thisObj) {
-        if (thisObj instanceof Panel) {
-            // installed as a dockable panel - wait for a click, never auto-run
-            thisObj.orientation = "column";
-            thisObj.alignChildren = ["fill", "top"];
-            thisObj.margins = 14;
-            thisObj.spacing = 8;
-            var t = thisObj.add("statictext", undefined,
-                "Finds your videos folder and timecode script automatically.",
-                { multiline: true });
-            t.preferredSize.height = 32;
-            var b = thisObj.add("button", undefined, "Find and replace");
-            b.onClick = runAuto;
-            thisObj.layout.layout(true);
-            return thisObj;
+        var win = (thisObj instanceof Panel)
+            ? thisObj
+            : new Window("palette", "Episode Form", undefined, { resizeable: true });
+
+        win.orientation = "column";
+        win.alignChildren = ["fill", "top"];
+        win.spacing = 7;
+        win.margins = 12;
+
+        var help = win.add("statictext", undefined,
+            "Open the producer's form, select all (Cmd+A), copy (Cmd+C), and paste it below - " +
+            "the whole thing, quotes and guests together - then press Read. A PDF or a Word " +
+            "file cannot be loaded: After Effects has no reader for either. Copy the text out " +
+            "of it. Nothing is written until you press Save.", { multiline: true });
+        help.preferredSize.height = 46;
+        help.alignment = ["fill", "top"];
+
+        var pasteBox = win.add("edittext", undefined, "",
+            { multiline: true, scrollable: true, wantReturn: true });
+        pasteBox.preferredSize.height = 170;
+        pasteBox.alignment = ["fill", "fill"];
+
+        var srcRow = win.add("group");
+        srcRow.orientation = "row";
+        srcRow.alignChildren = ["left", "center"];
+        var loadBtn = srcRow.add("button", undefined, "Load a .txt file");
+        var readBtn = srcRow.add("button", undefined, "Read");
+
+        var found = win.add("panel", undefined, "What it found");
+        found.orientation = "column";
+        found.alignChildren = ["fill", "top"];
+        found.margins = [12, 16, 12, 12];
+
+        var quoteList = found.add("listbox", undefined, [], {
+            numberOfColumns: 4, showHeaders: true,
+            columnTitles: ["#", "Timecode", "الضيف / Guest", "Quote"],
+            columnWidths: [30, 80, 150, 320]
+        });
+        quoteList.preferredSize.height = 150;
+
+        var guestList = found.add("listbox", undefined, [], {
+            numberOfColumns: 3, showHeaders: true,
+            columnTitles: ["#", "Guest", "Title"],
+            columnWidths: [30, 180, 370]
+        });
+        guestList.preferredSize.height = 80;
+
+        function row(labelText, width) {
+            var g = win.add("group");
+            g.orientation = "row";
+            g.alignChildren = ["left", "center"];
+            var l = g.add("statictext", undefined, labelText);
+            l.preferredSize.width = width || 110;
+            return g;
         }
-        runAuto();
-        return null;
+
+        var titleTxt = row("Episode title:").add("edittext", undefined, "");
+        titleTxt.alignment = ["fill", "center"];
+        var hostTxt = row("Presenter:").add("edittext", undefined, "");
+        hostTxt.alignment = ["fill", "center"];
+
+        var orderGroup = row("Who said what:");
+        var orderTxt = orderGroup.add("edittext", undefined, "");
+        orderTxt.alignment = ["fill", "center"];
+
+        var orderHelp = win.add("statictext", undefined,
+            "رقم الضيف من قايمة الضيوف تحت (١ أو ٢ أو ٣) — واحد لكل اقتباس بالترتيب: " +
+            "2,1,3,3,1,2,3,2,2\n" +
+            "مش رقم الكليب ولا رقم الاقتباس. وتقدر تكتب جزء من الاسم بدل الرقم: " +
+            "مشينش,دلال,محارمة\n" +
+            "شوف عمود \"الضيف\" فوق وهو بيتملى وانت بتكتب — ده اللي هيتكتب على الكرت.",
+            { multiline: true });
+        orderHelp.preferredSize.height = 46;
+        orderHelp.alignment = ["fill", "top"];
+
+        var status = win.add("statictext", undefined, "Paste the form and press Read.");
+        status.alignment = ["fill", "top"];
+
+        var buttons = win.add("group");
+        buttons.orientation = "row";
+        buttons.alignment = ["fill", "bottom"];
+        var saveBtn = buttons.add("button", undefined, "Save into a folder...");
+        var helpBtn = buttons.add("button", undefined, "Help");
+        saveBtn.enabled = false;
+
+        var quotes = [], guests = [];
+
+        function setStatus(m) { status.text = m; }
+
+        /**
+         * Redraws the quote table, showing which guest each quote will get.
+         *
+         * Three different numbers live in this job - the quote's row, the
+         * clip's position, and the guest's place in the list - and only the
+         * last one goes in "who said what". Naming the guest against each
+         * quote, here, is worth more than any explanation of which is which.
+         */
+        function fillQuoteList() {
+            var keys = trim(orderTxt.text).split(/[\s,;\-]+/);
+            quoteList.removeAll();
+            for (var i = 0; i < quotes.length; i++) {
+                var it = quoteList.add("item", String(quotes[i].index));
+                it.subItems[0].text = quotes[i].timecode;
+
+                var key = trim(keys[i] || "");
+                var g = key !== "" ? resolveGuest(key, guests) : null;
+                it.subItems[1].text = g ? g.name
+                    : (key === "" ? "— ؟ —" : "\u26A0 \"" + key + "\" مش في القايمة");
+
+                it.subItems[2].text = quotes[i].text.length > 70
+                    ? quotes[i].text.substring(0, 70) + "..." : quotes[i].text;
+            }
+        }
+
+        function doRead() {
+            quotes = parseFormQuotes(pasteBox.text);
+            guests = parseGuestList(pasteBox.text);
+
+            fillQuoteList();
+            guestList.removeAll();
+            for (var g = 0; g < guests.length; g++) {
+                var gi = guestList.add("item", String(g + 1));
+                gi.subItems[0].text = guests[g].name;
+                gi.subItems[1].text = guests[g].role;
+            }
+
+            saveBtn.enabled = quotes.length > 0 && !quotes.looksFragmented;
+
+            // A paste that came apart is checked BEFORE an empty result: when
+            // it comes apart badly enough nothing survives at all, and "no
+            // quotes found - they need to be numbered" sends the reader off to
+            // fix numbering that was never the problem.
+            if (quotes.looksFragmented) {
+                setStatus("اللصق اتكسّر — طلع منه " + quotes.length + " فتات بس. انسخ من " +
+                          "Google Docs أو Word بدل الـ PDF، وجدول الاقتباسات لوحده.   |   " +
+                          "This paste came apart: copy from Word or Google Docs instead.");
+                // The team reads Arabic; the tool talks English. For the one
+                // message somebody hits when they are already stuck, that is
+                // a wall on top of a wall.
+                alert("اللصق ده اتكسّر\n\n" +
+                      "طلع منه " + quotes.length + " \"اقتباس\"" +
+                      (quotes.droppedFragments > 0
+                        ? "، بعد ما اتشال " + quotes.droppedFragments + " سطر كانوا روابط أو علامات"
+                        : "") + " — وده شكل الجدول لما يتنسخ من PDF: كل خانة في سطر، " +
+                      "الترقيم منفصل عن نصه، والرابط مقطّع على أربع أسطر.\n\n" +
+                      "مفيش حاجة هنا تقدر ترجّعه تاني. اللي بيشتغل:\n\n" +
+                      "  ١. ارفع الـ PDF على Google Drive، كليك يمين، Open with ← Google Docs\n" +
+                      "     وانسخ من هناك — بيعيد بناء الجدول\n" +
+                      "  ٢. أو افتح الـ PDF ببرنامج Word مباشرة\n" +
+                      "  ٣. أو اطلب من البروديوسر ملف Word بدل الـ PDF — ده الأنضف\n\n" +
+                      "وانسخ جدول الاقتباسات بس، مش الاستمارة كلها — جدول المعادلات\n" +
+                      "البصرية مليان روابط صور، وهي اللي بتتقري غلط.\n\n" +
+                      "بعدها الصق تاني. المفروض تشوف سطر لكل اقتباس، كلام مفهوم —\n" +
+                      "مش روابط ولا أرقام لوحدها.\n\n" +
+                      "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n\n" +
+                      "That paste came apart. Copying a table out of a PDF loses its\n" +
+                      "structure and nothing here can rebuild it. Open the PDF in Word,\n" +
+                      "or upload it to Google Docs and copy from there - and copy only\n" +
+                      "the quotes table, not the whole form.");
+                return;
+            }
+
+            if (quotes.length === 0) {
+                setStatus("No quotes found. They need to be numbered - \"( 1 ) ...\" or \"1) ...\" " +
+                          "- one per line. Press Help for what the form should look like.");
+                return;
+            }
+
+            setStatus(quotes.length + " اقتباس، " + guests.length + " ضيف." +
+                      (guests.length === 0
+                        ? "  |  ⚠️ مفيش قايمة ضيوف — الصقها تحت الاقتباسات تحت سطر فيه " +
+                          "\"الضيوف:\"، وإلا أرقام الضيوف مش هتتحول لأسماء."
+                        : "  |  راجع الترقيم فوق، وبعدين اكتب مين قال إيه.") +
+                      "  لسه مفيش حاجة اتكتبت.");
+        }
+
+        function doSave() {
+            if (quotes.length === 0) { setStatus("Press Read first."); return; }
+
+            var dest = Folder.selectDialog("Where should the episode folder go?");
+            if (!dest) { return; }
+
+            var problems = [];
+            var csv = writeTextFile(new File(dest.fsName + "/quotes.csv"),
+                                    buildQuotesCSV(quotes, orderTxt.text), problems);
+            var info = "";
+            if (guests.length > 0 || trim(titleTxt.text) !== "") {
+                info = writeTextFile(new File(dest.fsName + "/episode-info.txt"),
+                                     buildGuestsText(guests, titleTxt.text, hostTxt.text),
+                                     problems);
+            }
+
+            if (csv === "") {
+                setStatus("Nothing was written - see the message.");
+                alert("Could not write the files.\n\n" +
+                      (problems.length ? problems.join("\n\n") + "\n\n" : "") +
+                      "In After Effects: Settings (or Preferences) > Scripting & Expressions >\n" +
+                      "tick \"Allow Scripts to Write Files and Access Network\", then try again.");
+                return;
+            }
+
+            var filled = 0, given = 0, i;
+            var keys = trim(orderTxt.text).split(/[\s,;\-]+/);
+            for (i = 0; i < keys.length; i++) { if (trim(keys[i]) !== "") { given++; } }
+            for (i = 0; i < quotes.length; i++) {
+                if (trim(keys[i] || "") !== "") { filled++; }
+            }
+
+            // Counting the guest numbers against the quotes is the only check
+            // here that can catch a quote the selection missed: nine numbers
+            // typed from the form against eight quotes read out of it.
+            var countNote = "";
+            if (given > 0 && given !== quotes.length) {
+                countNote = "⚠️  كتبت " + given + " رقم ضيف، والاقتباسات " + quotes.length + ".\n\n" +
+                            (given > quotes.length
+                              ? "يعني في " + (given - quotes.length) + " اقتباس التظليل مأخدهمش —\n" +
+                                "راجع آخر صف في الاستمارة وانسخ تاني."
+                              : "يعني في " + (quotes.length - given) + " اقتباس من غير ضيف.") +
+                            "\n\n";
+            }
+
+            var done = (filled === quotes.length && filled > 0 && guests.length > 0 &&
+                        countNote === "");
+
+            // A dialog is for something that needs doing. When nothing does,
+            // it is a box in the way of the next step - which is what it had
+            // become: every run ending in a modal, read as a complaint.
+            if (done) {
+                setStatus("✅  فولدر الحلقة جاهز — " + quotes.length + " اقتباس، " +
+                          guests.length + " ضيف، وكل اقتباس قدامه ضيفه.   |   " +
+                          "اتكتب في " + dest.fsName + "   |   " +
+                          "الخطوة الجاية: حط الكليبات في نفس الفولدر وشغّل QuoteCards.jsx");
+                return;
+            }
+
+            setStatus("اتكتب في " + dest.fsName);
+            alert("فولدر الحلقة اتكتب — وفاضل حاجة\n\n" +
+                  "quotes.csv          " + quotes.length + " اقتباس\n" +
+                  (info !== ""
+                    ? "episode-info.txt    " + guests.length + " ضيف\n"
+                    : "") +
+                  "\n" + countNote +
+                  // Numbers in the speaker column mean nothing without the list
+                  // they point at - the card would print "2" as the name.
+                  (guests.length === 0
+                    ? "⚠️  مفيش قايمة ضيوف!\n\n" +
+                      "أرقام الضيوف مش هتتحول لأسماء من غيرها. الصق قايمة\n" +
+                      "الضيوف تحت الاقتباسات في نفس المربع، بالشكل ده:\n\n" +
+                      "    الضيوف:\n" +
+                      "      - الاسم الكامل — الصفة\n" +
+                      "      - الاسم الكامل — الصفة\n\n" +
+                      "واضغط Read و Save تاني.\n\n"
+                    : "") +
+                  (filled === quotes.length && filled > 0
+                    ? "✅  كل اقتباس قدامه ضيفه.\n"
+                    : "⚠️  عمود المتحدث اتملى في " + filled + " من " + quotes.length + ".\n\n" +
+                      (filled === 0
+                        ? "سيبت خانة \"Who said what\" فاضية. ارجع واكتب فيها رقم\n" +
+                          "الضيف لكل اقتباس بالترتيب — زي 2,1,3,3,1,2,3,2,2 — واضغط\n" +
+                          "Save تاني. أو افتح quotes.csv واملا العمود بإيدك.\n"
+                        : "افتح quotes.csv وحط رقم الضيف في الباقي.\n") +
+                      "من غير ده الكروت هتفضل باسم القالب.\n") +
+                  "\n(الرسالة دي مش بتظهر لما يبقى مفيش حاجة ناقصة.)\n" +
+                  "\nالخطوة الجاية: حط الكليبات في نفس الفولدر، وشغّل QuoteCards.jsx.\n\n" +
+                  "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n\n" +
+                  "Episode folder ready: " + quotes.length + " quote(s), " +
+                  guests.length + " guest(s), speaker column filled for " + filled + ".");
+        }
+
+        // After Effects has no PDF or Word reader, and no script can add one.
+        // Loading one anyway fills the box with binary and reads as the tool
+        // being broken, so the file is named and the way round it is given.
+        var UNREADABLE = "pdf,doc,docx,pages,rtf,odt,key,ppt,pptx,xls,xlsx,numbers";
+
+        function unreadableAdvice(ext) {
+            var what = (ext === "pdf") ? "a PDF"
+                     : (ext === "doc" || ext === "docx") ? "a Word file"
+                     : (ext === "pages") ? "a Pages file"
+                     : "that kind of file";
+            return "After Effects cannot read " + what + " - no script can, there is no " +
+                   "reader for it inside the program.\n\n" +
+                   "Copy the text out instead. It takes a moment:\n\n" +
+                   "  1. Open the form (Preview for a PDF, Word, Google Docs)\n" +
+                   "  2. Select all  -  Cmd+A\n" +
+                   "  3. Copy  -  Cmd+C\n" +
+                   "  4. Click in the big box here and paste  -  Cmd+V\n" +
+                   "  5. Press Read\n\n" +
+                   "That is what the box is for - it never needed the file itself.\n\n" +
+                   "If the form is a scan, nothing can copy from it: the page is a picture. " +
+                   "Ask the producer for the document rather than the scan.";
+        }
+
+        loadBtn.onClick = function () {
+            var f = File.openDialog("The producer's form, saved as plain text (.txt)");
+            if (!f) { return; }
+
+            var ext = extOf(f.name);
+            if (("," + UNREADABLE + ",").indexOf("," + ext + ",") !== -1) {
+                setStatus("After Effects cannot read a ." + ext + " - copy the text and paste " +
+                          "it into the box instead.");
+                alert(unreadableAdvice(ext));
+                return;
+            }
+            try {
+                if (!f.open("r")) { setStatus("Could not open " + f.name); return; }
+                f.encoding = "UTF-8";
+                var raw = f.read();
+                f.close();
+
+                // A file renamed .txt is still whatever it was
+                if (raw.substring(0, 4) === "%PDF") {
+                    setStatus("That file is a PDF whatever it is called - paste the text instead.");
+                    alert(unreadableAdvice("pdf"));
+                    return;
+                }
+                if (raw.substring(0, 2) === "PK") {
+                    setStatus("That is a Word/Pages file whatever it is called - paste the text " +
+                              "instead.");
+                    alert(unreadableAdvice("docx"));
+                    return;
+                }
+                pasteBox.text = raw;
+                doRead();
+            } catch (e) { setStatus("Could not read that file: " + e.toString()); }
+        };
+
+        // Live, as they type: the point is to see the pairing, not to submit it
+        orderTxt.onChanging = orderTxt.onChange = function () {
+            if (quotes.length) { fillQuoteList(); }
+        };
+
+        readBtn.onClick = doRead;
+        saveBtn.onClick = doSave;
+        helpBtn.onClick = function () {
+            alert(
+                "Episode Form\n\n" +
+                "Turns the producer's weekly form into the two files QuoteCards.jsx\n" +
+                "reads, so nobody retypes them.\n\n" +
+                "1. Open the form (PDF, Word, Google Doc), select all, copy.\n" +
+                "2. Paste it into the box and press Read.\n\n" +
+                "It expects the quotes NUMBERED, one per line:\n\n" +
+                "    ( 1 ) السلطة تُريد ...        11:06\n" +
+                "    ( 2 ) من المحتمل تأجيل ...     29:35\n\n" +
+                "The number and the timecode are stripped - the number is the row,\n" +
+                "the timecode is for you, neither goes on the card.\n\n" +
+                "And the guests under a heading, one per line:\n\n" +
+                "    الضيوف:\n" +
+                "      - الاسم الكامل — الصفة\n" +
+                "      - الاسم الكامل — الصفة\n\n" +
+                "Name and title split on the dash, not the comma - these titles\n" +
+                "carry commas of their own.\n\n" +
+                "3. \"Who said what\" is one guest number per quote: 2,1,3,3,1,2,3,2,2\n" +
+                "   The form never says who said which. That part needs someone who\n" +
+                "   watched the episode, and it is the only part that does.\n\n" +
+                "4. Save into a folder. You get quotes.csv and episode-info.txt,\n" +
+                "   written as UTF-8 - no Numbers, no export step, no broken Arabic.\n\n" +
+                "Then drop the clips in beside them and run QuoteCards.jsx."
+            );
+        };
+
+        win.onResizing = win.onResize = function () { this.layout.resize(); };
+        if (win instanceof Window) { win.center(); win.show(); }
+        else { win.layout.layout(true); win.layout.resize(); }
+        return win;
     }
 
     build(thisObj);

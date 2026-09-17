@@ -1,0 +1,368 @@
+    // ------------------------------------------------------------------- UI
+
+    function build(thisObj) {
+        var win = (thisObj instanceof Panel)
+            ? thisObj
+            : new Window("palette", "Episode Form", undefined, { resizeable: true });
+
+        win.orientation = "column";
+        win.alignChildren = ["fill", "top"];
+        win.spacing = 7;
+        win.margins = 12;
+
+        var help = win.add("statictext", undefined,
+            "Open the producer's form, select all (Cmd+A), copy (Cmd+C), and paste it below - " +
+            "the whole thing, quotes and guests together - then press Read. A PDF or a Word " +
+            "file cannot be loaded: After Effects has no reader for either. Copy the text out " +
+            "of it. Nothing is written until you press Save.", { multiline: true });
+        help.preferredSize.height = 46;
+        help.alignment = ["fill", "top"];
+
+        var pasteBox = win.add("edittext", undefined, "",
+            { multiline: true, scrollable: true, wantReturn: true });
+        pasteBox.preferredSize.height = 170;
+        pasteBox.alignment = ["fill", "fill"];
+
+        var srcRow = win.add("group");
+        srcRow.orientation = "row";
+        srcRow.alignChildren = ["left", "center"];
+        var loadBtn = srcRow.add("button", undefined, "Load a .txt file");
+        var readBtn = srcRow.add("button", undefined, "Read");
+
+        var found = win.add("panel", undefined, "What it found");
+        found.orientation = "column";
+        found.alignChildren = ["fill", "top"];
+        found.margins = [12, 16, 12, 12];
+
+        var quoteList = found.add("listbox", undefined, [], {
+            numberOfColumns: 4, showHeaders: true,
+            columnTitles: ["#", "Timecode", "الضيف / Guest", "Quote"],
+            columnWidths: [30, 80, 150, 320]
+        });
+        quoteList.preferredSize.height = 150;
+
+        var guestList = found.add("listbox", undefined, [], {
+            numberOfColumns: 3, showHeaders: true,
+            columnTitles: ["#", "Guest", "Title"],
+            columnWidths: [30, 180, 370]
+        });
+        guestList.preferredSize.height = 80;
+
+        function row(labelText, width) {
+            var g = win.add("group");
+            g.orientation = "row";
+            g.alignChildren = ["left", "center"];
+            var l = g.add("statictext", undefined, labelText);
+            l.preferredSize.width = width || 110;
+            return g;
+        }
+
+        var titleTxt = row("Episode title:").add("edittext", undefined, "");
+        titleTxt.alignment = ["fill", "center"];
+        var hostTxt = row("Presenter:").add("edittext", undefined, "");
+        hostTxt.alignment = ["fill", "center"];
+
+        var orderGroup = row("Who said what:");
+        var orderTxt = orderGroup.add("edittext", undefined, "");
+        orderTxt.alignment = ["fill", "center"];
+
+        var orderHelp = win.add("statictext", undefined,
+            "رقم الضيف من قايمة الضيوف تحت (١ أو ٢ أو ٣) — واحد لكل اقتباس بالترتيب: " +
+            "2,1,3,3,1,2,3,2,2\n" +
+            "مش رقم الكليب ولا رقم الاقتباس. وتقدر تكتب جزء من الاسم بدل الرقم: " +
+            "مشينش,دلال,محارمة\n" +
+            "شوف عمود \"الضيف\" فوق وهو بيتملى وانت بتكتب — ده اللي هيتكتب على الكرت.",
+            { multiline: true });
+        orderHelp.preferredSize.height = 46;
+        orderHelp.alignment = ["fill", "top"];
+
+        var status = win.add("statictext", undefined, "Paste the form and press Read.");
+        status.alignment = ["fill", "top"];
+
+        var buttons = win.add("group");
+        buttons.orientation = "row";
+        buttons.alignment = ["fill", "bottom"];
+        var saveBtn = buttons.add("button", undefined, "Save into a folder...");
+        var helpBtn = buttons.add("button", undefined, "Help");
+        saveBtn.enabled = false;
+
+        var quotes = [], guests = [];
+
+        function setStatus(m) { status.text = m; }
+
+        /**
+         * Redraws the quote table, showing which guest each quote will get.
+         *
+         * Three different numbers live in this job - the quote's row, the
+         * clip's position, and the guest's place in the list - and only the
+         * last one goes in "who said what". Naming the guest against each
+         * quote, here, is worth more than any explanation of which is which.
+         */
+        function fillQuoteList() {
+            var keys = trim(orderTxt.text).split(/[\s,;\-]+/);
+            quoteList.removeAll();
+            for (var i = 0; i < quotes.length; i++) {
+                var it = quoteList.add("item", String(quotes[i].index));
+                it.subItems[0].text = quotes[i].timecode;
+
+                var key = trim(keys[i] || "");
+                var g = key !== "" ? resolveGuest(key, guests) : null;
+                it.subItems[1].text = g ? g.name
+                    : (key === "" ? "— ؟ —" : "\u26A0 \"" + key + "\" مش في القايمة");
+
+                it.subItems[2].text = quotes[i].text.length > 70
+                    ? quotes[i].text.substring(0, 70) + "..." : quotes[i].text;
+            }
+        }
+
+        function doRead() {
+            quotes = parseFormQuotes(pasteBox.text);
+            guests = parseGuestList(pasteBox.text);
+
+            fillQuoteList();
+            guestList.removeAll();
+            for (var g = 0; g < guests.length; g++) {
+                var gi = guestList.add("item", String(g + 1));
+                gi.subItems[0].text = guests[g].name;
+                gi.subItems[1].text = guests[g].role;
+            }
+
+            saveBtn.enabled = quotes.length > 0 && !quotes.looksFragmented;
+
+            // A paste that came apart is checked BEFORE an empty result: when
+            // it comes apart badly enough nothing survives at all, and "no
+            // quotes found - they need to be numbered" sends the reader off to
+            // fix numbering that was never the problem.
+            if (quotes.looksFragmented) {
+                setStatus("اللصق اتكسّر — طلع منه " + quotes.length + " فتات بس. انسخ من " +
+                          "Google Docs أو Word بدل الـ PDF، وجدول الاقتباسات لوحده.   |   " +
+                          "This paste came apart: copy from Word or Google Docs instead.");
+                // The team reads Arabic; the tool talks English. For the one
+                // message somebody hits when they are already stuck, that is
+                // a wall on top of a wall.
+                alert("اللصق ده اتكسّر\n\n" +
+                      "طلع منه " + quotes.length + " \"اقتباس\"" +
+                      (quotes.droppedFragments > 0
+                        ? "، بعد ما اتشال " + quotes.droppedFragments + " سطر كانوا روابط أو علامات"
+                        : "") + " — وده شكل الجدول لما يتنسخ من PDF: كل خانة في سطر، " +
+                      "الترقيم منفصل عن نصه، والرابط مقطّع على أربع أسطر.\n\n" +
+                      "مفيش حاجة هنا تقدر ترجّعه تاني. اللي بيشتغل:\n\n" +
+                      "  ١. ارفع الـ PDF على Google Drive، كليك يمين، Open with ← Google Docs\n" +
+                      "     وانسخ من هناك — بيعيد بناء الجدول\n" +
+                      "  ٢. أو افتح الـ PDF ببرنامج Word مباشرة\n" +
+                      "  ٣. أو اطلب من البروديوسر ملف Word بدل الـ PDF — ده الأنضف\n\n" +
+                      "وانسخ جدول الاقتباسات بس، مش الاستمارة كلها — جدول المعادلات\n" +
+                      "البصرية مليان روابط صور، وهي اللي بتتقري غلط.\n\n" +
+                      "بعدها الصق تاني. المفروض تشوف سطر لكل اقتباس، كلام مفهوم —\n" +
+                      "مش روابط ولا أرقام لوحدها.\n\n" +
+                      "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n\n" +
+                      "That paste came apart. Copying a table out of a PDF loses its\n" +
+                      "structure and nothing here can rebuild it. Open the PDF in Word,\n" +
+                      "or upload it to Google Docs and copy from there - and copy only\n" +
+                      "the quotes table, not the whole form.");
+                return;
+            }
+
+            if (quotes.length === 0) {
+                setStatus("No quotes found. They need to be numbered - \"( 1 ) ...\" or \"1) ...\" " +
+                          "- one per line. Press Help for what the form should look like.");
+                return;
+            }
+
+            setStatus(quotes.length + " اقتباس، " + guests.length + " ضيف." +
+                      (guests.length === 0
+                        ? "  |  ⚠️ مفيش قايمة ضيوف — الصقها تحت الاقتباسات تحت سطر فيه " +
+                          "\"الضيوف:\"، وإلا أرقام الضيوف مش هتتحول لأسماء."
+                        : "  |  راجع الترقيم فوق، وبعدين اكتب مين قال إيه.") +
+                      "  لسه مفيش حاجة اتكتبت.");
+        }
+
+        function doSave() {
+            if (quotes.length === 0) { setStatus("Press Read first."); return; }
+
+            var dest = Folder.selectDialog("Where should the episode folder go?");
+            if (!dest) { return; }
+
+            var problems = [];
+            var csv = writeTextFile(new File(dest.fsName + "/quotes.csv"),
+                                    buildQuotesCSV(quotes, orderTxt.text), problems);
+            var info = "";
+            if (guests.length > 0 || trim(titleTxt.text) !== "") {
+                info = writeTextFile(new File(dest.fsName + "/episode-info.txt"),
+                                     buildGuestsText(guests, titleTxt.text, hostTxt.text),
+                                     problems);
+            }
+
+            if (csv === "") {
+                setStatus("Nothing was written - see the message.");
+                alert("Could not write the files.\n\n" +
+                      (problems.length ? problems.join("\n\n") + "\n\n" : "") +
+                      "In After Effects: Settings (or Preferences) > Scripting & Expressions >\n" +
+                      "tick \"Allow Scripts to Write Files and Access Network\", then try again.");
+                return;
+            }
+
+            var filled = 0, given = 0, i;
+            var keys = trim(orderTxt.text).split(/[\s,;\-]+/);
+            for (i = 0; i < keys.length; i++) { if (trim(keys[i]) !== "") { given++; } }
+            for (i = 0; i < quotes.length; i++) {
+                if (trim(keys[i] || "") !== "") { filled++; }
+            }
+
+            // Counting the guest numbers against the quotes is the only check
+            // here that can catch a quote the selection missed: nine numbers
+            // typed from the form against eight quotes read out of it.
+            var countNote = "";
+            if (given > 0 && given !== quotes.length) {
+                countNote = "⚠️  كتبت " + given + " رقم ضيف، والاقتباسات " + quotes.length + ".\n\n" +
+                            (given > quotes.length
+                              ? "يعني في " + (given - quotes.length) + " اقتباس التظليل مأخدهمش —\n" +
+                                "راجع آخر صف في الاستمارة وانسخ تاني."
+                              : "يعني في " + (quotes.length - given) + " اقتباس من غير ضيف.") +
+                            "\n\n";
+            }
+
+            var done = (filled === quotes.length && filled > 0 && guests.length > 0 &&
+                        countNote === "");
+
+            // A dialog is for something that needs doing. When nothing does,
+            // it is a box in the way of the next step - which is what it had
+            // become: every run ending in a modal, read as a complaint.
+            if (done) {
+                setStatus("✅  فولدر الحلقة جاهز — " + quotes.length + " اقتباس، " +
+                          guests.length + " ضيف، وكل اقتباس قدامه ضيفه.   |   " +
+                          "اتكتب في " + dest.fsName + "   |   " +
+                          "الخطوة الجاية: حط الكليبات في نفس الفولدر وشغّل QuoteCards.jsx");
+                return;
+            }
+
+            setStatus("اتكتب في " + dest.fsName);
+            alert("فولدر الحلقة اتكتب — وفاضل حاجة\n\n" +
+                  "quotes.csv          " + quotes.length + " اقتباس\n" +
+                  (info !== ""
+                    ? "episode-info.txt    " + guests.length + " ضيف\n"
+                    : "") +
+                  "\n" + countNote +
+                  // Numbers in the speaker column mean nothing without the list
+                  // they point at - the card would print "2" as the name.
+                  (guests.length === 0
+                    ? "⚠️  مفيش قايمة ضيوف!\n\n" +
+                      "أرقام الضيوف مش هتتحول لأسماء من غيرها. الصق قايمة\n" +
+                      "الضيوف تحت الاقتباسات في نفس المربع، بالشكل ده:\n\n" +
+                      "    الضيوف:\n" +
+                      "      - الاسم الكامل — الصفة\n" +
+                      "      - الاسم الكامل — الصفة\n\n" +
+                      "واضغط Read و Save تاني.\n\n"
+                    : "") +
+                  (filled === quotes.length && filled > 0
+                    ? "✅  كل اقتباس قدامه ضيفه.\n"
+                    : "⚠️  عمود المتحدث اتملى في " + filled + " من " + quotes.length + ".\n\n" +
+                      (filled === 0
+                        ? "سيبت خانة \"Who said what\" فاضية. ارجع واكتب فيها رقم\n" +
+                          "الضيف لكل اقتباس بالترتيب — زي 2,1,3,3,1,2,3,2,2 — واضغط\n" +
+                          "Save تاني. أو افتح quotes.csv واملا العمود بإيدك.\n"
+                        : "افتح quotes.csv وحط رقم الضيف في الباقي.\n") +
+                      "من غير ده الكروت هتفضل باسم القالب.\n") +
+                  "\n(الرسالة دي مش بتظهر لما يبقى مفيش حاجة ناقصة.)\n" +
+                  "\nالخطوة الجاية: حط الكليبات في نفس الفولدر، وشغّل QuoteCards.jsx.\n\n" +
+                  "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n\n" +
+                  "Episode folder ready: " + quotes.length + " quote(s), " +
+                  guests.length + " guest(s), speaker column filled for " + filled + ".");
+        }
+
+        // After Effects has no PDF or Word reader, and no script can add one.
+        // Loading one anyway fills the box with binary and reads as the tool
+        // being broken, so the file is named and the way round it is given.
+        var UNREADABLE = "pdf,doc,docx,pages,rtf,odt,key,ppt,pptx,xls,xlsx,numbers";
+
+        function unreadableAdvice(ext) {
+            var what = (ext === "pdf") ? "a PDF"
+                     : (ext === "doc" || ext === "docx") ? "a Word file"
+                     : (ext === "pages") ? "a Pages file"
+                     : "that kind of file";
+            return "After Effects cannot read " + what + " - no script can, there is no " +
+                   "reader for it inside the program.\n\n" +
+                   "Copy the text out instead. It takes a moment:\n\n" +
+                   "  1. Open the form (Preview for a PDF, Word, Google Docs)\n" +
+                   "  2. Select all  -  Cmd+A\n" +
+                   "  3. Copy  -  Cmd+C\n" +
+                   "  4. Click in the big box here and paste  -  Cmd+V\n" +
+                   "  5. Press Read\n\n" +
+                   "That is what the box is for - it never needed the file itself.\n\n" +
+                   "If the form is a scan, nothing can copy from it: the page is a picture. " +
+                   "Ask the producer for the document rather than the scan.";
+        }
+
+        loadBtn.onClick = function () {
+            var f = File.openDialog("The producer's form, saved as plain text (.txt)");
+            if (!f) { return; }
+
+            var ext = extOf(f.name);
+            if (("," + UNREADABLE + ",").indexOf("," + ext + ",") !== -1) {
+                setStatus("After Effects cannot read a ." + ext + " - copy the text and paste " +
+                          "it into the box instead.");
+                alert(unreadableAdvice(ext));
+                return;
+            }
+            try {
+                if (!f.open("r")) { setStatus("Could not open " + f.name); return; }
+                f.encoding = "UTF-8";
+                var raw = f.read();
+                f.close();
+
+                // A file renamed .txt is still whatever it was
+                if (raw.substring(0, 4) === "%PDF") {
+                    setStatus("That file is a PDF whatever it is called - paste the text instead.");
+                    alert(unreadableAdvice("pdf"));
+                    return;
+                }
+                if (raw.substring(0, 2) === "PK") {
+                    setStatus("That is a Word/Pages file whatever it is called - paste the text " +
+                              "instead.");
+                    alert(unreadableAdvice("docx"));
+                    return;
+                }
+                pasteBox.text = raw;
+                doRead();
+            } catch (e) { setStatus("Could not read that file: " + e.toString()); }
+        };
+
+        // Live, as they type: the point is to see the pairing, not to submit it
+        orderTxt.onChanging = orderTxt.onChange = function () {
+            if (quotes.length) { fillQuoteList(); }
+        };
+
+        readBtn.onClick = doRead;
+        saveBtn.onClick = doSave;
+        helpBtn.onClick = function () {
+            alert(
+                "Episode Form\n\n" +
+                "Turns the producer's weekly form into the two files QuoteCards.jsx\n" +
+                "reads, so nobody retypes them.\n\n" +
+                "1. Open the form (PDF, Word, Google Doc), select all, copy.\n" +
+                "2. Paste it into the box and press Read.\n\n" +
+                "It expects the quotes NUMBERED, one per line:\n\n" +
+                "    ( 1 ) السلطة تُريد ...        11:06\n" +
+                "    ( 2 ) من المحتمل تأجيل ...     29:35\n\n" +
+                "The number and the timecode are stripped - the number is the row,\n" +
+                "the timecode is for you, neither goes on the card.\n\n" +
+                "And the guests under a heading, one per line:\n\n" +
+                "    الضيوف:\n" +
+                "      - الاسم الكامل — الصفة\n" +
+                "      - الاسم الكامل — الصفة\n\n" +
+                "Name and title split on the dash, not the comma - these titles\n" +
+                "carry commas of their own.\n\n" +
+                "3. \"Who said what\" is one guest number per quote: 2,1,3,3,1,2,3,2,2\n" +
+                "   The form never says who said which. That part needs someone who\n" +
+                "   watched the episode, and it is the only part that does.\n\n" +
+                "4. Save into a folder. You get quotes.csv and episode-info.txt,\n" +
+                "   written as UTF-8 - no Numbers, no export step, no broken Arabic.\n\n" +
+                "Then drop the clips in beside them and run QuoteCards.jsx."
+            );
+        };
+
+        win.onResizing = win.onResize = function () { this.layout.resize(); };
+        if (win instanceof Window) { win.center(); win.show(); }
+        else { win.layout.layout(true); win.layout.resize(); }
+        return win;
+    }
