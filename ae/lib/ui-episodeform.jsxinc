@@ -66,12 +66,10 @@
         var orderTxt = orderGroup.add("edittext", undefined, "");
         orderTxt.alignment = ["fill", "center"];
 
+        // Filled in for real by updateOrderHelp() once Read has run and the
+        // counts are known - until then there is nothing true to say.
         var orderHelp = win.add("statictext", undefined,
-            "رقم الضيف من قايمة الضيوف تحت (١ أو ٢ أو ٣) — واحد لكل اقتباس بالترتيب: " +
-            "2,1,3,3,1,2,3,2,2\n" +
-            "مش رقم الكليب ولا رقم الاقتباس. وتقدر تكتب جزء من الاسم بدل الرقم: " +
-            "مشينش,دلال,محارمة\n" +
-            "شوف عمود \"الضيف\" فوق وهو بيتملى وانت بتكتب — ده اللي هيتكتب على الكرت.",
+            "اضغط Read الأول، وبعدين اكتب هنا مين قال كل اقتباس.\n\n",
             { multiline: true });
         orderHelp.preferredSize.height = 46;
         orderHelp.alignment = ["fill", "top"];
@@ -235,9 +233,6 @@
             // Counting the guest numbers against the quotes is the only check
             // here that can catch a quote the selection missed: nine numbers
             // typed from the form against eight quotes read out of it.
-            // Counting the guest numbers against the quotes is the only check
-            // here that can catch a quote the selection missed: nine numbers
-            // typed from the form against eight quotes read out of it.
             var countNote = "";
             if (given > 0 && given !== quotes.length) {
                 countNote = given > quotes.length
@@ -284,11 +279,23 @@
                 fix = "\u0643\u0645\u0651\u0644 \u062e\u0627\u0646\u0629 \u00abWho said what\u00bb\u060c \u0623\u0648 \u0627\u0641\u062a\u062d quotes.csv \u0648\u0627\u0645\u0644\u0627 \u0639\u0645\u0648\u062f \u0627\u0644\u0645\u062a\u062d\u062f\u062b.";
             }
 
-            setStatus(headline + "   |   " + tally);
-            // The consequence line matters more than the counts: the cards do
-            // not keep the template's name any more, they come out blank.
-            alert(headline + "\n\n" + fix + "\n\n" +
-                  "\u0645\u0646 \u063a\u064a\u0631 \u062f\u0647 \u0627\u0644\u0643\u0631\u0648\u062a \u0647\u062a\u0637\u0644\u0639 \u0645\u0646 \u063a\u064a\u0631 \u0623\u0633\u0627\u0645\u064a.");
+            setStatus("\u2705 " + headline + "   |   " + tally);
+
+            // The files are on disk by the time this runs - the write happens
+            // above and nothing here can undo it. Opening on a warning made it
+            // read as a refusal, so it got pressed again against a folder that
+            // had been correct all along. Say what happened, then what is
+            // still missing.
+            alert("\u2705  \u0627\u062a\u062d\u0641\u0638: quotes.csv" +
+                  (info !== "" ? " \u0648 episode-info.txt" : "") + "\n" +
+                  dest.fsName + "\n\n" +
+                  headline + "\n\n" + fix + "\n\n" +
+                  "\u0645\u0646 \u063a\u064a\u0631 \u062f\u0647 \u0627\u0644\u0643\u0631\u0648\u062a \u0647\u062a\u0637\u0644\u0639 \u0645\u0646 \u063a\u064a\u0631 \u0623\u0633\u0627\u0645\u064a \u2014 " +
+                  "\u0648\u062a\u0642\u062f\u0631 \u0628\u062f\u0644 \u0643\u062f\u0647 \u062a\u0641\u062a\u062d quotes.csv " +
+                  "\u0648\u062a\u0645\u0644\u0627 \u0639\u0645\u0648\u062f \u0627\u0644\u0645\u062a\u062d\u062f\u062b \u0628\u0625\u064a\u062f\u0643.");
+
+            // and put the cursor where the answer goes
+            try { orderTxt.active = true; } catch (eFocus) {}
         }
 
         // After Effects has no PDF or Word reader, and no script can add one.
