@@ -173,6 +173,7 @@ node ae/tests/parse.test.js       # 46 assertions
 node ae/tests/discovery.test.js   # 11 assertions
 node ae/tests/quotes.test.js      # 19 assertions
 node ae/tests/speakers.test.js    # 63 assertions
+node ae/tests/pairing.test.js     # 30 assertions
 node ae/tests/nested.test.js      # 48 assertions
 node ae/tests/timing.test.js      # 16 assertions
 node ae/tests/text.test.js        # 20 assertions
@@ -204,6 +205,15 @@ roster, a value fitting two guests, and a bare number with no roster all come
 back blank with a reason, because a wrong name under a real person's face is
 worse than no name. Arabic folding is covered too — `normalize()` erases
 Arabic completely, so it could never have matched an Arabic heading.
+
+`pairing.test.js` covers which cut-out belongs to which clip. Folder order
+was the only rule, and it held only while both folders were named the same
+way — send the clips through an external keyer and they come back as
+`8f3a2b1c.webm` in whatever order the service finished them. Pairing is by
+name first, then by the number that ends the name (`Aktbas_002` is
+`Aktbas_2`), and only then by order — and `clip1` is asserted never to match
+`clip10`, an ambiguous name is not a match at all, and everything that did
+fall back on order is marked so it can be checked before rendering.
 
 `nested.test.js` builds a miniature AE object model shaped like a real
 template — a render comp pulling its guest from a `REPLACE-FOOTAGE` precomp and

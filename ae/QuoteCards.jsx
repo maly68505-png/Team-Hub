@@ -34,6 +34,8 @@
     var TITLE_HEADS = "\u0627\u0644\u0635\u0641\u0629,\u0627\u0644\u0648\u0638\u064a\u0641\u0629,\u0627\u0644\u0645\u0646\u0635\u0628,\u0627\u0644\u062a\u0639\u0631\u064a\u0641,title,role,job,position";
     var GUEST_HEADS = "\u0627\u0644\u0636\u064a\u0648\u0641,\u0636\u064a\u0648\u0641,guests,panel";
     var GUEST_FILES = "episode-info.txt,episode-info.md,episode_info.txt,guests.txt,guests.md";
+    // what an exporter tacks onto a cut-out's filename
+    var ALPHA_MARKERS = "alpha,matte,cutout,cut,key,keyed,rgba,transparent,nobg,noback";
     var MIN_MATCH_SCORE = 2;
     var TOL = 0.0005; // seconds, float-compare tolerance
 
@@ -347,6 +349,98 @@
     function sortFilesNaturally(files) {
         files.sort(function (a, b) { return naturalCompare(a.name, b.name); });
         return files;
+    }
+
+    /**
+     * Pairs each clip with its cut-out version BY NAME, falling back to folder
+     * order only when the names say nothing.
+     *
+     * Order alone was the whole rule, and it quietly broke the moment the
+     * cut-outs came back from an external keyer named 8f3a2b1c.webm: one
+     * guest's cut-out lands on another guest's card, and nobody notices until
+     * they look at the face.
+     *
+     * Returns an array parallel to `clips` of { file, how }, how being
+     * "name", "number" or "order".
+     */
+    function pairAlphaClips(clips, alphas) {
+        var used = {}, pairs = [], i;
+        var cBase = [], aBase = [];
+        for (i = 0; i < clips.length; i++) { cBase.push(baseName(clips[i].name)); }
+        for (i = 0; i < alphas.length; i++) {
+            aBase.push(stripAlphaMarker(baseName(alphas[i].name)));
+        }
+        for (i = 0; i < clips.length; i++) { pairs.push({ file: null, how: "" }); }
+
+        // the same name, give or take the _alpha on the end
+        matchPass(function (c, a) {
+            var fc = foldText(c);
+            return fc !== "" && fc === foldText(a);
+        }, "name");
+
+        // one name inside the other - but clip1 is NOT clip10, so a trailing
+        // number that disagrees vetoes the match however well the rest reads
+        matchPass(function (c, a) {
+            var fc = foldText(c), fa = foldText(a);
+            if (fc === "" || fa === "") { return false; }
+            if (fc.indexOf(fa) === -1 && fa.indexOf(fc) === -1) { return false; }
+            var tc = trailingNumber(c), ta = trailingNumber(a);
+            return !(tc && ta && tc.n !== ta.n);
+        }, "name");
+
+        // the number that ENDS the name: Aktbas_002 is Aktbas_2
+        matchPass(function (c, a) {
+            var tc = trailingNumber(c), ta = trailingNumber(a);
+            if (!tc || !ta || tc.n !== ta.n) { return false; }
+            var pc = foldText(tc.prefix), pa = foldText(ta.prefix);
+            return pc === pa || pc === "" || pa === "";
+        }, "number");
+
+        // whatever is left falls back on order, which is what the warning is for
+        var next = 0;
+        for (i = 0; i < clips.length; i++) {
+            if (pairs[i].file) { continue; }
+            while (next < alphas.length && used[next]) { next++; }
+            if (next >= alphas.length) { break; }
+            used[next] = true;
+            pairs[i] = { file: alphas[next], how: "order" };
+        }
+        return pairs;
+
+        /** Takes a match only when exactly one unused cut-out fits. */
+        function matchPass(fits, how) {
+            for (var c = 0; c < clips.length; c++) {
+                if (pairs[c].file) { continue; }
+                var hit = -1, n = 0;
+                for (var a = 0; a < alphas.length; a++) {
+                    if (used[a]) { continue; }
+                    if (fits(cBase[c], aBase[a])) { hit = a; n++; }
+                }
+                if (n === 1) { used[hit] = true; pairs[c] = { file: alphas[hit], how: how }; }
+            }
+        }
+    }
+
+    /** "Aktbas_001_alpha" -> "Aktbas_001". A marker needs a separator before
+     *  it, so a name that merely ends in "key" is left whole. */
+    function stripAlphaMarker(base) {
+        var marks = ALPHA_MARKERS.split(","), out = base, changed = true;
+        while (changed) {
+            changed = false;
+            for (var i = 0; i < marks.length; i++) {
+                var re = new RegExp("[\\s_\\-\\.]+" + marks[i] + "$", "i");
+                if (re.test(out)) { out = out.replace(re, ""); changed = true; }
+            }
+        }
+        return out;
+    }
+
+    /** The number at the very end of a name, with whatever came before it. */
+    function trailingNumber(s) {
+        var w = toWesternDigits(String(s));
+        var m = /([0-9]+)\s*$/.exec(w);
+        if (!m) { return null; }
+        return { n: parseInt(m[1], 10), prefix: w.substring(0, m.index) };
     }
 
     /** Minimal RFC4180 reader: quoted fields, doubled quotes, embedded newlines. */
@@ -1785,18 +1879,30 @@
                 return;
             }
 
+            // Each cut-out goes to the clip whose NAME it shares. Handing them
+            // out in folder order put one guest's cut-out on another guest's
+            // card the moment an external keyer renamed the files.
+            var alphaPairs = pairAlphaClips(files, alphaFiles);
+            var byOrder = 0;
+            for (var pi = 0; pi < alphaPairs.length && pi < quotes.length; pi++) {
+                if (alphaPairs[pi].file && alphaPairs[pi].how === "order") { byOrder++; }
+            }
+
             for (var i = 0; i < quotes.length; i++) {
                 var clip = (i < files.length) ? files[i] : null;
                 if (!clip) {
                     planWarnings.push("Quote " + (i + 1) + " has no clip: the folder holds only " +
                                       files.length + " clip(s).");
                 }
-                var alphaClip = (i < alphaFiles.length) ? alphaFiles[i] : null;
-                plan.push({ index: i + 1, quote: quotes[i], file: clip, alpha: alphaClip, ok: !!clip });
+                var pair = (i < alphaPairs.length) ? alphaPairs[i] : { file: null, how: "" };
+                var alphaClip = pair.file;
+                plan.push({ index: i + 1, quote: quotes[i], file: clip, alpha: alphaClip,
+                            alphaHow: pair.how, ok: !!clip });
 
                 var it = list.add("item", String(i + 1));
                 it.subItems[0].text = clip ? clip.name : "-- no clip --";
-                it.subItems[1].text = alphaClip ? alphaClip.name
+                it.subItems[1].text = alphaClip
+                    ? alphaClip.name + (pair.how === "order" ? "   (by order)" : "")
                     : (aTarget && af !== "" ? "-- none --" : "");
                 it.subItems[2].text = quotes[i].speaker !== ""
                     ? quotes[i].speaker
@@ -1840,6 +1946,11 @@
                        "the quotes will NOT be written. Is it a shape layer rather than a text layer?";
             } else if (!selectedTextTarget()) {
                 note = "  |  text layer set to \"leave alone\" - the quotes will not be written";
+            }
+            if (byOrder > 0) {
+                note += "  |  " + byOrder + " cut-out(s) could NOT be matched to a clip by name " +
+                        "and fell back on folder order - check the Alpha column row by row, or " +
+                        "rename each cut-out after its clip with _alpha on the end";
             }
             note += speakerNote(quotes.length);
 
@@ -2017,7 +2128,13 @@
                                         "  hasAlpha=" + aHasAlpha +
                                         "  alphaMode=" + alphaModeName(alphaFootage.mainSource.alphaMode);
                             } catch (eA) {}
-                            log.push("    alpha: " + row.alpha.name + "   " + aDesc);
+                            log.push("    alpha: " + row.alpha.name +
+                                     "   (matched by " + row.alphaHow + ")   " + aDesc);
+                            if (row.alphaHow === "order") {
+                                log.push("    *** this cut-out was matched by POSITION, not by " +
+                                         "name - if the wrong guest is cut out on this card, " +
+                                         "that is why");
+                            }
 
                             // A cut-out clip with no alpha channel is just the
                             // original again - the guest keeps their background

@@ -361,18 +361,30 @@
                 return;
             }
 
+            // Each cut-out goes to the clip whose NAME it shares. Handing them
+            // out in folder order put one guest's cut-out on another guest's
+            // card the moment an external keyer renamed the files.
+            var alphaPairs = pairAlphaClips(files, alphaFiles);
+            var byOrder = 0;
+            for (var pi = 0; pi < alphaPairs.length && pi < quotes.length; pi++) {
+                if (alphaPairs[pi].file && alphaPairs[pi].how === "order") { byOrder++; }
+            }
+
             for (var i = 0; i < quotes.length; i++) {
                 var clip = (i < files.length) ? files[i] : null;
                 if (!clip) {
                     planWarnings.push("Quote " + (i + 1) + " has no clip: the folder holds only " +
                                       files.length + " clip(s).");
                 }
-                var alphaClip = (i < alphaFiles.length) ? alphaFiles[i] : null;
-                plan.push({ index: i + 1, quote: quotes[i], file: clip, alpha: alphaClip, ok: !!clip });
+                var pair = (i < alphaPairs.length) ? alphaPairs[i] : { file: null, how: "" };
+                var alphaClip = pair.file;
+                plan.push({ index: i + 1, quote: quotes[i], file: clip, alpha: alphaClip,
+                            alphaHow: pair.how, ok: !!clip });
 
                 var it = list.add("item", String(i + 1));
                 it.subItems[0].text = clip ? clip.name : "-- no clip --";
-                it.subItems[1].text = alphaClip ? alphaClip.name
+                it.subItems[1].text = alphaClip
+                    ? alphaClip.name + (pair.how === "order" ? "   (by order)" : "")
                     : (aTarget && af !== "" ? "-- none --" : "");
                 it.subItems[2].text = quotes[i].speaker !== ""
                     ? quotes[i].speaker
@@ -416,6 +428,11 @@
                        "the quotes will NOT be written. Is it a shape layer rather than a text layer?";
             } else if (!selectedTextTarget()) {
                 note = "  |  text layer set to \"leave alone\" - the quotes will not be written";
+            }
+            if (byOrder > 0) {
+                note += "  |  " + byOrder + " cut-out(s) could NOT be matched to a clip by name " +
+                        "and fell back on folder order - check the Alpha column row by row, or " +
+                        "rename each cut-out after its clip with _alpha on the end";
             }
             note += speakerNote(quotes.length);
 
@@ -593,7 +610,13 @@
                                         "  hasAlpha=" + aHasAlpha +
                                         "  alphaMode=" + alphaModeName(alphaFootage.mainSource.alphaMode);
                             } catch (eA) {}
-                            log.push("    alpha: " + row.alpha.name + "   " + aDesc);
+                            log.push("    alpha: " + row.alpha.name +
+                                     "   (matched by " + row.alphaHow + ")   " + aDesc);
+                            if (row.alphaHow === "order") {
+                                log.push("    *** this cut-out was matched by POSITION, not by " +
+                                         "name - if the wrong guest is cut out on this card, " +
+                                         "that is why");
+                            }
 
                             // A cut-out clip with no alpha channel is just the
                             // original again - the guest keeps their background
