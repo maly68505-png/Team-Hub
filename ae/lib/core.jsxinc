@@ -11,6 +11,8 @@
     var GUEST_FILES = "episode-info.txt,episode-info.md,episode_info.txt,guests.txt,guests.md";
     // what an exporter tacks onto a cut-out's filename
     var ALPHA_MARKERS = "alpha,matte,cutout,cut,key,keyed,rgba,transparent,nobg,noback";
+    var QC_SETTINGS = "QuoteCards";
+    var SETUP_FILE = "QuoteCards_setup.txt";
     var MIN_MATCH_SCORE = 2;
     var TOL = 0.0005; // seconds, float-compare tolerance
 
@@ -416,6 +418,53 @@
         var m = /([0-9]+)\s*$/.exec(w);
         if (!m) { return null; }
         return { n: parseInt(m[1], 10), prefix: w.substring(0, m.index) };
+    }
+
+    /**
+     * The episode setup file - the layer choices, written beside the quote
+     * list so they travel with the folder. Paths are deliberately NOT in it:
+     * they differ on every machine, the layers do not.
+     */
+    function setupToText(pairs) {
+        var out = ["# " + SETUP_FILE + " - written by Quote Cards, read back automatically.",
+                   "# It travels with the episode folder. Paths are left out on purpose.",
+                   ""];
+        for (var i = 0; i < pairs.length; i++) {
+            var key = pairs[i][0], val = pairs[i][1];
+            if (val === "" || val == null) { continue; }
+            while (key.length < 12) { key += " "; }
+            out.push(key + val);
+        }
+        return out.join("\n") + "\n";
+    }
+
+    function parseSetupText(text) {
+        var lines = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+        var map = {};
+        for (var i = 0; i < lines.length; i++) {
+            var line = trim(lines[i]);
+            if (line === "" || line.charAt(0) === "#") { continue; }
+            var m = /^(\S+)\s+([\s\S]*)$/.exec(line);
+            if (!m) { continue; }
+            map[m[1].toLowerCase()] = trim(m[2]);
+        }
+        return map;
+    }
+
+    /**
+     * Two layer labels naming the same layer. The sample of the layer's
+     * current text is part of the label, and the template's wording drifts
+     * between episodes, so it is cut off before comparing.
+     */
+    function sameTargetLabel(a, b) {
+        return labelKey(a) === labelKey(b);
+    }
+
+    function labelKey(s) {
+        var t = String(s == null ? "" : s);
+        var cut = t.indexOf("   -   \"");
+        if (cut >= 0) { t = t.substring(0, cut); }
+        return trim(t.replace(/\s+/g, " ")).toLowerCase();
     }
 
     /** Minimal RFC4180 reader: quoted fields, doubled quotes, embedded newlines. */

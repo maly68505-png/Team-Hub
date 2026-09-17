@@ -19,7 +19,7 @@
             return g;
         }
 
-        function pathRow(labelText, isFolder, prompt) {
+        function pathRow(labelText, isFolder, prompt, onSet) {
             var g = row(labelText);
             var txt = g.add("edittext", undefined, "");
             txt.alignment = ["fill", "center"];
@@ -30,9 +30,10 @@
                 var picked = isFolder ? Folder.selectDialog(prompt) : File.openDialog(prompt);
                 if (!picked) { return; }
                 txt.text = picked.fsName;
+                if (onSet) { onSet(); }
                 maybeScan();          // setting .text from code fires no onChange
             };
-            txt.onChange = function () { maybeScan(); };
+            txt.onChange = function () { if (onSet) { onSet(); } maybeScan(); };
             return txt;
         }
 
@@ -45,7 +46,8 @@
         refreshBtn.preferredSize.width = 70;
 
         var videosTxt = pathRow("Clips folder:", true, "Where are the speaker clips?");
-        var quotesTxt = pathRow("Quotes file:", false, "The quote list (.csv / .txt / .srt)");
+        var quotesTxt = pathRow("Quotes file:", false, "The quote list (.csv / .txt / .srt)",
+                                function () { adoptEpisodeSetup(); });
         var alphaTxt = pathRow("Alpha clips:", true,
             "Optional: the pre-keyed / cut-out version of each clip");
 
@@ -141,7 +143,7 @@
         // ---- state ----------------------------------------------------------
 
         var compList = [], videoTargets = [], textTargets = [], plan = [], planWarnings = [];
-        var alphaFiles = [], quoteMeta = {};
+        var alphaFiles = [], quoteMeta = {}, adopted = "";
 
         function setStatus(m) { status.text = m; }
 
@@ -236,6 +238,146 @@
                 }
             }
             return -1;
+        }
+
+        // -------------------------------------------------- remembering setup
+
+        /**
+         * The panel's choices, as the setup file and the machine settings
+         * both store them. The paths are separate on purpose: they belong to
+         * one machine, the layer choices belong to the episode.
+         */
+        function currentSetup() {
+            var t = template();
+            return [
+                ["template", t ? t.name : ""],
+                ["video", labelOf(videoDrop, videoTargets)],
+                ["alpha", labelOf(alphaDrop, videoTargets)],
+                ["text", labelOf(textDrop, textTargets)],
+                ["name", labelOf(nameDrop, textTargets)],
+                ["title", labelOf(titleDrop, textTargets)],
+                ["sort", cbSort.value ? "on" : "off"],
+                ["matte", cbMatte.value ? "on" : "off"],
+                ["reset", cbReset.value ? "on" : "off"],
+                ["fit", cbFit.value ? "on" : "off"],
+                ["alphapath", cbAlphaPath.value ? "on" : "off"],
+                ["fittext", cbFitText.value ? "on" : "off"],
+                ["folder", cbFolder.value ? "on" : "off"],
+                ["alphamode", alphaChoice()]
+            ];
+        }
+
+        function labelOf(drop, targets) {
+            if (!drop.selection || drop.selection.index === 0) { return ""; }
+            var t = targets[drop.selection.index - 1];
+            return t ? t.label : "";
+        }
+
+        /** Selects the entry naming this layer, or leaves the list alone. */
+        function selectLabel(drop, targets, want) {
+            if (want === "" || want == null) { return false; }
+            for (var i = 0; i < targets.length; i++) {
+                if (sameTargetLabel(targets[i].label, want)) { drop.selection = i + 1; return true; }
+            }
+            return false;
+        }
+
+        function setCheck(cb, v) { if (v === "on" || v === "off") { cb.value = (v === "on"); } }
+
+        function applySetup(map) {
+            var used = 0, i;
+            if (map.template) {
+                for (i = 0; i < compList.length; i++) {
+                    if (compList[i].name === map.template) {
+                        tplDrop.selection = i;
+                        refreshLayers();      // rebuilds the lists for THIS comp
+                        used++;
+                        break;
+                    }
+                }
+            }
+            if (selectLabel(videoDrop, videoTargets, map.video)) { used++; }
+            if (map.alpha) {
+                for (i = 0; i < videoTargets.length; i++) {
+                    if (sameTargetLabel(videoTargets[i].label, map.alpha)) {
+                        alphaDrop.selection = i + 1; used++; break;
+                    }
+                }
+            }
+            if (selectLabel(textDrop, textTargets, map.text)) { used++; }
+            if (selectLabel(nameDrop, textTargets, map.name)) { used++; }
+            if (selectLabel(titleDrop, textTargets, map.title)) { used++; }
+
+            setCheck(cbSort, map.sort);
+            setCheck(cbMatte, map.matte);
+            setCheck(cbReset, map.reset);
+            setCheck(cbFit, map.fit);
+            setCheck(cbAlphaPath, map.alphapath);
+            setCheck(cbFitText, map.fittext);
+            setCheck(cbFolder, map.folder);
+            if (map.alphamode) {
+                var modes = ["auto", "straight", "premul-white", "premul-black"];
+                for (i = 0; i < modes.length; i++) {
+                    if (modes[i] === map.alphamode) { alphaModeDrop.selection = i; break; }
+                }
+            }
+            return used;
+        }
+
+        /**
+         * The setup file sitting beside the quote list wins over whatever this
+         * machine happened to be left on. Picking the wrong Video layer was
+         * the mistake this team made most, and this closes it for everyone at
+         * once: the editor picks two paths and the rest is already right.
+         */
+        function adoptEpisodeSetup() {
+            adopted = "";
+            var qf = trim(quotesTxt.text);
+            if (qf === "") { return; }
+            try {
+                var f = new File(qf);
+                if (!f.exists || !f.parent) { return; }
+                var setup = new File(f.parent.fsName + "/" + SETUP_FILE);
+                if (!setup.exists || !setup.open("r")) { return; }
+                var raw = setup.read();
+                setup.close();
+                if (applySetup(parseSetupText(raw.replace(/^\uFEFF/, ""))) > 0) {
+                    adopted = setup.name;
+                }
+            } catch (e) {}
+        }
+
+        function saveMachineSetup() {
+            try {
+                var pairs = currentSetup();
+                for (var i = 0; i < pairs.length; i++) {
+                    app.settings.saveSetting(QC_SETTINGS, pairs[i][0], String(pairs[i][1]));
+                }
+                app.settings.saveSetting(QC_SETTINGS, "clips", videosTxt.text);
+                app.settings.saveSetting(QC_SETTINGS, "quotes", quotesTxt.text);
+                app.settings.saveSetting(QC_SETTINGS, "alphafolder", alphaTxt.text);
+            } catch (e) {}
+        }
+
+        function loadMachineSetup() {
+            try {
+                if (!app.settings.haveSetting(QC_SETTINGS, "template")) { return; }
+                var keys = ["template", "video", "alpha", "text", "name", "title", "sort",
+                            "matte", "reset", "fit", "alphapath", "fittext", "folder",
+                            "alphamode"], map = {};
+                for (var i = 0; i < keys.length; i++) {
+                    if (app.settings.haveSetting(QC_SETTINGS, keys[i])) {
+                        map[keys[i]] = app.settings.getSetting(QC_SETTINGS, keys[i]);
+                    }
+                }
+                applySetup(map);
+                var paths = [["clips", videosTxt], ["quotes", quotesTxt], ["alphafolder", alphaTxt]];
+                for (var p = 0; p < paths.length; p++) {
+                    if (app.settings.haveSetting(QC_SETTINGS, paths[p][0])) {
+                        paths[p][1].text = app.settings.getSetting(QC_SETTINGS, paths[p][0]);
+                    }
+                }
+            } catch (e) {}
         }
 
         /** Everything needed is filled in, so show the plan without being asked. */
@@ -436,7 +578,10 @@
             }
             note += speakerNote(quotes.length);
 
-            setStatus(ready + " card(s) ready out of " + plan.length + " quote(s)  |  " +
+            saveMachineSetup();
+            setStatus((adopted !== "" ? "setup adopted from " + adopted +
+                       " next to the quote list  |  " : "") +
+                      ready + " card(s) ready out of " + plan.length + " quote(s)  |  " +
                       files.length + " clip(s) in the folder" +
                       (files.length > quotes.length
                         ? "  |  " + (files.length - quotes.length) + " clip(s) unused"
@@ -678,18 +823,27 @@
                 for (var w = 0; w < planWarnings.length; w++) { log.push("  - " + planWarnings[w]); }
             }
 
-            var logPath = "";
+            var logPath = "", setupPath = "";
             try {
                 var qf2 = new File(trim(quotesTxt.text));
                 var out = new File(qf2.parent.fsName + "/" + baseName(qf2.name) + "_cards_log.txt");
                 logPath = writeTextFile(out, log.join("\n"), planWarnings);
+
+                // The layer choices go next to the quote list so they travel
+                // with the episode folder: the next editor picks two paths and
+                // the lists are already right.
+                var setupOut = new File(qf2.parent.fsName + "/" + SETUP_FILE);
+                setupPath = writeTextFile(setupOut, setupToText(currentSetup()), planWarnings);
+                if (setupPath !== "") { adopted = setupOut.name; }
             } catch (e2) { planWarnings.push("Could not write the log: " + e2.toString()); }
+            saveMachineSetup();
 
             if (created.length) { created[0].openInViewer(); }
 
             setStatus("Created " + made + " card(s), skipped " + skipped +
                       (planWarnings.length ? ", " + planWarnings.length + " warning(s)" : "") +
-                      (logPath ? "  |  log: " + logPath : ""));
+                      (logPath ? "  |  log: " + logPath : "") +
+                      (setupPath ? "  |  setup saved beside the quote list" : ""));
             alert("Quote Cards\n\n" +
                   "Created: " + made + "     Skipped: " + skipped + "\n\n" +
                   "Footage -> " + vTarget.comp.name + " / " + vTarget.layer.name + "\n" +
@@ -747,6 +901,7 @@
             out.push("Clips folder: " + trim(videosTxt.text));
             out.push("Alpha folder: " + (trim(alphaTxt.text) || "(none)"));
             out.push("Quotes file:  " + trim(quotesTxt.text));
+            out.push("Setup file:   " + (adopted !== "" ? adopted + " (adopted)" : "none found"));
             if (quoteMeta.speakerColumn >= 0) {
                 out.push("Speaker column: \"" + quoteMeta.speakerHeader + "\"  (column " +
                          (quoteMeta.speakerColumn + 1) + ")");
@@ -867,11 +1022,20 @@
                 "wired as an alpha track matte with Simple Choker and a blur.\n\n" +
                 "Arabic text needs After Effects' Middle Eastern text engine:\n" +
                 "Preferences > Type > Text Engine > South Asian and Middle Eastern.\n\n" +
+                "Nothing here has to be set twice. Every choice is remembered on\n" +
+                "this machine, and after each build the layer choices are written\n" +
+                "to " + SETUP_FILE + " beside the quote list. Send the episode\n" +
+                "folder on and the next editor picks the clips folder and the\n" +
+                "quote list - the lists set themselves. Paths are left out of\n" +
+                "that file on purpose: they differ per machine, the layers do not.\n\n" +
                 "Everything runs in one undo group: Ctrl/Cmd+Z reverts it all."
             );
         };
 
         refreshComps();
+        loadMachineSetup();      // pick up where this machine left off
+        adoptEpisodeSetup();     // but the episode folder's own setup wins
+        maybeScan();
         win.onResizing = win.onResize = function () { this.layout.resize(); };
 
         if (win instanceof Window) { win.center(); win.show(); }

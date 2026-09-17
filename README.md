@@ -32,7 +32,10 @@ whole comp tree, and those precomps are copied per card so the cards stay
 independent of each other. Clip order decides who appears: 1st clip to quote 1, 2nd to
 quote 2, and so on. The guest's name and job title go on their own layers,
 read from a speaker column in the quote list and resolved against a guest
-roster, so nine cards do not all carry the same name. The other two tools swap footage along a timeline instead —
+roster, so nine cards do not all carry the same name. Cut-out clips are
+paired to their originals by filename rather than by folder order. Every
+choice is remembered, and written beside the quote list so it travels with
+the episode folder. The other two tools swap footage along a timeline instead —
 pick between them below.
 
 **`PersonReplacer_Auto.jsx`** — nothing to configure. Save your project, open
@@ -174,6 +177,7 @@ node ae/tests/discovery.test.js   # 11 assertions
 node ae/tests/quotes.test.js      # 19 assertions
 node ae/tests/speakers.test.js    # 63 assertions
 node ae/tests/pairing.test.js     # 30 assertions
+node ae/tests/setup.test.js       # 33 assertions
 node ae/tests/nested.test.js      # 48 assertions
 node ae/tests/timing.test.js      # 16 assertions
 node ae/tests/text.test.js        # 20 assertions
@@ -214,6 +218,14 @@ name first, then by the number that ends the name (`Aktbas_002` is
 `Aktbas_2`), and only then by order — and `clip1` is asserted never to match
 `clip10`, an ambiguous name is not a match at all, and everything that did
 fall back on order is marked so it can be checked before rendering.
+
+`setup.test.js` covers the setup that travels with the episode folder — the
+round trip through `QuoteCards_setup.txt`, a hand-edited file, and matching a
+stored label back to a layer after the template has been re-worded (the label
+carries a sample of the layer's current text, which changes every week; the
+layer does not). It also asserts against the panel's own source that no path
+is ever written into that file: a fixture would keep passing after someone
+added one.
 
 `nested.test.js` builds a miniature AE object model shaped like a real
 template — a render comp pulling its guest from a `REPLACE-FOOTAGE` precomp and
