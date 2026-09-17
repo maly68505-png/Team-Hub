@@ -179,19 +179,36 @@
                 return;
             }
 
-            var filled = 0;
+            var filled = 0, given = 0, i;
             var keys = trim(orderTxt.text).split(/[\s,;\-]+/);
-            for (var i = 0; i < quotes.length; i++) {
+            for (i = 0; i < keys.length; i++) { if (trim(keys[i]) !== "") { given++; } }
+            for (i = 0; i < quotes.length; i++) {
                 if (trim(keys[i] || "") !== "") { filled++; }
             }
 
+            // Counting the guest numbers against the quotes is the only check
+            // here that can catch a quote the selection missed: nine numbers
+            // typed from the form against eight quotes read out of it.
+            var countNote = "";
+            if (given > 0 && given !== quotes.length) {
+                countNote = "⚠️  كتبت " + given + " رقم ضيف، والاقتباسات " + quotes.length + ".\n\n" +
+                            (given > quotes.length
+                              ? "يعني في " + (given - quotes.length) + " اقتباس التظليل مأخدهمش —\n" +
+                                "راجع آخر صف في الاستمارة وانسخ تاني."
+                              : "يعني في " + (quotes.length - given) + " اقتباس من غير ضيف.") +
+                            "\n\n";
+            }
+
+            var done = (filled === quotes.length && filled > 0 && guests.length > 0 &&
+                        countNote === "");
+
             setStatus("اتكتب في " + dest.fsName);
-            alert("فولدر الحلقة جاهز\n\n" +
+            alert((done ? "✅  فولدر الحلقة جاهز" : "فولدر الحلقة اتكتب — وفاضل حاجة") + "\n\n" +
                   "quotes.csv          " + quotes.length + " اقتباس\n" +
                   (info !== ""
                     ? "episode-info.txt    " + guests.length + " ضيف\n"
                     : "") +
-                  "\n" +
+                  "\n" + countNote +
                   // Numbers in the speaker column mean nothing without the list
                   // they point at - the card would print "2" as the name.
                   (guests.length === 0
@@ -204,10 +221,14 @@
                       "واضغط Read و Save تاني.\n\n"
                     : "") +
                   (filled === quotes.length && filled > 0
-                    ? "كل اقتباس قدامه ضيفه. ✅\n"
-                    : "عمود المتحدث اتملى في " + filled + " من " + quotes.length + ".\n" +
-                      "افتح quotes.csv وحط رقم الضيف في الباقي، وإلا الكروت\n" +
-                      "هتفضل باسم القالب.\n") +
+                    ? "✅  كل اقتباس قدامه ضيفه.\n"
+                    : "⚠️  عمود المتحدث اتملى في " + filled + " من " + quotes.length + ".\n\n" +
+                      (filled === 0
+                        ? "سيبت خانة \"Who said what\" فاضية. ارجع واكتب فيها رقم\n" +
+                          "الضيف لكل اقتباس بالترتيب — زي 2,1,3,3,1,2,3,2,2 — واضغط\n" +
+                          "Save تاني. أو افتح quotes.csv واملا العمود بإيدك.\n"
+                        : "افتح quotes.csv وحط رقم الضيف في الباقي.\n") +
+                      "من غير ده الكروت هتفضل باسم القالب.\n") +
                   "\nالخطوة الجاية: حط الكليبات في نفس الفولدر، وشغّل QuoteCards.jsx.\n\n" +
                   "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n\n" +
                   "Episode folder ready: " + quotes.length + " quote(s), " +
