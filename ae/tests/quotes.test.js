@@ -204,8 +204,13 @@ eq('the other two', [guests[1].name, guests[2].name],
    ['محمد مشينش', 'الدكتور إيهاب محارمة']);
 eq('lines above the heading are not guests',
    sb.parseGuestList('المقدم: عثمان\n\nالضيوف:\n  - أ — ب\n').length, 1);
-eq('the block ends at the first line that is not a bullet',
+// A bullet is NOT required - Word drops them on copy - so what ends the list
+// is the next section's heading, which these forms write as a short line
+// ending in a colon.
+eq('the next section heading ends the list',
    sb.parseGuestList('الضيوف:\n - أ — ب\nالمحاور:\n - جـ — د\n').length, 1);
+eq('and a list with no bullets at all is still read',
+   sb.parseGuestList('الضيوف:\nأ ب — ج د\nهـ و — ز ح\n').length, 2);
 
 console.log('\n-- a short key in the speaker column becomes the whole guest --');
 eq('by position', sb.resolveGuest('2', guests).name, 'محمد مشينش');

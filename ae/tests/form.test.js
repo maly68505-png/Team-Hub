@@ -136,5 +136,33 @@ eq('and nothing was thrown away from it', sb.parseFormQuotes(FORM).droppedFragme
 eq('a real quote holding a colon and digits still comes through',
    sb.parseFormQuotes('( 1 ) قال في 2021: إن الانتخابات تأجلت مرتين').length, 1);
 
+console.log('\n-- a guest list pasted out of Word, which has no bullets --');
+// Word and Google Docs hold list bullets as formatting, not characters, so a
+// pasted list arrives with none. Requiring one read three guests as zero, and
+// the guest numbers in the speaker column then pointed at nothing.
+var NOBULLETS = [
+  '( 1 ) اقتباس طويل بما يكفي ليكون اقتباساً حقيقياً\t11:06',
+  '',
+  'الضيوف:',
+  'الدكتورة دلال عريقات، عضو المجلس الثوري لحركة فتح وأستاذة الدبلوماسية',
+  'محمد مشينش، محلل سياسي وعضو الأمانة العامة للمؤتمر الشعبي',
+  'الدكتور إيهاب محارمة، باحث في المركز العربي للأبحاث'
+].join('\n');
+
+var ng = sb.parseGuestList(NOBULLETS);
+eq('all three are found without a bullet between them', ng.length, 3);
+eq('name and title still split', [ng[0].name, ng[0].role.indexOf('عضو المجلس')],
+   ['الدكتورة دلال عريقات', 0]);
+eq('and the quote above them is still a quote, not a guest',
+   sb.parseFormQuotes(NOBULLETS).length, 1);
+
+console.log('\n-- and the block still has to end somewhere --');
+var after = ['الضيوف:', 'أ ب — ج د', '( 4 ) اقتباس طويل بما يكفي ليكون اقتباساً حقيقياً'].join('\n');
+eq('a numbered quote after the list ends it', sb.parseGuestList(after).length, 1);
+eq('and that quote is still read as one', sb.parseFormQuotes(after).length, 1);
+
+var para = 'الضيوف:\nأ ب — ج د\n' + new Array(230).join('ك');
+eq('a paragraph ends it too', sb.parseGuestList(para).length, 1);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

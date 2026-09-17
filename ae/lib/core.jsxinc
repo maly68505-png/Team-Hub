@@ -499,10 +499,29 @@
             if (isHead) { inBlock = true; continue; }
             if (!inBlock) { continue; }
 
-            // a bullet keeps us in the block; anything else ends it
-            var bullet = L.replace(/^[\-\u2013\u2014\u2022\*\u00b7]+\s*/, "");
-            if (bullet === L) { inBlock = false; continue; }
-            if (trim(bullet) === "") { continue; }
+            // A bullet used to be required to stay in the block. Word and
+            // Google Docs treat list bullets as formatting, not characters, so
+            // a pasted guest list arrives with none - and three guests read as
+            // zero. What ends the block is running into something that is
+            // plainly not a guest: a numbered quote, or a paragraph.
+            var qh = L.match(NUM_HEAD);
+            if (qh && trim(L.substring(qh[0].length)).length >= MIN_QUOTE) {
+                inBlock = false;
+                continue;
+            }
+            if (L.length > 200 || out.length >= 20) { inBlock = false; continue; }
+
+            // The next section's heading ends the list. These forms head every
+            // section with a short line ending in a colon - "المحاور:" - and
+            // without this the whole of the next section reads as guests.
+            var noBullet = trim(L.replace(/^[\-\u2013\u2014\u2022\*\u00b7]+\s*/, ""));
+            if (noBullet.length < 40 && /[:\uFF1A]\s*$/.test(noBullet)) {
+                inBlock = false;
+                continue;
+            }
+
+            var bullet = trim(L.replace(/^[\-\u2013\u2014\u2022\*\u00b7]+\s*/, ""));
+            if (bullet === "") { continue; }
 
             // "Name - Title" wins over "Name, Title": a title can hold commas
             // of its own, and this one does.
