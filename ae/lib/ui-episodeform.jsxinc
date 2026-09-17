@@ -111,24 +111,32 @@
             // quotes found - they need to be numbered" sends the reader off to
             // fix numbering that was never the problem.
             if (quotes.looksFragmented) {
-                setStatus("This paste came out in pieces - " + quotes.length + " \"quote(s)\" " +
-                          "from it, most of them fragments. Copying a table out of a PDF loses " +
-                          "its structure. Open the form in Word or Google Docs and copy from " +
-                          "there, or ask the producer for the document instead of the PDF.");
-                alert("That paste came apart.\n\n" +
-                      "It produced " + quotes.length + " \"quotes\"" +
+                setStatus("اللصق اتكسّر — طلع منه " + quotes.length + " فتات بس. انسخ من " +
+                          "Google Docs أو Word بدل الـ PDF، وجدول الاقتباسات لوحده.   |   " +
+                          "This paste came apart: copy from Word or Google Docs instead.");
+                // The team reads Arabic; the tool talks English. For the one
+                // message somebody hits when they are already stuck, that is
+                // a wall on top of a wall.
+                alert("اللصق ده اتكسّر\n\n" +
+                      "طلع منه " + quotes.length + " \"اقتباس\"" +
                       (quotes.droppedFragments > 0
-                        ? ", after throwing away " + quotes.droppedFragments + " line(s) that " +
-                          "were links or punctuation"
-                        : "") + " - which is what a PDF table looks like once it has been " +
-                      "copied: every cell on its own line, the numbering split off from its " +
-                      "own text, a link broken across four lines.\n\n" +
-                      "Nothing here can put that back together. What works:\n\n" +
-                      "  - Open the PDF in Word, or upload it to Google Docs, and copy from\n" +
-                      "    there - both rebuild the table\n" +
-                      "  - Or ask the producer for the Word / Google Doc rather than the PDF\n\n" +
-                      "Then paste again. You should see one row per quote, reading as\n" +
-                      "sentences - not links, not numbers on their own.");
+                        ? "، بعد ما اتشال " + quotes.droppedFragments + " سطر كانوا روابط أو علامات"
+                        : "") + " — وده شكل الجدول لما يتنسخ من PDF: كل خانة في سطر، " +
+                      "الترقيم منفصل عن نصه، والرابط مقطّع على أربع أسطر.\n\n" +
+                      "مفيش حاجة هنا تقدر ترجّعه تاني. اللي بيشتغل:\n\n" +
+                      "  ١. ارفع الـ PDF على Google Drive، كليك يمين، Open with ← Google Docs\n" +
+                      "     وانسخ من هناك — بيعيد بناء الجدول\n" +
+                      "  ٢. أو افتح الـ PDF ببرنامج Word مباشرة\n" +
+                      "  ٣. أو اطلب من البروديوسر ملف Word بدل الـ PDF — ده الأنضف\n\n" +
+                      "وانسخ جدول الاقتباسات بس، مش الاستمارة كلها — جدول المعادلات\n" +
+                      "البصرية مليان روابط صور، وهي اللي بتتقري غلط.\n\n" +
+                      "بعدها الصق تاني. المفروض تشوف سطر لكل اقتباس، كلام مفهوم —\n" +
+                      "مش روابط ولا أرقام لوحدها.\n\n" +
+                      "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n\n" +
+                      "That paste came apart. Copying a table out of a PDF loses its\n" +
+                      "structure and nothing here can rebuild it. Open the PDF in Word,\n" +
+                      "or upload it to Google Docs and copy from there - and copy only\n" +
+                      "the quotes table, not the whole form.");
                 return;
             }
 
