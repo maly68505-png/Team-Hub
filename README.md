@@ -14,9 +14,11 @@ ae/lib/                      shared source both are built from
 ae/build.js                  rebuilds both .jsx files from ae/lib
 ae/tests/                    logic tests (parser, matcher, auto-discovery)
 examples/example_script.srt  a sample timecode script
+examples/episode-template/   the weekly episode folder, ready to copy
 docs/WORKFLOW.md             folder layout + step-by-step
 docs/QUICKSTART-AR.md        دليل التشغيل السريع بالعربي
 docs/QUOTECARDS-AR.md        دليل مولّد كروت الاقتباسات بالعربي
+docs/EPISODEFORM-AR.md       من استمارة البروديوسر لكروت الاقتباسات
 ```
 
 ## Which file do I use?
