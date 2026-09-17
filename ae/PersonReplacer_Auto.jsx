@@ -581,6 +581,124 @@
         return hits === 1 ? hit : null;      // ambiguous is not a match
     }
 
+    // --------------------------------------------- reading a producer's form
+
+    /** Latin or Arabic-Indic digits as a number, or NaN. */
+    function digitsToInt(str) {
+        var t = trim(str).replace(/[\u0660-\u0669]/g, function (d) {
+            return String(d.charCodeAt(0) - 0x0660);
+        });
+        return /^[0-9]+$/.test(t) ? parseInt(t, 10) : NaN;
+    }
+
+    /**
+     * Pulls the quotes out of a producer's form pasted in as plain text.
+     *
+     * A form numbers them - "( 1 ) ...", "(1) ...", "1) ...", "1- ..." - and
+     * carries the timecode alongside, in its own column or at the end of the
+     * line. Both the numbering and the timecode are stripped: the numbering is
+     * the row number, and the timecode is for the editor, not for the card.
+     *
+     * The guests are listed in the same document, so anything under a guests
+     * heading is left out - otherwise three names come through as quotes.
+     *
+     * Returns [{ index, text, timecode }].
+     */
+    var NUM_HEAD = /^[\(\[\{]?\s*([0-9\u0660-\u0669]{1,3})\s*[\)\]\}\.\-:\u2013\u2014]\s+/;
+    var TC_TAIL = /[\s\t]+\(?((?:[0-9\u0660-\u0669]{1,2}:)?[0-9\u0660-\u0669]{1,2}:[0-9\u0660-\u0669]{2})\)?\s*$/;
+    var MIN_QUOTE = 12;
+
+    function parseFormQuotes(text) {
+        var lines = String(text || "").split(/\r\n|\r|\n/);
+        var out = [], inGuests = false, i, h;
+        var heads = GUEST_HEADINGS.split(",");
+
+        // A form numbers its quotes. Where it does, an unnumbered line is the
+        // table's own heading or a stray caption - taking those too is how
+        // "أبرز الاقتباسات" ended up as quote 1 and pushed every card along by
+        // one. Only fall back to unnumbered lines when nothing is numbered.
+        var numbered = false;
+        for (i = 0; i < lines.length; i++) {
+            var probe = trim(lines[i]).replace(TC_TAIL, "");
+            var ph = probe.match(NUM_HEAD);
+            if (ph && trim(probe.substring(ph[0].length)).length >= MIN_QUOTE) {
+                numbered = true;
+                break;
+            }
+        }
+
+        for (i = 0; i < lines.length; i++) {
+            var L = trim(lines[i]);
+            if (L === "") { inGuests = false; continue; }
+
+            var isHead = false;
+            for (h = 0; h < heads.length; h++) {
+                if (looseHas(L, heads[h]) && L.length < 40) { isHead = true; break; }
+            }
+            if (isHead) { inGuests = true; continue; }
+
+            var bulleted = /^[\-\u2013\u2014\u2022\*\u00b7]/.test(L);
+            if (inGuests && bulleted) { continue; }
+            if (inGuests && !bulleted) { inGuests = false; }
+
+            var tc = "";
+            var tcHit = L.match(TC_TAIL);
+            if (tcHit) { tc = trim(tcHit[1]); L = trim(L.substring(0, L.length - tcHit[0].length)); }
+
+            var numHit = L.match(NUM_HEAD);
+            if (numHit) { L = trim(L.substring(numHit[0].length)); }
+            else if (numbered) { continue; }        // scaffolding, not a quote
+
+            // A bare number with nothing after it is a row marker, not a quote,
+            // and a stray heading is shorter than any real quote.
+            if (L.length < MIN_QUOTE) { continue; }
+            if (!isNaN(digitsToInt(L))) { continue; }
+
+            out.push({ index: out.length + 1, text: L, timecode: tc });
+        }
+        return out;
+    }
+
+    /** One CSV field, quoted only when it has to be. */
+    function csvField(v) {
+        var t = String(v === undefined || v === null ? "" : v);
+        return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+    }
+
+    /**
+     * The quote sheet the card tool reads. `order` is the guests' numbers in
+     * quote order - "2,1,3,3" - which is the one thing the form cannot say.
+     */
+    function buildQuotesCSV(quotes, order) {
+        var keys = String(order || "").split(/[\s,;\-]+/);
+        var rows = ["\ufeff" + ["#", "التوقيت", "المتحدث", "الصفة", "نص الاقتباس"].join(",")];
+        for (var i = 0; i < quotes.length; i++) {
+            var who = trim(keys[i] || "");
+            rows.push([
+                csvField(i + 1),
+                csvField(quotes[i].timecode || ""),
+                csvField(who),
+                "",
+                csvField(quotes[i].text)
+            ].join(","));
+        }
+        return rows.join("\n") + "\n";
+    }
+
+    /** The guest list, in the shape the card tool reads back. */
+    function buildGuestsText(guests, title, host) {
+        var out = [];
+        out.push("عنوان الحلقة: " + trim(title || ""));
+        out.push("المقدم: " + trim(host || ""));
+        out.push("");
+        out.push("الضيوف:");
+        for (var i = 0; i < guests.length; i++) {
+            out.push("  - " + guests[i].name +
+                     (trim(guests[i].role) !== "" ? " — " + guests[i].role : ""));
+        }
+        return out.join("\n") + "\n";
+    }
+
     /** The producer's form sitting next to the quote list, if there is one. */
     var GUEST_FILES = "episode-info.txt,guests.txt,الضيوف.txt";
 

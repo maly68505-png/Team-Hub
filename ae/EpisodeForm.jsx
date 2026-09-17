@@ -1,3 +1,25 @@
+/**
+ * Episode Form  -  After Effects
+ * -------------------------------
+ * Turns the producer's weekly form into the two files QuoteCards.jsx reads,
+ * so nobody retypes nine quotes and three job titles by hand.
+ *
+ * Paste the form in, press Read, say who said what, and save. You get
+ * quotes.csv and episode-info.txt, written as UTF-8 - which is the step
+ * that breaks when a spreadsheet exports them instead.
+ *
+ * HOW TO RUN IT:
+ *   File > Scripts > Run Script File...   and pick this file.
+ *
+ * Requires: Preferences > Scripting & Expressions > "Allow Scripts to Write
+ * Files and Access Network".
+ *
+ * GENERATED FILE - do not edit directly.
+ * Edit ae/lib/core.jsxinc or ae/lib/ui-*.jsxinc, then run: node ae/build.js
+ */
+
+(function episodeForm(thisObj) {
+
     var SCRIPT_NAME = "Person Replacer";
     var SETTINGS_SECTION = "PersonReplacer";
     var QC_SETTINGS = "QuoteCards";
@@ -1687,3 +1709,214 @@
             log.push("    note: scale compensation failed: " + e.toString());
         }
     }
+
+    // ------------------------------------------------------------------- UI
+
+    function build(thisObj) {
+        var win = (thisObj instanceof Panel)
+            ? thisObj
+            : new Window("palette", "Episode Form", undefined, { resizeable: true });
+
+        win.orientation = "column";
+        win.alignChildren = ["fill", "top"];
+        win.spacing = 7;
+        win.margins = 12;
+
+        var help = win.add("statictext", undefined,
+            "Paste the producer's form below - the whole thing, quotes and guests together - " +
+            "then press Read. Nothing is written until you press Save.", { multiline: true });
+        help.alignment = ["fill", "top"];
+
+        var pasteBox = win.add("edittext", undefined, "",
+            { multiline: true, scrollable: true, wantReturn: true });
+        pasteBox.preferredSize.height = 170;
+        pasteBox.alignment = ["fill", "fill"];
+
+        var srcRow = win.add("group");
+        srcRow.orientation = "row";
+        srcRow.alignChildren = ["left", "center"];
+        var loadBtn = srcRow.add("button", undefined, "Load a .txt instead");
+        var readBtn = srcRow.add("button", undefined, "Read");
+
+        var found = win.add("panel", undefined, "What it found");
+        found.orientation = "column";
+        found.alignChildren = ["fill", "top"];
+        found.margins = [12, 16, 12, 12];
+
+        var quoteList = found.add("listbox", undefined, [], {
+            numberOfColumns: 3, showHeaders: true,
+            columnTitles: ["#", "Timecode", "Quote"],
+            columnWidths: [30, 90, 460]
+        });
+        quoteList.preferredSize.height = 150;
+
+        var guestList = found.add("listbox", undefined, [], {
+            numberOfColumns: 3, showHeaders: true,
+            columnTitles: ["#", "Guest", "Title"],
+            columnWidths: [30, 180, 370]
+        });
+        guestList.preferredSize.height = 80;
+
+        function row(labelText, width) {
+            var g = win.add("group");
+            g.orientation = "row";
+            g.alignChildren = ["left", "center"];
+            var l = g.add("statictext", undefined, labelText);
+            l.preferredSize.width = width || 110;
+            return g;
+        }
+
+        var titleTxt = row("Episode title:").add("edittext", undefined, "");
+        titleTxt.alignment = ["fill", "center"];
+        var hostTxt = row("Presenter:").add("edittext", undefined, "");
+        hostTxt.alignment = ["fill", "center"];
+
+        var orderGroup = row("Who said what:");
+        var orderTxt = orderGroup.add("edittext", undefined, "");
+        orderTxt.alignment = ["fill", "center"];
+
+        var orderHelp = win.add("statictext", undefined,
+            "One guest number per quote, in order: 2,1,3,3,1,2,3,2,2 - the form does not say " +
+            "who said which, so this is the one part only someone who watched can fill in. " +
+            "Leave it empty to fill the column in later.", { multiline: true });
+        orderHelp.alignment = ["fill", "top"];
+
+        var status = win.add("statictext", undefined, "Paste the form and press Read.");
+        status.alignment = ["fill", "top"];
+
+        var buttons = win.add("group");
+        buttons.orientation = "row";
+        buttons.alignment = ["fill", "bottom"];
+        var saveBtn = buttons.add("button", undefined, "Save into a folder...");
+        var helpBtn = buttons.add("button", undefined, "Help");
+        saveBtn.enabled = false;
+
+        var quotes = [], guests = [];
+
+        function setStatus(m) { status.text = m; }
+
+        function doRead() {
+            quotes = parseFormQuotes(pasteBox.text);
+            guests = parseGuestList(pasteBox.text);
+
+            quoteList.removeAll();
+            for (var i = 0; i < quotes.length; i++) {
+                var it = quoteList.add("item", String(quotes[i].index));
+                it.subItems[0].text = quotes[i].timecode;
+                it.subItems[1].text = quotes[i].text.length > 90
+                    ? quotes[i].text.substring(0, 90) + "..." : quotes[i].text;
+            }
+            guestList.removeAll();
+            for (var g = 0; g < guests.length; g++) {
+                var gi = guestList.add("item", String(g + 1));
+                gi.subItems[0].text = guests[g].name;
+                gi.subItems[1].text = guests[g].role;
+            }
+
+            saveBtn.enabled = quotes.length > 0;
+            if (quotes.length === 0) {
+                setStatus("No quotes found. They need to be numbered - \"( 1 ) ...\" or \"1) ...\" " +
+                          "- one per line. Press Help for what the form should look like.");
+                return;
+            }
+            setStatus(quotes.length + " quote(s), " + guests.length + " guest(s)." +
+                      (guests.length === 0
+                        ? "  |  No guest list found - add one under a line reading \"الضيوف:\"."
+                        : "  |  Check the numbering above, then type who said what.") +
+                      "  Nothing has been written yet.");
+        }
+
+        function doSave() {
+            if (quotes.length === 0) { setStatus("Press Read first."); return; }
+
+            var dest = Folder.selectDialog("Where should the episode folder go?");
+            if (!dest) { return; }
+
+            var problems = [];
+            var csv = writeTextFile(new File(dest.fsName + "/quotes.csv"),
+                                    buildQuotesCSV(quotes, orderTxt.text), problems);
+            var info = "";
+            if (guests.length > 0 || trim(titleTxt.text) !== "") {
+                info = writeTextFile(new File(dest.fsName + "/episode-info.txt"),
+                                     buildGuestsText(guests, titleTxt.text, hostTxt.text),
+                                     problems);
+            }
+
+            if (csv === "") {
+                setStatus("Nothing was written - see the message.");
+                alert("Could not write the files.\n\n" +
+                      (problems.length ? problems.join("\n\n") + "\n\n" : "") +
+                      "In After Effects: Settings (or Preferences) > Scripting & Expressions >\n" +
+                      "tick \"Allow Scripts to Write Files and Access Network\", then try again.");
+                return;
+            }
+
+            var filled = 0;
+            var keys = trim(orderTxt.text).split(/[\s,;\-]+/);
+            for (var i = 0; i < quotes.length; i++) {
+                if (trim(keys[i] || "") !== "") { filled++; }
+            }
+
+            setStatus("Written to " + dest.fsName);
+            alert("Episode folder ready\n\n" +
+                  "quotes.csv          " + quotes.length + " quote(s)\n" +
+                  (info !== "" ? "episode-info.txt    " + guests.length + " guest(s)\n" : "") +
+                  "\n" +
+                  (filled === quotes.length && filled > 0
+                    ? "Every quote has a guest against it."
+                    : "Speaker column filled for " + filled + " of " + quotes.length +
+                      " quote(s).\nOpen quotes.csv and put a guest number on the rest, or the " +
+                      "cards keep the template's name.") +
+                  "\n\nNext: put the clips in this folder, then run QuoteCards.jsx.");
+        }
+
+        loadBtn.onClick = function () {
+            var f = File.openDialog("The producer's form, saved as plain text (.txt)");
+            if (!f) { return; }
+            try {
+                if (!f.open("r")) { setStatus("Could not open " + f.name); return; }
+                f.encoding = "UTF-8";
+                pasteBox.text = f.read();
+                f.close();
+                doRead();
+            } catch (e) { setStatus("Could not read that file: " + e.toString()); }
+        };
+
+        readBtn.onClick = doRead;
+        saveBtn.onClick = doSave;
+        helpBtn.onClick = function () {
+            alert(
+                "Episode Form\n\n" +
+                "Turns the producer's weekly form into the two files QuoteCards.jsx\n" +
+                "reads, so nobody retypes them.\n\n" +
+                "1. Open the form (PDF, Word, Google Doc), select all, copy.\n" +
+                "2. Paste it into the box and press Read.\n\n" +
+                "It expects the quotes NUMBERED, one per line:\n\n" +
+                "    ( 1 ) السلطة تُريد ...        11:06\n" +
+                "    ( 2 ) من المحتمل تأجيل ...     29:35\n\n" +
+                "The number and the timecode are stripped - the number is the row,\n" +
+                "the timecode is for you, neither goes on the card.\n\n" +
+                "And the guests under a heading, one per line:\n\n" +
+                "    الضيوف:\n" +
+                "      - الاسم الكامل — الصفة\n" +
+                "      - الاسم الكامل — الصفة\n\n" +
+                "Name and title split on the dash, not the comma - these titles\n" +
+                "carry commas of their own.\n\n" +
+                "3. \"Who said what\" is one guest number per quote: 2,1,3,3,1,2,3,2,2\n" +
+                "   The form never says who said which. That part needs someone who\n" +
+                "   watched the episode, and it is the only part that does.\n\n" +
+                "4. Save into a folder. You get quotes.csv and episode-info.txt,\n" +
+                "   written as UTF-8 - no Numbers, no export step, no broken Arabic.\n\n" +
+                "Then drop the clips in beside them and run QuoteCards.jsx."
+            );
+        };
+
+        win.onResizing = win.onResize = function () { this.layout.resize(); };
+        if (win instanceof Window) { win.center(); win.show(); }
+        else { win.layout.layout(true); win.layout.resize(); }
+        return win;
+    }
+
+    build(thisObj);
+
+})(this);
