@@ -1723,8 +1723,11 @@
         win.margins = 12;
 
         var help = win.add("statictext", undefined,
-            "Paste the producer's form below - the whole thing, quotes and guests together - " +
-            "then press Read. Nothing is written until you press Save.", { multiline: true });
+            "Open the producer's form, select all (Cmd+A), copy (Cmd+C), and paste it below - " +
+            "the whole thing, quotes and guests together - then press Read. A PDF or a Word " +
+            "file cannot be loaded: After Effects has no reader for either. Copy the text out " +
+            "of it. Nothing is written until you press Save.", { multiline: true });
+        help.preferredSize.height = 46;
         help.alignment = ["fill", "top"];
 
         var pasteBox = win.add("edittext", undefined, "",
@@ -1735,7 +1738,7 @@
         var srcRow = win.add("group");
         srcRow.orientation = "row";
         srcRow.alignChildren = ["left", "center"];
-        var loadBtn = srcRow.add("button", undefined, "Load a .txt instead");
+        var loadBtn = srcRow.add("button", undefined, "Load a .txt file");
         var readBtn = srcRow.add("button", undefined, "Read");
 
         var found = win.add("panel", undefined, "What it found");
@@ -1870,14 +1873,59 @@
                   "\n\nNext: put the clips in this folder, then run QuoteCards.jsx.");
         }
 
+        // After Effects has no PDF or Word reader, and no script can add one.
+        // Loading one anyway fills the box with binary and reads as the tool
+        // being broken, so the file is named and the way round it is given.
+        var UNREADABLE = "pdf,doc,docx,pages,rtf,odt,key,ppt,pptx,xls,xlsx,numbers";
+
+        function unreadableAdvice(ext) {
+            var what = (ext === "pdf") ? "a PDF"
+                     : (ext === "doc" || ext === "docx") ? "a Word file"
+                     : (ext === "pages") ? "a Pages file"
+                     : "that kind of file";
+            return "After Effects cannot read " + what + " - no script can, there is no " +
+                   "reader for it inside the program.\n\n" +
+                   "Copy the text out instead. It takes a moment:\n\n" +
+                   "  1. Open the form (Preview for a PDF, Word, Google Docs)\n" +
+                   "  2. Select all  -  Cmd+A\n" +
+                   "  3. Copy  -  Cmd+C\n" +
+                   "  4. Click in the big box here and paste  -  Cmd+V\n" +
+                   "  5. Press Read\n\n" +
+                   "That is what the box is for - it never needed the file itself.\n\n" +
+                   "If the form is a scan, nothing can copy from it: the page is a picture. " +
+                   "Ask the producer for the document rather than the scan.";
+        }
+
         loadBtn.onClick = function () {
             var f = File.openDialog("The producer's form, saved as plain text (.txt)");
             if (!f) { return; }
+
+            var ext = extOf(f.name);
+            if (("," + UNREADABLE + ",").indexOf("," + ext + ",") !== -1) {
+                setStatus("After Effects cannot read a ." + ext + " - copy the text and paste " +
+                          "it into the box instead.");
+                alert(unreadableAdvice(ext));
+                return;
+            }
             try {
                 if (!f.open("r")) { setStatus("Could not open " + f.name); return; }
                 f.encoding = "UTF-8";
-                pasteBox.text = f.read();
+                var raw = f.read();
                 f.close();
+
+                // A file renamed .txt is still whatever it was
+                if (raw.substring(0, 4) === "%PDF") {
+                    setStatus("That file is a PDF whatever it is called - paste the text instead.");
+                    alert(unreadableAdvice("pdf"));
+                    return;
+                }
+                if (raw.substring(0, 2) === "PK") {
+                    setStatus("That is a Word/Pages file whatever it is called - paste the text " +
+                              "instead.");
+                    alert(unreadableAdvice("docx"));
+                    return;
+                }
+                pasteBox.text = raw;
                 doRead();
             } catch (e) { setStatus("Could not read that file: " + e.toString()); }
         };
