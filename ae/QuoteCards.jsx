@@ -26,6 +26,14 @@
     var SCRIPT_NAME = "Person Replacer";
     var SETTINGS_SECTION = "PersonReplacer";
     var VIDEO_EXT = "mp4,mov,m4v,avi,mkv,mxf,webm,mpg,mpeg,wmv,mts,m2ts,r3d,braw,dv,3gp";
+
+    // Which CSV headings name the speaker and their job title. The column is
+    // recognised by its HEADING only - never by what is in it, because a wrong
+    // guess writes a row number or a timecode onto a real person's card.
+    var SPEAKER_HEADS = "\u0627\u0644\u0645\u062a\u062d\u062f\u062b,\u0627\u0644\u0636\u064a\u0641,\u0627\u0644\u0645\u062a\u0643\u0644\u0645,\u0627\u0644\u0642\u0627\u0626\u0644,\u0627\u0644\u0627\u0633\u0645,speaker,name,guest,who";
+    var TITLE_HEADS = "\u0627\u0644\u0635\u0641\u0629,\u0627\u0644\u0648\u0638\u064a\u0641\u0629,\u0627\u0644\u0645\u0646\u0635\u0628,\u0627\u0644\u062a\u0639\u0631\u064a\u0641,title,role,job,position";
+    var GUEST_HEADS = "\u0627\u0644\u0636\u064a\u0648\u0641,\u0636\u064a\u0648\u0641,guests,panel";
+    var GUEST_FILES = "episode-info.txt,episode-info.md,episode_info.txt,guests.txt,guests.md";
     var MIN_MATCH_SCORE = 2;
     var TOL = 0.0005; // seconds, float-compare tolerance
 
@@ -37,6 +45,34 @@
 
     function normalize(s) {
         return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "");
+    }
+
+    /** Arabic-Indic and Persian digits written the way parseInt reads them. */
+    function toWesternDigits(s) {
+        return String(s)
+            .replace(/[\u0660-\u0669]/g, function (d) {
+                return String(d.charCodeAt(0) - 0x0660);
+            })
+            .replace(/[\u06F0-\u06F9]/g, function (d) {
+                return String(d.charCodeAt(0) - 0x06F0);
+            });
+    }
+
+    /**
+     * normalize() throws away every non-Latin letter, which turns any Arabic
+     * heading or guest name into an empty string - so it could never be
+     * compared against anything. This keeps Arabic letters and folds the
+     * spellings that differ only on screen: the alef forms, the taa marbuta,
+     * the alef maqsura, harakat and tatweel.
+     */
+    function foldText(s) {
+        s = toWesternDigits(String(s)).toLowerCase();
+        s = s.replace(/[\u064B-\u0652\u0640\u0670]/g, "");
+        s = s.replace(/[\u0622\u0623\u0625\u0671]/g, "\u0627");
+        s = s.replace(/\u0629/g, "\u0647");
+        s = s.replace(/[\u0649\u06CC]/g, "\u064A");
+        s = s.replace(/[^0-9a-z\u0621-\u064A]+/g, "");
+        return s;
     }
 
     function pad(n, w) {
@@ -343,12 +379,23 @@
         return out;
     }
 
-    /** The column carrying the quotes is simply the wordiest one. */
-    function pickTextColumn(rows) {
-        var widest = 0, c;
+    /**
+     * The column carrying the quotes is simply the wordiest one - but an
+     * Arabic job title runs longer than some quotes, so any column already
+     * claimed by name or heading is kept out of the contest.
+     */
+    function pickTextColumn(rows, exclude) {
+        var widest = 0, c, x;
         for (var r = 0; r < rows.length; r++) { widest = Math.max(widest, rows[r].length); }
-        var best = 0, bestScore = -1;
+        var best = -1, bestScore = -1;
         for (c = 0; c < widest; c++) {
+            var skip = false;
+            if (exclude) {
+                for (x = 0; x < exclude.length; x++) {
+                    if (exclude[x] === c) { skip = true; break; }
+                }
+            }
+            if (skip) { continue; }
             var total = 0, n = 0;
             for (var i = 1; i < rows.length; i++) {          // skip a header row
                 if (rows[i].length <= c) { continue; }
@@ -358,17 +405,205 @@
             var score = n ? total / n : 0;
             if (score > bestScore) { bestScore = score; best = c; }
         }
-        return best;
+        return best < 0 ? 0 : best;
+    }
+
+    /**
+     * Which column carries what, decided by the HEADING alone. Guessing from
+     * the contents is how a row number or a timecode ends up printed under a
+     * real person's face, so a column that is not named is simply not used.
+     * Returns -1 when no heading matches.
+     */
+    function headerColumn(rows, headsCSV, taken) {
+        if (!rows.length) { return -1; }
+        var head = rows[0], hints = headsCSV.split(","), pass, h, c;
+        var folded = [];
+        for (c = 0; c < head.length; c++) { folded.push(foldText(head[c])); }
+
+        for (pass = 0; pass < 3; pass++) {
+            for (h = 0; h < hints.length; h++) {
+                var want = foldText(hints[h]);
+                if (want === "") { continue; }
+                if (pass === 2 && want.length < 4) { continue; }
+                for (c = 0; c < folded.length; c++) {
+                    if (c === taken || folded[c] === "") { continue; }
+                    var hit = (pass === 0) ? folded[c] === want
+                            : (pass === 1) ? folded[c].substring(0, want.length) === want
+                            : folded[c].indexOf(want) !== -1;
+                    if (hit) { return c; }
+                }
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Reads the guest roster - the list under a line saying "الضيوف" - out of
+     * an episode-info.txt sitting next to the quote list. Name and title are
+     * split on a dash, because the title itself carries commas.
+     * Returns [{ name, title }].
+     */
+    function parseGuestList(text) {
+        var lines = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+        var start = -1, i;
+        for (i = 0; i < lines.length; i++) {
+            var f = foldText(lines[i]);
+            if (f === "") { continue; }
+            var heads = GUEST_HEADS.split(","), hit = false;
+            for (var h = 0; h < heads.length; h++) {
+                if (f.indexOf(foldText(heads[h])) !== -1) { hit = true; break; }
+            }
+            // a heading names the list; a line that already IS a guest does not
+            if (hit && f.length < 40) { start = i + 1; break; }
+        }
+
+        var loose = (start < 0);
+        var out = [];
+        for (i = loose ? 0 : start; i < lines.length; i++) {
+            var raw = trim(lines[i]);
+            if (raw === "") {
+                if (out.length && !loose) { break; }
+                continue;
+            }
+            if (!loose && isSectionOrQuoteLine(raw, out.length)) { break; }
+
+            var line = raw.replace(/^[\-\u2022\u00b7\*\u25cf\u25aa\s]+/, "");
+            line = line.replace(/^[0-9\u0660-\u0669]+\s*[\.\)\-]\s*/, "");
+            line = trim(line);
+            if (line === "") { continue; }
+
+            var split = splitNameAndTitle(line);
+            if (loose) {
+                // With no heading to anchor on, only take lines that are
+                // plainly a guest: "name - title", or a short bare name.
+                if (!split.title && (line.length > 60 || line.indexOf(":") !== -1)) { continue; }
+            }
+            if (split.name === "") { continue; }
+            out.push(split);
+        }
+        return out;
+    }
+
+    function isSectionOrQuoteLine(raw, have) {
+        if (raw.length > 200) { return have > 0; }
+        var western = toWesternDigits(raw);
+        if (/^\s*[\(\[]?\s*[0-9]+\s*[\)\]\-\.]/.test(western)) { return true; }
+        if (/:\s*$/.test(raw)) { return true; }
+        return false;
+    }
+
+    function splitNameAndTitle(line) {
+        var m = line.split(/\s*[\u2014\u2013\u2012]\s*/);
+        if (m.length < 2) { m = line.split(/\s+-\s+/); }
+        if (m.length < 2) { m = line.split(/\s*[\u060c,]\s*/); }
+        var name = trim(m[0]);
+        var title = (m.length > 1) ? trim(m.slice(1).join(" - ")) : "";
+        return { name: name, title: title };
+    }
+
+    /**
+     * Turns whatever the "المتحدث" column holds - a guest number, an Arabic
+     * numeral, part of a name, or the whole name - into the name and title
+     * that go on the card.
+     *
+     * It never guesses: a value matching two guests, or a bare number with no
+     * roster to read it against, comes back with an empty name and a reason.
+     * A wrong name under a real person's face is worse than no name.
+     */
+    function resolveSpeaker(raw, guests) {
+        raw = trim(raw == null ? "" : raw);
+        if (raw === "") { return null; }
+        var have = guests && guests.length ? guests.length : 0;
+        var western = trim(toWesternDigits(raw));
+
+        if (/^[0-9]+$/.test(western)) {
+            var n = parseInt(western, 10);
+            if (have && n >= 1 && n <= have) {
+                return { name: guests[n - 1].name, title: guests[n - 1].title, from: "number" };
+            }
+            return { name: "", title: "", from: "number", why: have
+                ? "\"" + raw + "\" is not one of the " + have + " guests in the guest list"
+                : "\"" + raw + "\" is a guest number, but there is no guest list " +
+                  "(episode-info.txt) next to the quote list to read it against" };
+        }
+
+        if (have) {
+            var needle = foldText(raw), hits = [];
+            for (var i = 0; i < have; i++) {
+                var hay = foldText(guests[i].name);
+                if (hay === "" || needle === "") { continue; }
+                if (hay === needle || hay.indexOf(needle) !== -1 || needle.indexOf(hay) !== -1) {
+                    hits.push(i);
+                }
+            }
+            if (hits.length === 1) {
+                return { name: guests[hits[0]].name, title: guests[hits[0]].title, from: "roster" };
+            }
+            if (hits.length > 1) {
+                var who = [];
+                for (var k = 0; k < hits.length; k++) { who.push(guests[hits[k]].name); }
+                return { name: "", title: "", from: "ambiguous",
+                         why: "\"" + raw + "\" fits more than one guest (" + who.join(" / ") +
+                              ") - left blank rather than guessed" };
+            }
+        }
+        return { name: raw, title: "", from: "literal" };
+    }
+
+    /** The guest roster sitting next to the quote list, or null. */
+    function findGuestFile(quotesFile) {
+        var names = GUEST_FILES.split(",");
+        try {
+            var dir = quotesFile.parent;
+            if (!dir) { return null; }
+            for (var i = 0; i < names.length; i++) {
+                var f = new File(dir.fsName + "/" + names[i]);
+                if (f.exists) { return f; }
+            }
+        } catch (e) {}
+        return null;
+    }
+
+    function readGuestFile(file, warnings) {
+        try {
+            if (!file.open("r")) {
+                warnings.push("Could not open the guest list: " + file.fsName);
+                return [];
+            }
+            var raw = file.read();
+            file.close();
+            return parseGuestList(raw.replace(/^\uFEFF/, ""));
+        } catch (e) {
+            warnings.push("Could not read the guest list: " + e.toString());
+            return [];
+        }
     }
 
     /**
      * Reads the quote list. Accepts:
-     *   .csv  - the wordiest column is taken as the quote text
+     *   .csv  - the wordiest column is taken as the quote text, and a column
+     *           HEADED with a speaker or title name supplies who said it
      *   .srt  - the "# ..." comment carried under each timecode block
      *   .txt  - one quote per paragraph, or per line when there are no blanks
-     * Returns [{ index, text }].
+     *
+     * Returns [{ index, text, speaker, title, speakerRaw }]. `meta` is filled
+     * in with what was found, so the panel can say "the column is there but
+     * empty" rather than the useless "no names".
      */
-    function parseQuotesFile(file, warnings) {
+    function parseQuotesFile(file, warnings, meta, guests) {
+        meta = meta || {};
+        meta.speakerColumn = -1;
+        meta.titleColumn = -1;
+        meta.speakerHeader = "";
+        meta.titleHeader = "";
+        meta.named = 0;
+        meta.guests = guests || [];
+        meta.guestFile = "";
+        meta.unresolved = [];
+        return parseQuotesBody(file, warnings, meta, guests);
+    }
+
+    function parseQuotesBody(file, warnings, meta, guests) {
         if (!file.open("r")) {
             warnings.push("Could not open the quotes file: " + file.fsName);
             return [];
@@ -377,13 +612,21 @@
         file.close();
         raw = raw.replace(/^\uFEFF/, "");
 
-        var texts = [], i;
+        var texts = [], speakers = [], titles = [], i;
         var ext = extOf(file.name);
 
         if (ext === "csv" || ext === "tsv") {
             var rows = parseCSVText(ext === "tsv" ? raw.replace(/\t/g, ",") : raw);
             if (rows.length === 0) { return []; }
-            var col = pickTextColumn(rows);
+
+            var sCol = headerColumn(rows, SPEAKER_HEADS, -1);
+            var tCol = headerColumn(rows, TITLE_HEADS, sCol);
+            meta.speakerColumn = sCol;
+            meta.titleColumn = tCol;
+            if (sCol >= 0) { meta.speakerHeader = trim(rows[0][sCol]); }
+            if (tCol >= 0) { meta.titleHeader = trim(rows[0][tCol]); }
+
+            var col = pickTextColumn(rows, [sCol, tCol]);
             var start = 1;
             var head = rows[0].length > col ? trim(rows[0][col]) : "";
             var bodyLen = 0, bodyN = 0;
@@ -394,10 +637,17 @@
             if (head !== "" && avg > 0 && head.length >= avg * 0.6) {
                 start = 0;                                   // no header after all
             }
+            // a recognised heading settles it: row 0 IS the header
+            if (sCol >= 0 || tCol >= 0) { start = 1; }
+
             for (i = start; i < rows.length; i++) {
                 if (rows[i].length > col) {
                     var v = trim(rows[i][col]);
-                    if (v !== "") { texts.push(v); }
+                    if (v !== "") {
+                        texts.push(v);
+                        speakers.push(sCol >= 0 && rows[i].length > sCol ? trim(rows[i][sCol]) : "");
+                        titles.push(tCol >= 0 && rows[i].length > tCol ? trim(rows[i][tCol]) : "");
+                    }
                 }
             }
         } else if (ext === "srt") {
@@ -427,9 +677,34 @@
             }
         }
 
+        // The roster turns "2" into a name and a title, so nobody retypes a
+        // long Arabic name and job description nine times over.
+        if (!guests) {
+            var gFile = findGuestFile(file);
+            if (gFile) {
+                guests = readGuestFile(gFile, warnings);
+                meta.guestFile = gFile.name;
+            } else {
+                guests = [];
+            }
+        }
+        meta.guests = guests;
+
         var quotes = [];
         for (i = 0; i < texts.length; i++) {
-            quotes.push({ index: i + 1, text: texts[i] });
+            var rawSpeaker = (i < speakers.length) ? speakers[i] : "";
+            var rawTitle = (i < titles.length) ? titles[i] : "";
+            var who = resolveSpeaker(rawSpeaker, guests);
+            var name = who ? who.name : "";
+            var title = rawTitle !== "" ? rawTitle : (who ? who.title : "");
+            if (who && who.why) {
+                meta.unresolved.push("Quote " + (i + 1) + ": " + who.why);
+            }
+            if (name !== "") { meta.named++; }
+            quotes.push({
+                index: i + 1, text: texts[i],
+                speaker: name, title: title, speakerRaw: rawSpeaker
+            });
         }
         return quotes;
     }
@@ -558,6 +833,7 @@
                     offered[nested.id] = true;
                     out.push({
                         comp: nested, layer: null, index: 0, sample: "", isEmpty: true,
+                        name: nested.name,
                         label: path + "  >  " + nested.name +
                                "   (EMPTY comp - the clip gets added here)"
                     });
@@ -568,6 +844,7 @@
                     var sample = isText ? layerTextValue(L) : "";
                     out.push({
                         comp: comp, layer: L, index: L.index, sample: sample, isEmpty: false,
+                        name: L.name,
                         label: where + (sample !== ""
                             ? "   -   \"" + (sample.length > 42
                                 ? sample.substring(0, 42) + "..." : sample) + "\""
@@ -1209,6 +1486,14 @@
         var textDrop = textGroup.add("dropdownlist", undefined, []);
         textDrop.alignment = ["fill", "center"];
 
+        var nameGroup = row("Name layer:");
+        var nameDrop = nameGroup.add("dropdownlist", undefined, []);
+        nameDrop.alignment = ["fill", "center"];
+
+        var titleGroup = row("Title layer:");
+        var titleDrop = titleGroup.add("dropdownlist", undefined, []);
+        titleDrop.alignment = ["fill", "center"];
+
         var opts = win.add("panel", undefined, "Options");
         opts.orientation = "column";
         opts.alignChildren = ["left", "top"];
@@ -1256,9 +1541,9 @@
         cbFolder.value = true;
 
         var list = win.add("listbox", undefined, [], {
-            numberOfColumns: 4, showHeaders: true,
-            columnTitles: ["#", "Clip", "Alpha", "Quote"],
-            columnWidths: [30, 170, 170, 300]
+            numberOfColumns: 5, showHeaders: true,
+            columnTitles: ["#", "Clip", "Alpha", "Name", "Quote"],
+            columnWidths: [30, 150, 150, 150, 260]
         });
         list.preferredSize.height = 190;
         list.alignment = ["fill", "fill"];
@@ -1280,7 +1565,7 @@
         // ---- state ----------------------------------------------------------
 
         var compList = [], videoTargets = [], textTargets = [], plan = [], planWarnings = [];
-        var alphaFiles = [];
+        var alphaFiles = [], quoteMeta = {};
 
         function setStatus(m) { status.text = m; }
 
@@ -1335,7 +1620,46 @@
             for (var k = 0; k < textTargets.length; k++) {
                 textDrop.add("item", textTargets[k].label);
             }
-            textDrop.selection = textTargets.length ? bestTextGuess(textTargets) + 1 : 0;
+            var quoteIdx = textTargets.length ? bestTextGuess(textTargets) : -1;
+            textDrop.selection = textTargets.length ? quoteIdx + 1 : 0;
+
+            // The name and the title are picked by LAYER NAME, never by
+            // length - and the quote layer is out of the running, so the
+            // guest's name cannot land on top of the quote.
+            fillTextDrop(nameDrop, "(leave the name alone)",
+                "name,speaker,guest,\u0627\u0644\u0627\u0633\u0645,\u0627\u0644\u0645\u062a\u062d\u062f\u062b,\u0627\u0644\u0636\u064a\u0641", quoteIdx);
+            fillTextDrop(titleDrop, "(leave the title alone)",
+                "title,role,job,position,\u0627\u0644\u0635\u0641\u0629,\u0627\u0644\u0648\u0638\u064a\u0641\u0629,\u0627\u0644\u0645\u0646\u0635\u0628", quoteIdx);
+        }
+
+        function fillTextDrop(drop, emptyLabel, hintCSV, skipIdx) {
+            drop.removeAll();
+            drop.add("item", textTargets.length
+                ? emptyLabel
+                : "-- no text layer anywhere in this comp --");
+            for (var i = 0; i < textTargets.length; i++) {
+                drop.add("item", textTargets[i].label);
+            }
+            var hit = textTargets.length ? guessLayerName(textTargets, hintCSV, skipIdx) : -1;
+            drop.selection = (hit >= 0) ? hit + 1 : 0;
+        }
+
+        /**
+         * Matches on the layer's own name, not its path or its current text.
+         * guessIndex() folds through normalize(), which drops every Arabic
+         * letter - so an Arabic layer name could never match anything there.
+         */
+        function guessLayerName(targets, hintCSV, skipIdx) {
+            var hints = hintCSV.split(",");
+            for (var h = 0; h < hints.length; h++) {
+                var want = foldText(hints[h]);
+                if (want === "") { continue; }
+                for (var i = 0; i < targets.length; i++) {
+                    if (i === skipIdx) { continue; }
+                    if (foldText(targets[i].name).indexOf(want) !== -1) { return i; }
+                }
+            }
+            return -1;
         }
 
         /** Everything needed is filled in, so show the plan without being asked. */
@@ -1386,6 +1710,8 @@
         videoDrop.onChange = function () { maybeScan(); };
         alphaDrop.onChange = function () { maybeScan(); };
         textDrop.onChange = function () { maybeScan(); };
+        nameDrop.onChange = function () { maybeScan(); };
+        titleDrop.onChange = function () { maybeScan(); };
         refreshBtn.onClick = function () { refreshComps(); maybeScan(); };
 
         function selectedVideoTarget() {
@@ -1398,9 +1724,13 @@
             return videoTargets[alphaDrop.selection.index - 1] || null;
         }
 
-        function selectedTextTarget() {
-            if (!textDrop.selection || textDrop.selection.index === 0) { return null; }
-            return textTargets[textDrop.selection.index - 1] || null;
+        function selectedTextTarget() { return pickedText(textDrop); }
+        function selectedNameTarget() { return pickedText(nameDrop); }
+        function selectedTitleTarget() { return pickedText(titleDrop); }
+
+        function pickedText(drop) {
+            if (!drop.selection || drop.selection.index === 0) { return null; }
+            return textTargets[drop.selection.index - 1] || null;
         }
 
         function doScan() {
@@ -1443,7 +1773,8 @@
                 }
             }
 
-            var quotes = parseQuotesFile(qFile, planWarnings);
+            quoteMeta = {};
+            var quotes = parseQuotesFile(qFile, planWarnings, quoteMeta);
             if (quotes.length === 0) {
                 setStatus("No quotes read from \"" + qFile.name + "\" - press Help for the formats.");
                 return;
@@ -1467,7 +1798,10 @@
                 it.subItems[0].text = clip ? clip.name : "-- no clip --";
                 it.subItems[1].text = alphaClip ? alphaClip.name
                     : (aTarget && af !== "" ? "-- none --" : "");
-                it.subItems[2].text = quotes[i].text.length > 80
+                it.subItems[2].text = quotes[i].speaker !== ""
+                    ? quotes[i].speaker
+                    : "-- no name --";
+                it.subItems[3].text = quotes[i].text.length > 80
                     ? quotes[i].text.substring(0, 80) + "..."
                     : quotes[i].text;
             }
@@ -1507,6 +1841,7 @@
             } else if (!selectedTextTarget()) {
                 note = "  |  text layer set to \"leave alone\" - the quotes will not be written";
             }
+            note += speakerNote(quotes.length);
 
             setStatus(ready + " card(s) ready out of " + plan.length + " quote(s)  |  " +
                       files.length + " clip(s) in the folder" +
@@ -1515,12 +1850,57 @@
                         : "") + note);
         }
 
+        /**
+         * Why the Name column reads "-- no name --". A column that is missing
+         * and a column that is there but empty need different fixes, and the
+         * old blanket "no names" sent people looking in the wrong file.
+         */
+        function speakerNote(total) {
+            var nTarget = selectedNameTarget(), tTarget = selectedTitleTarget();
+            var named = quoteMeta.named || 0;
+            var out = "";
+
+            if (named === 0) {
+                if (quoteMeta.speakerColumn < 0) {
+                    out += "  |  NO SPEAKER COLUMN in the quote list - the guest name on every " +
+                           "card will stay whatever the template has. Add a column headed " +
+                           "\u0627\u0644\u0645\u062a\u062d\u062f\u062b (or Speaker / Name / Guest).";
+                } else {
+                    out += "  |  the \"" + quoteMeta.speakerHeader + "\" column is there but EMPTY - " +
+                           "fill it with the guest number for each quote" +
+                           (quoteMeta.guestFile !== ""
+                              ? " (1.." + quoteMeta.guests.length + ", from " + quoteMeta.guestFile + ")"
+                              : ", and put a guest list in episode-info.txt next to the quote list") + ".";
+                }
+            } else if (named < total) {
+                out += "  |  " + named + " of " + total + " quotes have a name";
+            }
+
+            if (named > 0 && !nTarget) {
+                out += "  |  names were read but \"Name layer\" is \"leave alone\" - " +
+                       "they will NOT be written on the cards";
+            }
+            if (named > 0 && quoteMeta.titleColumn < 0 && quoteMeta.guestFile === "" && tTarget) {
+                out += "  |  a Title layer is chosen but nothing supplies a job title";
+            }
+            if (quoteMeta.unresolved && quoteMeta.unresolved.length) {
+                out += "  |  " + quoteMeta.unresolved.length + " name(s) left blank: " +
+                       quoteMeta.unresolved[0];
+                for (var u = 0; u < quoteMeta.unresolved.length; u++) {
+                    planWarnings.push(quoteMeta.unresolved[u]);
+                }
+            }
+            return out;
+        }
+
         function doCreate() {
             var comp = template();
             if (!comp || plan.length === 0) { setStatus("Scan first."); return; }
 
             var vTarget = selectedVideoTarget();
             var tTarget = selectedTextTarget();
+            var nTarget = selectedNameTarget();
+            var jTarget = selectedTitleTarget();
             if (!vTarget) { setStatus("No footage layer to swap."); return; }
 
             // Only the comps on the way down to the guest and the quote get a
@@ -1558,6 +1938,8 @@
             var targetIds = {};
             targetIds[vTarget.comp.id] = true;
             if (tTarget) { targetIds[tTarget.comp.id] = true; }
+            if (nTarget) { targetIds[nTarget.comp.id] = true; }
+            if (jTarget) { targetIds[jTarget.comp.id] = true; }
             if (aTarget) { targetIds[aTarget.comp.id] = true; }
             var cloneIds = compsLeadingTo(comp, targetIds);
 
@@ -1567,6 +1949,11 @@
             log.push("Video layer: " + vTarget.label + "   (in comp \"" + vTarget.comp.name + "\")");
             log.push("Alpha layer: " + (aTarget ? aTarget.label + "   (in comp \"" + aTarget.comp.name + "\")" : "none"));
             log.push("Text layer:  " + (tTarget ? tTarget.label + "   (in comp \"" + tTarget.comp.name + "\")" : "none"));
+            log.push("Name layer:  " + (nTarget ? nTarget.label + "   (in comp \"" + nTarget.comp.name + "\")" : "none"));
+            log.push("Title layer: " + (jTarget ? jTarget.label + "   (in comp \"" + jTarget.comp.name + "\")" : "none"));
+            log.push("Guest list:  " + (quoteMeta.guestFile !== ""
+                ? quoteMeta.guestFile + "   (" + quoteMeta.guests.length + " guest(s))"
+                : "none next to the quote list"));
             var cloneNames = [];
             for (var ci = 1; ci <= app.project.numItems; ci++) {
                 var it = app.project.item(ci);
@@ -1665,6 +2052,13 @@
                             if (cbFitText.value) { fitTextToBox(textLayer, log); }
                         }
                     }
+
+                    // The name and the title are their own layers. Writing the
+                    // quote alone is how every card ended up carrying the same
+                    // guest - whoever the template was mocked up with.
+                    writeLine(nTarget, mapping, row.quote.speaker, "name", log);
+                    writeLine(jTarget, mapping, row.quote.title, "title", log);
+
                     if (cbMatte.value) {
                         var matte = buildMatteSetup(target, log);
                         log.push("    matte layer: " + matte.name);
@@ -1705,7 +2099,13 @@
                           "   (" + alphaFiles.length + " clip(s))"
                         : "NOT SWAPPED - no alpha layer chosen, so the cut-out is " +
                           "whatever the template already had") + "\n" +
-                  "Text    -> " + (tTarget ? tTarget.comp.name + " / " + tTarget.layer.name : "not touched") +
+                  "Text    -> " + (tTarget ? tTarget.comp.name + " / " + tTarget.layer.name : "not touched") + "\n" +
+                  "Name    -> " + (nTarget
+                        ? nTarget.layer.name + "   (" + (quoteMeta.named || 0) + " of " +
+                          plan.length + " cards named)"
+                        : "NOT WRITTEN - \"Name layer\" is left alone, so every card keeps " +
+                          "the template's guest name") + "\n" +
+                  "Title   -> " + (jTarget ? jTarget.layer.name : "not touched") +
                   (planWarnings.length
                         ? "\n\nWarnings: " + planWarnings.length + "\n" +
                           planWarnings.slice(0, 4).join("\n") +
@@ -1713,6 +2113,20 @@
                         : "") +
                   (logPath ? "\n\nDetails:\n" + logPath : "") +
                   "\n\nOne Ctrl/Cmd+Z undoes all of it.");
+        }
+
+        /** Sets one of the short lines (name, job title), or says why not. */
+        function writeLine(target, mapping, value, what, log) {
+            if (!target) { return; }
+            if (trim(value) === "") {
+                log.push("    " + what + " left as the template had it - nothing to write");
+                return;
+            }
+            var layer = mapping[target.comp.id].layer(target.index);
+            if (setLayerText(layer, value, log)) {
+                log.push("    " + what + " set on " + layer.name + ": " + value);
+                if (cbFitText.value) { fitTextToBox(layer, log); }
+            }
         }
 
         function doReport() {
@@ -1728,10 +2142,30 @@
             out.push("Chosen video layer: " + (selectedVideoTarget() ? selectedVideoTarget().label : "none"));
             out.push("Chosen alpha layer: " + (selectedAlphaTarget() ? selectedAlphaTarget().label : "none"));
             out.push("Chosen text layer:  " + (selectedTextTarget() ? selectedTextTarget().label : "none"));
+            out.push("Chosen name layer:  " + (selectedNameTarget() ? selectedNameTarget().label : "none"));
+            out.push("Chosen title layer: " + (selectedTitleTarget() ? selectedTitleTarget().label : "none"));
             out.push("");
             out.push("Clips folder: " + trim(videosTxt.text));
             out.push("Alpha folder: " + (trim(alphaTxt.text) || "(none)"));
             out.push("Quotes file:  " + trim(quotesTxt.text));
+            if (quoteMeta.speakerColumn >= 0) {
+                out.push("Speaker column: \"" + quoteMeta.speakerHeader + "\"  (column " +
+                         (quoteMeta.speakerColumn + 1) + ")");
+            } else {
+                out.push("Speaker column: none - no heading in the quote list names one");
+            }
+            out.push("Title column:   " + (quoteMeta.titleColumn >= 0
+                ? "\"" + quoteMeta.titleHeader + "\"  (column " + (quoteMeta.titleColumn + 1) + ")"
+                : "none"));
+            if (quoteMeta.guestFile) {
+                out.push("Guest list:   " + quoteMeta.guestFile);
+                for (var g = 0; g < quoteMeta.guests.length; g++) {
+                    out.push("  " + (g + 1) + ". " + quoteMeta.guests[g].name +
+                             "  -  " + quoteMeta.guests[g].title);
+                }
+            } else {
+                out.push("Guest list:   none next to the quote list");
+            }
             out.push("");
 
             var files = [];
@@ -1803,9 +2237,22 @@
                 "     .csv  the wordiest column is taken as the quote text\n" +
                 "     .txt  one quote per paragraph (or per line)\n" +
                 "     .srt  the \"# ...\" comment under each timecode block\n\n" +
-                "5. Scan shows each quote next to the clip it will get.\n" +
-                "   Nothing is created yet.\n\n" +
-                "6. Create cards duplicates the template once per quote, swaps\n" +
+                "5. Who said it - a card carries three pieces of text, and each\n" +
+                "   one needs its own layer: the quote body (Text layer), the\n" +
+                "   guest's name (Name layer) and their job title (Title layer).\n" +
+                "   Leave any of them alone and the template's own wording stays.\n\n" +
+                "   In the quote list, head a column \u0627\u0644\u0645\u062a\u062d\u062f\u062b (or Speaker / Name /\n" +
+                "   Guest) and write just the GUEST NUMBER in it. Put the roster in\n" +
+                "   an episode-info.txt beside the quote list:\n\n" +
+                "       \u0627\u0644\u0636\u064a\u0648\u0641:\n" +
+                "         - <name> \u2014 <job title>\n" +
+                "         - <name> \u2014 <job title>\n\n" +
+                "   and \"2\" becomes the second guest's full name and title. A\n" +
+                "   value fitting two guests is left blank and reported - a wrong\n" +
+                "   name under a real face is worse than none.\n\n" +
+                "6. Scan shows each quote next to the clip and the name it will\n" +
+                "   get. Nothing is created yet.\n\n" +
+                "7. Create cards duplicates the template once per quote, swaps\n" +
                 "   the clip, and sets the text - keeping the font, size, colour\n" +
                 "   and alignment you already set, shrinking the type if the quote\n" +
                 "   is longer than the box it lands in.\n\n" +

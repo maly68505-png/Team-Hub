@@ -24,6 +24,14 @@
     var SCRIPT_NAME = "Person Replacer";
     var SETTINGS_SECTION = "PersonReplacer";
     var VIDEO_EXT = "mp4,mov,m4v,avi,mkv,mxf,webm,mpg,mpeg,wmv,mts,m2ts,r3d,braw,dv,3gp";
+
+    // Which CSV headings name the speaker and their job title. The column is
+    // recognised by its HEADING only - never by what is in it, because a wrong
+    // guess writes a row number or a timecode onto a real person's card.
+    var SPEAKER_HEADS = "\u0627\u0644\u0645\u062a\u062d\u062f\u062b,\u0627\u0644\u0636\u064a\u0641,\u0627\u0644\u0645\u062a\u0643\u0644\u0645,\u0627\u0644\u0642\u0627\u0626\u0644,\u0627\u0644\u0627\u0633\u0645,speaker,name,guest,who";
+    var TITLE_HEADS = "\u0627\u0644\u0635\u0641\u0629,\u0627\u0644\u0648\u0638\u064a\u0641\u0629,\u0627\u0644\u0645\u0646\u0635\u0628,\u0627\u0644\u062a\u0639\u0631\u064a\u0641,title,role,job,position";
+    var GUEST_HEADS = "\u0627\u0644\u0636\u064a\u0648\u0641,\u0636\u064a\u0648\u0641,guests,panel";
+    var GUEST_FILES = "episode-info.txt,episode-info.md,episode_info.txt,guests.txt,guests.md";
     var MIN_MATCH_SCORE = 2;
     var TOL = 0.0005; // seconds, float-compare tolerance
 
@@ -35,6 +43,34 @@
 
     function normalize(s) {
         return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "");
+    }
+
+    /** Arabic-Indic and Persian digits written the way parseInt reads them. */
+    function toWesternDigits(s) {
+        return String(s)
+            .replace(/[\u0660-\u0669]/g, function (d) {
+                return String(d.charCodeAt(0) - 0x0660);
+            })
+            .replace(/[\u06F0-\u06F9]/g, function (d) {
+                return String(d.charCodeAt(0) - 0x06F0);
+            });
+    }
+
+    /**
+     * normalize() throws away every non-Latin letter, which turns any Arabic
+     * heading or guest name into an empty string - so it could never be
+     * compared against anything. This keeps Arabic letters and folds the
+     * spellings that differ only on screen: the alef forms, the taa marbuta,
+     * the alef maqsura, harakat and tatweel.
+     */
+    function foldText(s) {
+        s = toWesternDigits(String(s)).toLowerCase();
+        s = s.replace(/[\u064B-\u0652\u0640\u0670]/g, "");
+        s = s.replace(/[\u0622\u0623\u0625\u0671]/g, "\u0627");
+        s = s.replace(/\u0629/g, "\u0647");
+        s = s.replace(/[\u0649\u06CC]/g, "\u064A");
+        s = s.replace(/[^0-9a-z\u0621-\u064A]+/g, "");
+        return s;
     }
 
     function pad(n, w) {
@@ -341,12 +377,23 @@
         return out;
     }
 
-    /** The column carrying the quotes is simply the wordiest one. */
-    function pickTextColumn(rows) {
-        var widest = 0, c;
+    /**
+     * The column carrying the quotes is simply the wordiest one - but an
+     * Arabic job title runs longer than some quotes, so any column already
+     * claimed by name or heading is kept out of the contest.
+     */
+    function pickTextColumn(rows, exclude) {
+        var widest = 0, c, x;
         for (var r = 0; r < rows.length; r++) { widest = Math.max(widest, rows[r].length); }
-        var best = 0, bestScore = -1;
+        var best = -1, bestScore = -1;
         for (c = 0; c < widest; c++) {
+            var skip = false;
+            if (exclude) {
+                for (x = 0; x < exclude.length; x++) {
+                    if (exclude[x] === c) { skip = true; break; }
+                }
+            }
+            if (skip) { continue; }
             var total = 0, n = 0;
             for (var i = 1; i < rows.length; i++) {          // skip a header row
                 if (rows[i].length <= c) { continue; }
@@ -356,17 +403,205 @@
             var score = n ? total / n : 0;
             if (score > bestScore) { bestScore = score; best = c; }
         }
-        return best;
+        return best < 0 ? 0 : best;
+    }
+
+    /**
+     * Which column carries what, decided by the HEADING alone. Guessing from
+     * the contents is how a row number or a timecode ends up printed under a
+     * real person's face, so a column that is not named is simply not used.
+     * Returns -1 when no heading matches.
+     */
+    function headerColumn(rows, headsCSV, taken) {
+        if (!rows.length) { return -1; }
+        var head = rows[0], hints = headsCSV.split(","), pass, h, c;
+        var folded = [];
+        for (c = 0; c < head.length; c++) { folded.push(foldText(head[c])); }
+
+        for (pass = 0; pass < 3; pass++) {
+            for (h = 0; h < hints.length; h++) {
+                var want = foldText(hints[h]);
+                if (want === "") { continue; }
+                if (pass === 2 && want.length < 4) { continue; }
+                for (c = 0; c < folded.length; c++) {
+                    if (c === taken || folded[c] === "") { continue; }
+                    var hit = (pass === 0) ? folded[c] === want
+                            : (pass === 1) ? folded[c].substring(0, want.length) === want
+                            : folded[c].indexOf(want) !== -1;
+                    if (hit) { return c; }
+                }
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Reads the guest roster - the list under a line saying "الضيوف" - out of
+     * an episode-info.txt sitting next to the quote list. Name and title are
+     * split on a dash, because the title itself carries commas.
+     * Returns [{ name, title }].
+     */
+    function parseGuestList(text) {
+        var lines = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+        var start = -1, i;
+        for (i = 0; i < lines.length; i++) {
+            var f = foldText(lines[i]);
+            if (f === "") { continue; }
+            var heads = GUEST_HEADS.split(","), hit = false;
+            for (var h = 0; h < heads.length; h++) {
+                if (f.indexOf(foldText(heads[h])) !== -1) { hit = true; break; }
+            }
+            // a heading names the list; a line that already IS a guest does not
+            if (hit && f.length < 40) { start = i + 1; break; }
+        }
+
+        var loose = (start < 0);
+        var out = [];
+        for (i = loose ? 0 : start; i < lines.length; i++) {
+            var raw = trim(lines[i]);
+            if (raw === "") {
+                if (out.length && !loose) { break; }
+                continue;
+            }
+            if (!loose && isSectionOrQuoteLine(raw, out.length)) { break; }
+
+            var line = raw.replace(/^[\-\u2022\u00b7\*\u25cf\u25aa\s]+/, "");
+            line = line.replace(/^[0-9\u0660-\u0669]+\s*[\.\)\-]\s*/, "");
+            line = trim(line);
+            if (line === "") { continue; }
+
+            var split = splitNameAndTitle(line);
+            if (loose) {
+                // With no heading to anchor on, only take lines that are
+                // plainly a guest: "name - title", or a short bare name.
+                if (!split.title && (line.length > 60 || line.indexOf(":") !== -1)) { continue; }
+            }
+            if (split.name === "") { continue; }
+            out.push(split);
+        }
+        return out;
+    }
+
+    function isSectionOrQuoteLine(raw, have) {
+        if (raw.length > 200) { return have > 0; }
+        var western = toWesternDigits(raw);
+        if (/^\s*[\(\[]?\s*[0-9]+\s*[\)\]\-\.]/.test(western)) { return true; }
+        if (/:\s*$/.test(raw)) { return true; }
+        return false;
+    }
+
+    function splitNameAndTitle(line) {
+        var m = line.split(/\s*[\u2014\u2013\u2012]\s*/);
+        if (m.length < 2) { m = line.split(/\s+-\s+/); }
+        if (m.length < 2) { m = line.split(/\s*[\u060c,]\s*/); }
+        var name = trim(m[0]);
+        var title = (m.length > 1) ? trim(m.slice(1).join(" - ")) : "";
+        return { name: name, title: title };
+    }
+
+    /**
+     * Turns whatever the "المتحدث" column holds - a guest number, an Arabic
+     * numeral, part of a name, or the whole name - into the name and title
+     * that go on the card.
+     *
+     * It never guesses: a value matching two guests, or a bare number with no
+     * roster to read it against, comes back with an empty name and a reason.
+     * A wrong name under a real person's face is worse than no name.
+     */
+    function resolveSpeaker(raw, guests) {
+        raw = trim(raw == null ? "" : raw);
+        if (raw === "") { return null; }
+        var have = guests && guests.length ? guests.length : 0;
+        var western = trim(toWesternDigits(raw));
+
+        if (/^[0-9]+$/.test(western)) {
+            var n = parseInt(western, 10);
+            if (have && n >= 1 && n <= have) {
+                return { name: guests[n - 1].name, title: guests[n - 1].title, from: "number" };
+            }
+            return { name: "", title: "", from: "number", why: have
+                ? "\"" + raw + "\" is not one of the " + have + " guests in the guest list"
+                : "\"" + raw + "\" is a guest number, but there is no guest list " +
+                  "(episode-info.txt) next to the quote list to read it against" };
+        }
+
+        if (have) {
+            var needle = foldText(raw), hits = [];
+            for (var i = 0; i < have; i++) {
+                var hay = foldText(guests[i].name);
+                if (hay === "" || needle === "") { continue; }
+                if (hay === needle || hay.indexOf(needle) !== -1 || needle.indexOf(hay) !== -1) {
+                    hits.push(i);
+                }
+            }
+            if (hits.length === 1) {
+                return { name: guests[hits[0]].name, title: guests[hits[0]].title, from: "roster" };
+            }
+            if (hits.length > 1) {
+                var who = [];
+                for (var k = 0; k < hits.length; k++) { who.push(guests[hits[k]].name); }
+                return { name: "", title: "", from: "ambiguous",
+                         why: "\"" + raw + "\" fits more than one guest (" + who.join(" / ") +
+                              ") - left blank rather than guessed" };
+            }
+        }
+        return { name: raw, title: "", from: "literal" };
+    }
+
+    /** The guest roster sitting next to the quote list, or null. */
+    function findGuestFile(quotesFile) {
+        var names = GUEST_FILES.split(",");
+        try {
+            var dir = quotesFile.parent;
+            if (!dir) { return null; }
+            for (var i = 0; i < names.length; i++) {
+                var f = new File(dir.fsName + "/" + names[i]);
+                if (f.exists) { return f; }
+            }
+        } catch (e) {}
+        return null;
+    }
+
+    function readGuestFile(file, warnings) {
+        try {
+            if (!file.open("r")) {
+                warnings.push("Could not open the guest list: " + file.fsName);
+                return [];
+            }
+            var raw = file.read();
+            file.close();
+            return parseGuestList(raw.replace(/^\uFEFF/, ""));
+        } catch (e) {
+            warnings.push("Could not read the guest list: " + e.toString());
+            return [];
+        }
     }
 
     /**
      * Reads the quote list. Accepts:
-     *   .csv  - the wordiest column is taken as the quote text
+     *   .csv  - the wordiest column is taken as the quote text, and a column
+     *           HEADED with a speaker or title name supplies who said it
      *   .srt  - the "# ..." comment carried under each timecode block
      *   .txt  - one quote per paragraph, or per line when there are no blanks
-     * Returns [{ index, text }].
+     *
+     * Returns [{ index, text, speaker, title, speakerRaw }]. `meta` is filled
+     * in with what was found, so the panel can say "the column is there but
+     * empty" rather than the useless "no names".
      */
-    function parseQuotesFile(file, warnings) {
+    function parseQuotesFile(file, warnings, meta, guests) {
+        meta = meta || {};
+        meta.speakerColumn = -1;
+        meta.titleColumn = -1;
+        meta.speakerHeader = "";
+        meta.titleHeader = "";
+        meta.named = 0;
+        meta.guests = guests || [];
+        meta.guestFile = "";
+        meta.unresolved = [];
+        return parseQuotesBody(file, warnings, meta, guests);
+    }
+
+    function parseQuotesBody(file, warnings, meta, guests) {
         if (!file.open("r")) {
             warnings.push("Could not open the quotes file: " + file.fsName);
             return [];
@@ -375,13 +610,21 @@
         file.close();
         raw = raw.replace(/^\uFEFF/, "");
 
-        var texts = [], i;
+        var texts = [], speakers = [], titles = [], i;
         var ext = extOf(file.name);
 
         if (ext === "csv" || ext === "tsv") {
             var rows = parseCSVText(ext === "tsv" ? raw.replace(/\t/g, ",") : raw);
             if (rows.length === 0) { return []; }
-            var col = pickTextColumn(rows);
+
+            var sCol = headerColumn(rows, SPEAKER_HEADS, -1);
+            var tCol = headerColumn(rows, TITLE_HEADS, sCol);
+            meta.speakerColumn = sCol;
+            meta.titleColumn = tCol;
+            if (sCol >= 0) { meta.speakerHeader = trim(rows[0][sCol]); }
+            if (tCol >= 0) { meta.titleHeader = trim(rows[0][tCol]); }
+
+            var col = pickTextColumn(rows, [sCol, tCol]);
             var start = 1;
             var head = rows[0].length > col ? trim(rows[0][col]) : "";
             var bodyLen = 0, bodyN = 0;
@@ -392,10 +635,17 @@
             if (head !== "" && avg > 0 && head.length >= avg * 0.6) {
                 start = 0;                                   // no header after all
             }
+            // a recognised heading settles it: row 0 IS the header
+            if (sCol >= 0 || tCol >= 0) { start = 1; }
+
             for (i = start; i < rows.length; i++) {
                 if (rows[i].length > col) {
                     var v = trim(rows[i][col]);
-                    if (v !== "") { texts.push(v); }
+                    if (v !== "") {
+                        texts.push(v);
+                        speakers.push(sCol >= 0 && rows[i].length > sCol ? trim(rows[i][sCol]) : "");
+                        titles.push(tCol >= 0 && rows[i].length > tCol ? trim(rows[i][tCol]) : "");
+                    }
                 }
             }
         } else if (ext === "srt") {
@@ -425,9 +675,34 @@
             }
         }
 
+        // The roster turns "2" into a name and a title, so nobody retypes a
+        // long Arabic name and job description nine times over.
+        if (!guests) {
+            var gFile = findGuestFile(file);
+            if (gFile) {
+                guests = readGuestFile(gFile, warnings);
+                meta.guestFile = gFile.name;
+            } else {
+                guests = [];
+            }
+        }
+        meta.guests = guests;
+
         var quotes = [];
         for (i = 0; i < texts.length; i++) {
-            quotes.push({ index: i + 1, text: texts[i] });
+            var rawSpeaker = (i < speakers.length) ? speakers[i] : "";
+            var rawTitle = (i < titles.length) ? titles[i] : "";
+            var who = resolveSpeaker(rawSpeaker, guests);
+            var name = who ? who.name : "";
+            var title = rawTitle !== "" ? rawTitle : (who ? who.title : "");
+            if (who && who.why) {
+                meta.unresolved.push("Quote " + (i + 1) + ": " + who.why);
+            }
+            if (name !== "") { meta.named++; }
+            quotes.push({
+                index: i + 1, text: texts[i],
+                speaker: name, title: title, speakerRaw: rawSpeaker
+            });
         }
         return quotes;
     }
@@ -556,6 +831,7 @@
                     offered[nested.id] = true;
                     out.push({
                         comp: nested, layer: null, index: 0, sample: "", isEmpty: true,
+                        name: nested.name,
                         label: path + "  >  " + nested.name +
                                "   (EMPTY comp - the clip gets added here)"
                     });
@@ -566,6 +842,7 @@
                     var sample = isText ? layerTextValue(L) : "";
                     out.push({
                         comp: comp, layer: L, index: L.index, sample: sample, isEmpty: false,
+                        name: L.name,
                         label: where + (sample !== ""
                             ? "   -   \"" + (sample.length > 42
                                 ? sample.substring(0, 42) + "..." : sample) + "\""

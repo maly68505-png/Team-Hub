@@ -8,7 +8,9 @@ var AE = path.join(__dirname, '..');
 var ROOT = path.join(AE, '..');
 
 var core = fs.readFileSync(path.join(AE, 'lib', 'core.jsxinc'), 'utf8');
-var a = core.indexOf('    function trim(s)');
+// from the constants, not from trim(): the CSV reader needs the heading
+// names, and a test that declares its own copy would stop testing the real one
+var a = core.indexOf('    var SCRIPT_NAME');
 var b = core.indexOf('AE helpers');
 var block = core.slice(a, b);
 

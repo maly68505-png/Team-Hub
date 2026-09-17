@@ -30,7 +30,9 @@ type styling. Templates that hide the guest and the quote inside precomps
 (`REPLACE-FOOTAGE`, `REPLACE-PARAGRAPH`) work: layers are found through the
 whole comp tree, and those precomps are copied per card so the cards stay
 independent of each other. Clip order decides who appears: 1st clip to quote 1, 2nd to
-quote 2, and so on. The other two tools swap footage along a timeline instead —
+quote 2, and so on. The guest's name and job title go on their own layers,
+read from a speaker column in the quote list and resolved against a guest
+roster, so nine cards do not all carry the same name. The other two tools swap footage along a timeline instead —
 pick between them below.
 
 **`PersonReplacer_Auto.jsx`** — nothing to configure. Save your project, open
@@ -170,6 +172,7 @@ user copies one file and nothing else.
 node ae/tests/parse.test.js       # 46 assertions
 node ae/tests/discovery.test.js   # 11 assertions
 node ae/tests/quotes.test.js      # 19 assertions
+node ae/tests/speakers.test.js    # 63 assertions
 node ae/tests/nested.test.js      # 48 assertions
 node ae/tests/timing.test.js      # 16 assertions
 node ae/tests/text.test.js        # 20 assertions
@@ -191,6 +194,16 @@ tool's own log file.
 header detection, headerless files), and reading quotes out of `.csv`, `.txt`
 and `.srt` — including against the real generated `examples/episode-elections`
 files, asserting both formats yield the same nine quotes.
+
+`speakers.test.js` covers who said the quote: finding the speaker and job
+title columns by their heading rather than their contents, reading the guest
+roster out of an `episode-info.txt` beside the quote list, and turning a guest
+number — `2`, or the Arabic `٢` — into that guest's full name and title. It
+covers the refusals as hard as the matches: a number past the end of the
+roster, a value fitting two guests, and a bare number with no roster all come
+back blank with a reason, because a wrong name under a real person's face is
+worse than no name. Arabic folding is covered too — `normalize()` erases
+Arabic completely, so it could never have matched an Arabic heading.
 
 `nested.test.js` builds a miniature AE object model shaped like a real
 template — a render comp pulling its guest from a `REPLACE-FOOTAGE` precomp and
