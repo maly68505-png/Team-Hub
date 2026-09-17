@@ -99,7 +99,7 @@
          * quote, here, is worth more than any explanation of which is which.
          */
         function fillQuoteList() {
-            var keys = trim(orderTxt.text).split(/[\s,;\-]+/);
+            var keys = splitAnswers(orderTxt.text, quotes.length);
             quoteList.removeAll();
             for (var i = 0; i < quotes.length; i++) {
                 var it = quoteList.add("item", String(quotes[i].index));
@@ -115,11 +115,34 @@
             }
         }
 
+        /**
+         * The hint used to show a fixed nine-number example next to a form
+         * that had eight quotes, so it read as the shape of the answer rather
+         * than the length of it - and the length is the part people get wrong.
+         */
+        function updateOrderHelp() {
+            var n = quotes.length, g = guests.length;
+            if (n === 0) {
+                orderHelp.text = "اضغط Read الأول، وبعدين اكتب هنا مين قال كل اقتباس.";
+                return;
+            }
+            var eg = [];
+            for (var i = 0; i < n; i++) { eg.push(String(g ? (i % g) + 1 : 1)); }
+            orderHelp.text =
+                "اكتب " + n + " رقم — واحد لكل اقتباس بالترتيب، بفواصل. مثال: " + eg.join(",") + "\n" +
+                (g
+                  ? "رقم الضيف من الجدول اللي فوق (١ .. " + g + ") — مش رقم الكليب ولا رقم " +
+                    "الاقتباس. وتقدر تكتب جزء من الاسم بدل الرقم."
+                  : "⚠️ الجدول فاضي — لازم قايمة ضيوف الأول، وإلا الأرقام مالهاش معنى.") + "\n" +
+                "شوف عمود \"الضيف\" فوق وهو بيتملى وانت بتكتب — ده اللي هيتكتب على الكرت.";
+        }
+
         function doRead() {
             quotes = parseFormQuotes(pasteBox.text);
             guests = parseGuestList(pasteBox.text);
 
             fillQuoteList();
+            updateOrderHelp();
             guestList.removeAll();
             for (var g = 0; g < guests.length; g++) {
                 var gi = guestList.add("item", String(g + 1));
@@ -171,8 +194,8 @@
 
             setStatus(quotes.length + " اقتباس، " + guests.length + " ضيف." +
                       (guests.length === 0
-                        ? "  |  ⚠️ مفيش قايمة ضيوف — الصقها تحت الاقتباسات تحت سطر فيه " +
-                          "\"الضيوف:\"، وإلا أرقام الضيوف مش هتتحول لأسماء."
+                        ? "  |  ⚠️ مفيش قايمة ضيوف — الصق أسامي الضيوف تحت آخر اقتباس، " +
+                          "سطر لكل واحد: \"الاسم — الصفة\". من غيرها أرقام الضيوف مالهاش معنى."
                         : "  |  راجع الترقيم فوق، وبعدين اكتب مين قال إيه.") +
                       "  لسه مفيش حاجة اتكتبت.");
         }
@@ -203,7 +226,7 @@
             }
 
             var filled = 0, given = 0, i;
-            var keys = trim(orderTxt.text).split(/[\s,;\-]+/);
+            var keys = splitAnswers(orderTxt.text, quotes.length);
             for (i = 0; i < keys.length; i++) { if (trim(keys[i]) !== "") { given++; } }
             for (i = 0; i < quotes.length; i++) {
                 if (trim(keys[i] || "") !== "") { filled++; }
@@ -250,8 +273,8 @@
                 fix = "\u0631\u0627\u062c\u0639 \u0627\u0644\u0627\u0633\u062a\u0645\u0627\u0631\u0629 \u0648\u0627\u0646\u0633\u062e \u062a\u0627\u0646\u064a\u060c \u0623\u0648 \u0638\u0628\u0651\u0637 \u062e\u0627\u0646\u0629 \u00abWho said what\u00bb.";
             } else if (guests.length === 0) {
                 headline = "\u26a0\ufe0f  \u0645\u0641\u064a\u0634 \u0642\u0627\u064a\u0645\u0629 \u0636\u064a\u0648\u0641 \u2014 \u0627\u0644\u0623\u0631\u0642\u0627\u0645 \u0645\u0634 \u0647\u062a\u062a\u062d\u0648\u0644 \u0644\u0623\u0633\u0627\u0645\u064a.";
-                fix = "\u0627\u0644\u0635\u0642 \u0642\u0627\u064a\u0645\u0629 \u0627\u0644\u0636\u064a\u0648\u0641 \u062a\u062d\u062a \u0627\u0644\u0627\u0642\u062a\u0628\u0627\u0633\u0627\u062a \u0641\u064a \u0646\u0641\u0633 \u0627\u0644\u0645\u0631\u0628\u0639 \u2014 " +
-                      "\u0633\u0637\u0631 \u0644\u0643\u0644 \u0636\u064a\u0641\u060c \u00ab\u0627\u0644\u0627\u0633\u0645 \u2014 \u0627\u0644\u0635\u0641\u0629\u00bb \u2014 \u0648\u0627\u0636\u063a\u0637 Read \u062b\u0645 Save.";
+                fix = "الصق أسامي الضيوف تحت آخر اقتباس في نفس المربع — سطر لكل ضيف، " +
+                      "«الاسم — الصفة» — واضغط Read ثم Save.";
             } else if (filled === 0) {
                 headline = "\u26a0\ufe0f  \u0645\u0641\u064a\u0634 \u0648\u0644\u0627 \u0627\u0642\u062a\u0628\u0627\u0633 \u0645\u062a\u062d\u062f\u062f \u0644\u0647 \u0636\u064a\u0641 (0 \u0645\u0646 " + quotes.length + ").";
                 fix = "\u0627\u0643\u062a\u0628 \u0641\u064a \u062e\u0627\u0646\u0629 \u00abWho said what\u00bb \u0631\u0642\u0645 \u0627\u0644\u0636\u064a\u0641 \u0644\u0643\u0644 \u0627\u0642\u062a\u0628\u0627\u0633 \u0628\u0627\u0644\u062a\u0631\u062a\u064a\u0628\u060c " +

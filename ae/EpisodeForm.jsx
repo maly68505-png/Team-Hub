@@ -508,18 +508,53 @@
 
     function parseGuestList(text) {
         var lines = String(text || "").split(/\r\n|\r|\n/);
-        var out = [], inBlock = false, i;
-        for (i = 0; i < lines.length; i++) {
-            var raw = lines[i];
-            var L = trim(raw);
+        var out = collectGuests(lines, -1);
+        if (out.length === 0) {
+            // No "الضيوف" heading anywhere. Word and Google Docs drop a
+            // heading's formatting as readily as they drop list bullets, and a
+            // producer who selected the quote table plus the names underneath
+            // never copied one at all. Three guests then read as zero, every
+            // guest number stays unresolved, and the cards come out unnamed.
+            //
+            // The guests are whatever follows the LAST numbered quote: on
+            // these forms the names always sit under the table. Without a
+            // numbered quote to anchor on there is nothing to be sure of, so
+            // nothing is taken.
+            var last = lastNumberedQuote(lines);
+            if (last >= 0) { out = collectGuests(lines, last); }
+        }
+        return out;
+    }
+
+    function lastNumberedQuote(lines) {
+        var last = -1;
+        for (var i = 0; i < lines.length; i++) {
+            var L = trim(lines[i]);
+            var m = L.match(NUM_HEAD);
+            if (m && trim(L.substring(m[0].length)).length >= MIN_QUOTE) { last = i; }
+        }
+        return last;
+    }
+
+    /**
+     * Guests out of `lines`. With afterIdx < 0 the block starts at a heading;
+     * otherwise it starts at afterIdx + 1 and there is no heading to find.
+     */
+    function collectGuests(lines, afterIdx) {
+        var anchored = (afterIdx >= 0);
+        var out = [], inBlock = anchored, i;
+        for (i = anchored ? afterIdx + 1 : 0; i < lines.length; i++) {
+            var L = trim(lines[i]);
             if (L === "") { continue; }
 
-            var heads = GUEST_HEADINGS.split(","), isHead = false;
-            for (var h = 0; h < heads.length; h++) {
-                if (looseHas(L, heads[h]) && L.length < 40) { isHead = true; break; }
+            if (!anchored) {
+                var heads = GUEST_HEADINGS.split(","), isHead = false;
+                for (var h = 0; h < heads.length; h++) {
+                    if (looseHas(L, heads[h]) && L.length < 40) { isHead = true; break; }
+                }
+                if (isHead) { inBlock = true; continue; }
+                if (!inBlock) { continue; }
             }
-            if (isHead) { inBlock = true; continue; }
-            if (!inBlock) { continue; }
 
             // A bullet used to be required to stay in the block. Word and
             // Google Docs treat list bullets as formatting, not characters, so
@@ -542,7 +577,7 @@
                 continue;
             }
 
-            var bullet = trim(L.replace(/^[\-\u2013\u2014\u2022\*\u00b7]+\s*/, ""));
+            var bullet = noBullet;
             if (bullet === "") { continue; }
 
             // "Name - Title" wins over "Name, Title": a title can hold commas
@@ -703,8 +738,31 @@
      * The quote sheet the card tool reads. `order` is the guests' numbers in
      * quote order - "2,1,3,3" - which is the one thing the form cannot say.
      */
+    /**
+     * "2,1,3" -> ["2","1","3"], and so does "213" when there are three quotes.
+     *
+     * Typing the numbers in one run is what people do - the field is narrow
+     * and the separators look optional. Read literally it is a single number
+     * nobody has, so quote 1 showed a warning and every quote after it showed
+     * nothing, which reads as the field being broken rather than mistyped.
+     *
+     * Only split a bare run of digits whose length matches the number of
+     * quotes exactly. Anything else is left alone: with 8 quotes and "123"
+     * typed, there is no telling whether that is three answers or a mistake.
+     */
+    function splitAnswers(order, expected) {
+        var t = trim(order || "");
+        if (t === "") { return []; }
+        var parts = t.split(/[\s,;\-]+/);
+        if (parts.length === 1 && expected > 1 &&
+            /^[0-9\u0660-\u0669]+$/.test(parts[0]) && parts[0].length === expected) {
+            parts = parts[0].split("");
+        }
+        return parts;
+    }
+
     function buildQuotesCSV(quotes, order) {
-        var keys = String(order || "").split(/[\s,;\-]+/);
+        var keys = splitAnswers(order, quotes.length);
         var rows = ["\ufeff" + ["#", "التوقيت", "المتحدث", "الصفة", "نص الاقتباس"].join(",")];
         for (var i = 0; i < quotes.length; i++) {
             var who = trim(keys[i] || "");
@@ -1864,7 +1922,7 @@
          * quote, here, is worth more than any explanation of which is which.
          */
         function fillQuoteList() {
-            var keys = trim(orderTxt.text).split(/[\s,;\-]+/);
+            var keys = splitAnswers(orderTxt.text, quotes.length);
             quoteList.removeAll();
             for (var i = 0; i < quotes.length; i++) {
                 var it = quoteList.add("item", String(quotes[i].index));
@@ -1880,11 +1938,34 @@
             }
         }
 
+        /**
+         * The hint used to show a fixed nine-number example next to a form
+         * that had eight quotes, so it read as the shape of the answer rather
+         * than the length of it - and the length is the part people get wrong.
+         */
+        function updateOrderHelp() {
+            var n = quotes.length, g = guests.length;
+            if (n === 0) {
+                orderHelp.text = "اضغط Read الأول، وبعدين اكتب هنا مين قال كل اقتباس.";
+                return;
+            }
+            var eg = [];
+            for (var i = 0; i < n; i++) { eg.push(String(g ? (i % g) + 1 : 1)); }
+            orderHelp.text =
+                "اكتب " + n + " رقم — واحد لكل اقتباس بالترتيب، بفواصل. مثال: " + eg.join(",") + "\n" +
+                (g
+                  ? "رقم الضيف من الجدول اللي فوق (١ .. " + g + ") — مش رقم الكليب ولا رقم " +
+                    "الاقتباس. وتقدر تكتب جزء من الاسم بدل الرقم."
+                  : "⚠️ الجدول فاضي — لازم قايمة ضيوف الأول، وإلا الأرقام مالهاش معنى.") + "\n" +
+                "شوف عمود \"الضيف\" فوق وهو بيتملى وانت بتكتب — ده اللي هيتكتب على الكرت.";
+        }
+
         function doRead() {
             quotes = parseFormQuotes(pasteBox.text);
             guests = parseGuestList(pasteBox.text);
 
             fillQuoteList();
+            updateOrderHelp();
             guestList.removeAll();
             for (var g = 0; g < guests.length; g++) {
                 var gi = guestList.add("item", String(g + 1));
@@ -1936,8 +2017,8 @@
 
             setStatus(quotes.length + " اقتباس، " + guests.length + " ضيف." +
                       (guests.length === 0
-                        ? "  |  ⚠️ مفيش قايمة ضيوف — الصقها تحت الاقتباسات تحت سطر فيه " +
-                          "\"الضيوف:\"، وإلا أرقام الضيوف مش هتتحول لأسماء."
+                        ? "  |  ⚠️ مفيش قايمة ضيوف — الصق أسامي الضيوف تحت آخر اقتباس، " +
+                          "سطر لكل واحد: \"الاسم — الصفة\". من غيرها أرقام الضيوف مالهاش معنى."
                         : "  |  راجع الترقيم فوق، وبعدين اكتب مين قال إيه.") +
                       "  لسه مفيش حاجة اتكتبت.");
         }
@@ -1968,7 +2049,7 @@
             }
 
             var filled = 0, given = 0, i;
-            var keys = trim(orderTxt.text).split(/[\s,;\-]+/);
+            var keys = splitAnswers(orderTxt.text, quotes.length);
             for (i = 0; i < keys.length; i++) { if (trim(keys[i]) !== "") { given++; } }
             for (i = 0; i < quotes.length; i++) {
                 if (trim(keys[i] || "") !== "") { filled++; }
@@ -2015,8 +2096,8 @@
                 fix = "\u0631\u0627\u062c\u0639 \u0627\u0644\u0627\u0633\u062a\u0645\u0627\u0631\u0629 \u0648\u0627\u0646\u0633\u062e \u062a\u0627\u0646\u064a\u060c \u0623\u0648 \u0638\u0628\u0651\u0637 \u062e\u0627\u0646\u0629 \u00abWho said what\u00bb.";
             } else if (guests.length === 0) {
                 headline = "\u26a0\ufe0f  \u0645\u0641\u064a\u0634 \u0642\u0627\u064a\u0645\u0629 \u0636\u064a\u0648\u0641 \u2014 \u0627\u0644\u0623\u0631\u0642\u0627\u0645 \u0645\u0634 \u0647\u062a\u062a\u062d\u0648\u0644 \u0644\u0623\u0633\u0627\u0645\u064a.";
-                fix = "\u0627\u0644\u0635\u0642 \u0642\u0627\u064a\u0645\u0629 \u0627\u0644\u0636\u064a\u0648\u0641 \u062a\u062d\u062a \u0627\u0644\u0627\u0642\u062a\u0628\u0627\u0633\u0627\u062a \u0641\u064a \u0646\u0641\u0633 \u0627\u0644\u0645\u0631\u0628\u0639 \u2014 " +
-                      "\u0633\u0637\u0631 \u0644\u0643\u0644 \u0636\u064a\u0641\u060c \u00ab\u0627\u0644\u0627\u0633\u0645 \u2014 \u0627\u0644\u0635\u0641\u0629\u00bb \u2014 \u0648\u0627\u0636\u063a\u0637 Read \u062b\u0645 Save.";
+                fix = "الصق أسامي الضيوف تحت آخر اقتباس في نفس المربع — سطر لكل ضيف، " +
+                      "«الاسم — الصفة» — واضغط Read ثم Save.";
             } else if (filled === 0) {
                 headline = "\u26a0\ufe0f  \u0645\u0641\u064a\u0634 \u0648\u0644\u0627 \u0627\u0642\u062a\u0628\u0627\u0633 \u0645\u062a\u062d\u062f\u062f \u0644\u0647 \u0636\u064a\u0641 (0 \u0645\u0646 " + quotes.length + ").";
                 fix = "\u0627\u0643\u062a\u0628 \u0641\u064a \u062e\u0627\u0646\u0629 \u00abWho said what\u00bb \u0631\u0642\u0645 \u0627\u0644\u0636\u064a\u0641 \u0644\u0643\u0644 \u0627\u0642\u062a\u0628\u0627\u0633 \u0628\u0627\u0644\u062a\u0631\u062a\u064a\u0628\u060c " +

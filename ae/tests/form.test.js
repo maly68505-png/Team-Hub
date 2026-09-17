@@ -16,7 +16,7 @@ var sb = new Function('VIDEO_EXT', 'MIN_MATCH_SCORE', 'TOL',
   block + '\nreturn { parseFormQuotes: parseFormQuotes, parseGuestList: parseGuestList,' +
   ' buildQuotesCSV: buildQuotesCSV, buildGuestsText: buildGuestsText,' +
   ' csvField: csvField, digitsToInt: digitsToInt, parseCSVText: parseCSVText,' +
-  ' parseQuotesFile: parseQuotesFile };'
+  ' parseQuotesFile: parseQuotesFile, splitAnswers: splitAnswers };'
 )("mp4,mov", 2, 0.0005);
 
 var pass = 0, fail = 0;
@@ -163,6 +163,69 @@ eq('and that quote is still read as one', sb.parseFormQuotes(after).length, 1);
 
 var para = 'الضيوف:\nأ ب — ج د\n' + new Array(230).join('ك');
 eq('a paragraph ends it too', sb.parseGuestList(para).length, 1);
+
+// --------------------------------------------- a paste with no guest heading
+//
+// This is the elections form exactly as it came out of the producer's file:
+// eight numbered quotes and then the names, with no "الضيوف:" line above them
+// because the selection started at the quote table. Requiring that heading
+// read three guests as zero, which left every guest number unresolved and
+// every card unnamed - and nothing on screen connected the two.
+console.log('\n-- guests listed under the quotes, with no heading over them --');
+
+var noHead =
+  '( 1 ) السلطة تُريد من خلال الانتخابات أن تجدد شرعيتها السياسية        11:06\n' +
+  '( 2 ) من المحتمل تأجيل الانتخابات في ظل الواقع الذي تعيشه الأراضي     29:35\n' +
+  '( 8 ) شروط الترشح للانتخابات تُنافي القانون الأساسي الذي يضمن حق المشاركة\n' +
+  '-الدكتورة دلال عريقات، عضو المجلس الثوري لحركة فتح وأستاذة الدبلوماسية\n' +
+  '-محمد مشينش، محلل سياسي وعضو الأمانة العامة للمؤتمر الشعبي\n' +
+  '-الدكتور إيهاب محارمة، باحث في المركز العربي للأبحاث\n';
+
+var ng = sb.parseGuestList(noHead);
+eq('all three are found anyway', ng.length, 3);
+eq('the bullet is not part of the name', ng[0].name, 'الدكتورة دلال عريقات');
+eq('and the comma still splits name from title',
+   ng[0].role.indexOf('عضو المجلس الثوري'), 0);
+eq('the third one too', ng[2].name, 'الدكتور إيهاب محارمة');
+eq('the quotes above are not read as guests',
+   ng[0].name.indexOf('السلطة'), -1);
+eq('and the quotes still come out whole', sb.parseFormQuotes(noHead).length, 3);
+
+console.log('\n-- but only when there is a numbered quote to anchor on --');
+eq('a bare list of sentences is not turned into guests',
+   sb.parseGuestList('كلام عادي، مالوش علاقة\nوسطر تاني، برضه\n').length, 0);
+eq('an empty paste gives nothing', sb.parseGuestList('').length, 0);
+eq('a real heading still wins over the fallback',
+   sb.parseGuestList('( 1 ) اقتباس طويل بما فيه الكفاية هنا\nالضيوف:\nأ — ب\n').length, 1);
+
+// -------------------------------------------------- "who said what", mistyped
+//
+// The field is narrow and the commas look optional, so the numbers get typed
+// in a run. Read literally, "12345678" is one number nobody has: quote 1 shows
+// a warning, quotes 2-8 show nothing, and it reads as the field being broken.
+console.log('\n-- guest numbers typed without commas --');
+eq('separated normally', sb.splitAnswers('2,1,3,3,1,2,3,2', 8),
+   ['2', '1', '3', '3', '1', '2', '3', '2']);
+eq('eight digits in a run, eight quotes', sb.splitAnswers('12345678', 8),
+   ['1', '2', '3', '4', '5', '6', '7', '8']);
+eq('spaces work as well as commas', sb.splitAnswers('2 1 3', 3), ['2', '1', '3']);
+eq('arabic digits in a run', sb.splitAnswers('٢١٣', 3), ['٢', '١', '٣']);
+
+console.log('\n-- and it does not guess when the length disagrees --');
+eq('three digits against eight quotes stays one answer',
+   sb.splitAnswers('123', 8), ['123']);
+eq('a two-digit guest number is not torn in half',
+   sb.splitAnswers('12', 1), ['12']);
+eq('a name is never split', sb.splitAnswers('مشينش', 6), ['مشينش']);
+eq('an empty field is no answers at all', sb.splitAnswers('', 8), []);
+
+console.log('\n-- and the CSV it writes follows --');
+var eight = [];
+for (var q = 0; q < 8; q++) { eight.push({ text: 'اقتباس رقم ' + (q + 1), timecode: '' }); }
+var csvRun = sb.buildQuotesCSV(eight, '12345678');
+var rowsRun = sb.parseCSVText(csvRun);
+eq('one guest number per row, in order',
+   [rowsRun[1][2], rowsRun[4][2], rowsRun[8][2]], ['1', '4', '8']);
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
