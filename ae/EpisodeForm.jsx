@@ -1977,62 +1977,60 @@
             // Counting the guest numbers against the quotes is the only check
             // here that can catch a quote the selection missed: nine numbers
             // typed from the form against eight quotes read out of it.
+            // Counting the guest numbers against the quotes is the only check
+            // here that can catch a quote the selection missed: nine numbers
+            // typed from the form against eight quotes read out of it.
             var countNote = "";
             if (given > 0 && given !== quotes.length) {
-                countNote = "⚠️  كتبت " + given + " رقم ضيف، والاقتباسات " + quotes.length + ".\n\n" +
-                            (given > quotes.length
-                              ? "يعني في " + (given - quotes.length) + " اقتباس التظليل مأخدهمش —\n" +
-                                "راجع آخر صف في الاستمارة وانسخ تاني."
-                              : "يعني في " + (quotes.length - given) + " اقتباس من غير ضيف.") +
-                            "\n\n";
+                countNote = given > quotes.length
+                    ? "\u26a0\ufe0f  \u0643\u062a\u0628\u062a " + given + " \u0631\u0642\u0645 \u0636\u064a\u0641 \u0648\u0627\u0644\u0627\u0642\u062a\u0628\u0627\u0633\u0627\u062a " + quotes.length +
+                      " \u0628\u0633 \u2014 \u0627\u0644\u062a\u0638\u0644\u064a\u0644 \u063a\u0627\u0644\u0628\u0627\u064b \u0645\u0623\u062e\u062f\u0634 \u0622\u062e\u0631 \u0635\u0641 \u0645\u0646 \u0627\u0644\u0627\u0633\u062a\u0645\u0627\u0631\u0629."
+                    : "\u26a0\ufe0f  \u0643\u062a\u0628\u062a " + given + " \u0631\u0642\u0645 \u0636\u064a\u0641 \u0648\u0627\u0644\u0627\u0642\u062a\u0628\u0627\u0633\u0627\u062a " + quotes.length +
+                      " \u2014 \u0641\u0627\u0636\u0644 " + (quotes.length - given) + " \u0645\u0646 \u063a\u064a\u0631 \u0636\u064a\u0641.";
             }
 
             var done = (filled === quotes.length && filled > 0 && guests.length > 0 &&
                         countNote === "");
 
+            var tally = quotes.length + " \u0627\u0642\u062a\u0628\u0627\u0633\u060c " + guests.length + " \u0636\u064a\u0641" +
+                        "   |   \u0627\u062a\u0643\u062a\u0628 \u0641\u064a " + dest.fsName;
+
             // A dialog is for something that needs doing. When nothing does,
             // it is a box in the way of the next step - which is what it had
             // become: every run ending in a modal, read as a complaint.
             if (done) {
-                setStatus("✅  فولدر الحلقة جاهز — " + quotes.length + " اقتباس، " +
-                          guests.length + " ضيف، وكل اقتباس قدامه ضيفه.   |   " +
-                          "اتكتب في " + dest.fsName + "   |   " +
-                          "الخطوة الجاية: حط الكليبات في نفس الفولدر وشغّل QuoteCards.jsx");
+                setStatus("\u2705  \u0641\u0648\u0644\u062f\u0631 \u0627\u0644\u062d\u0644\u0642\u0629 \u062c\u0627\u0647\u0632 \u2014 " + tally + "   |   " +
+                          "\u0627\u0644\u062e\u0637\u0648\u0629 \u0627\u0644\u062c\u0627\u064a\u0629: \u062d\u0637 \u0627\u0644\u0643\u0644\u064a\u0628\u0627\u062a \u0641\u064a \u0646\u0641\u0633 \u0627\u0644\u0641\u0648\u0644\u062f\u0631 \u0648\u0634\u063a\u0651\u0644 QuoteCards.jsx");
                 return;
             }
 
-            setStatus("اتكتب في " + dest.fsName);
-            alert("فولدر الحلقة اتكتب — وفاضل حاجة\n\n" +
-                  "quotes.csv          " + quotes.length + " اقتباس\n" +
-                  (info !== ""
-                    ? "episode-info.txt    " + guests.length + " ضيف\n"
-                    : "") +
-                  "\n" + countNote +
-                  // Numbers in the speaker column mean nothing without the list
-                  // they point at - the card would print "2" as the name.
-                  (guests.length === 0
-                    ? "⚠️  مفيش قايمة ضيوف!\n\n" +
-                      "أرقام الضيوف مش هتتحول لأسماء من غيرها. الصق قايمة\n" +
-                      "الضيوف تحت الاقتباسات في نفس المربع، بالشكل ده:\n\n" +
-                      "    الضيوف:\n" +
-                      "      - الاسم الكامل — الصفة\n" +
-                      "      - الاسم الكامل — الصفة\n\n" +
-                      "واضغط Read و Save تاني.\n\n"
-                    : "") +
-                  (filled === quotes.length && filled > 0
-                    ? "✅  كل اقتباس قدامه ضيفه.\n"
-                    : "⚠️  عمود المتحدث اتملى في " + filled + " من " + quotes.length + ".\n\n" +
-                      (filled === 0
-                        ? "سيبت خانة \"Who said what\" فاضية. ارجع واكتب فيها رقم\n" +
-                          "الضيف لكل اقتباس بالترتيب — زي 2,1,3,3,1,2,3,2,2 — واضغط\n" +
-                          "Save تاني. أو افتح quotes.csv واملا العمود بإيدك.\n"
-                        : "افتح quotes.csv وحط رقم الضيف في الباقي.\n") +
-                      "من غير ده الكروت هتفضل باسم القالب.\n") +
-                  "\n(الرسالة دي مش بتظهر لما يبقى مفيش حاجة ناقصة.)\n" +
-                  "\nالخطوة الجاية: حط الكليبات في نفس الفولدر، وشغّل QuoteCards.jsx.\n\n" +
-                  "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n\n" +
-                  "Episode folder ready: " + quotes.length + " quote(s), " +
-                  guests.length + " guest(s), speaker column filled for " + filled + ".");
+            // Something IS missing, so a dialog is right - but only for the one
+            // thing that matters most. The old one listed the counts, the fix,
+            // an example guest list, the next step, and then said all of it
+            // again in English: twenty lines to carry one instruction, which
+            // is read as noise and clicked away.
+            var headline, fix;
+            if (countNote !== "") {
+                headline = countNote;
+                fix = "\u0631\u0627\u062c\u0639 \u0627\u0644\u0627\u0633\u062a\u0645\u0627\u0631\u0629 \u0648\u0627\u0646\u0633\u062e \u062a\u0627\u0646\u064a\u060c \u0623\u0648 \u0638\u0628\u0651\u0637 \u062e\u0627\u0646\u0629 \u00abWho said what\u00bb.";
+            } else if (guests.length === 0) {
+                headline = "\u26a0\ufe0f  \u0645\u0641\u064a\u0634 \u0642\u0627\u064a\u0645\u0629 \u0636\u064a\u0648\u0641 \u2014 \u0627\u0644\u0623\u0631\u0642\u0627\u0645 \u0645\u0634 \u0647\u062a\u062a\u062d\u0648\u0644 \u0644\u0623\u0633\u0627\u0645\u064a.";
+                fix = "\u0627\u0644\u0635\u0642 \u0642\u0627\u064a\u0645\u0629 \u0627\u0644\u0636\u064a\u0648\u0641 \u062a\u062d\u062a \u0627\u0644\u0627\u0642\u062a\u0628\u0627\u0633\u0627\u062a \u0641\u064a \u0646\u0641\u0633 \u0627\u0644\u0645\u0631\u0628\u0639 \u2014 " +
+                      "\u0633\u0637\u0631 \u0644\u0643\u0644 \u0636\u064a\u0641\u060c \u00ab\u0627\u0644\u0627\u0633\u0645 \u2014 \u0627\u0644\u0635\u0641\u0629\u00bb \u2014 \u0648\u0627\u0636\u063a\u0637 Read \u062b\u0645 Save.";
+            } else if (filled === 0) {
+                headline = "\u26a0\ufe0f  \u0645\u0641\u064a\u0634 \u0648\u0644\u0627 \u0627\u0642\u062a\u0628\u0627\u0633 \u0645\u062a\u062d\u062f\u062f \u0644\u0647 \u0636\u064a\u0641 (0 \u0645\u0646 " + quotes.length + ").";
+                fix = "\u0627\u0643\u062a\u0628 \u0641\u064a \u062e\u0627\u0646\u0629 \u00abWho said what\u00bb \u0631\u0642\u0645 \u0627\u0644\u0636\u064a\u0641 \u0644\u0643\u0644 \u0627\u0642\u062a\u0628\u0627\u0633 \u0628\u0627\u0644\u062a\u0631\u062a\u064a\u0628\u060c " +
+                      "\u0648\u0627\u0636\u063a\u0637 Save \u062a\u0627\u0646\u064a.";
+            } else {
+                headline = "\u26a0\ufe0f  " + filled + " \u0645\u0646 " + quotes.length + " \u0627\u0642\u062a\u0628\u0627\u0633 \u0628\u0633 \u0645\u062a\u062d\u062f\u062f \u0644\u0647 \u0636\u064a\u0641.";
+                fix = "\u0643\u0645\u0651\u0644 \u062e\u0627\u0646\u0629 \u00abWho said what\u00bb\u060c \u0623\u0648 \u0627\u0641\u062a\u062d quotes.csv \u0648\u0627\u0645\u0644\u0627 \u0639\u0645\u0648\u062f \u0627\u0644\u0645\u062a\u062d\u062f\u062b.";
+            }
+
+            setStatus(headline + "   |   " + tally);
+            // The consequence line matters more than the counts: the cards do
+            // not keep the template's name any more, they come out blank.
+            alert(headline + "\n\n" + fix + "\n\n" +
+                  "\u0645\u0646 \u063a\u064a\u0631 \u062f\u0647 \u0627\u0644\u0643\u0631\u0648\u062a \u0647\u062a\u0637\u0644\u0639 \u0645\u0646 \u063a\u064a\u0631 \u0623\u0633\u0627\u0645\u064a.");
         }
 
         // After Effects has no PDF or Word reader, and no script can add one.

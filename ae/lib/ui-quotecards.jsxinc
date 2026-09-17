@@ -524,17 +524,19 @@
             note += pairNote + sameFolderNote + presetNote;
 
             if (nTarget && withSpeaker === 0) {
-                note += "  |  THE NAMES WILL NOT CHANGE: " +
+                note += "  |  EVERY CARD WILL COME OUT WITH NO NAME: " +
                         (trim(quotes[0].speakerColumn) !== ""
                             ? "the column \"" + quotes[0].speakerColumn + "\" in your quote " +
                               "file is empty - type a name into every row"
                             : "your quote file has no speaker column - add one headed " +
                               "\"المتحدث\" or \"Speaker\"") +
-                        ", so every card keeps the template's name.";
+                        ". The name line is cleared rather than left as the template " +
+                        "had it, because that name belongs to a real person who did not " +
+                        "say this.";
             } else if (!nTarget && withSpeaker > 0) {
                 note += "  |  your file has " + withSpeaker + " speaker name(s) but \"Name layer\" " +
                         "is \"(leave the name alone)\" - pick the name layer, or every card keeps " +
-                        "the template's name.";
+                        "the template's name, which belongs to somebody else.";
             }
 
             setStatus(ready + " card(s) ready out of " + plan.length + " quote(s)  |  " +
@@ -637,6 +639,7 @@
             log.push("");
 
             var cache = {}, made = 0, skipped = 0, created = [], rotoOff = 0, mattePending = [];
+            var cleared = 0;
 
             app.beginUndoGroup("Quote Cards - build " + plan.length + " cards");
             try {
@@ -748,8 +751,8 @@
                         }
                     }
 
-                    writeSideText(nTarget, "name", row.quote.speaker, mapping, log);
-                    writeSideText(rTarget, "title", row.quote.role, mapping, log);
+                    cleared += writeSideText(nTarget, "name", row.quote.speaker, mapping, log);
+                    cleared += writeSideText(rTarget, "title", row.quote.role, mapping, log);
 
                     if (cbMatte.value) {
                         var matte = buildMatteSetup(target, log);
@@ -797,7 +800,11 @@
                         : "NOT SWAPPED - no alpha layer chosen, so the cut-out is " +
                           "whatever the template already had") + "\n" +
                   "Text    -> " + (tTarget ? tTarget.comp.name + " / " + tTarget.layer.name : "not touched") + "\n" +
-                  "Name    -> " + (nTarget ? nTarget.comp.name + " / " + nTarget.layer.name : "not touched") +
+                  "Name    -> " + (nTarget
+                        ? nTarget.comp.name + " / " + nTarget.layer.name +
+                          (cleared > 0 ? "   (" + cleared + " line(s) CLEARED - nothing in the " +
+                                         "quote list says who they are)" : "")
+                        : "not touched") +
                   "\n" +
                   "Title   -> " + (rTarget ? rTarget.comp.name + " / " + rTarget.layer.name : "not touched") +
                   (rotoOff > 0
@@ -827,19 +834,33 @@
          * Writes the speaker's name, or their job title, onto its own layer.
          * The quote body is not the only text on one of these cards - leaving
          * these two alone is exactly what puts one guest's name on all nine.
+         *
+         * With nothing to write, the layer is CLEARED rather than left alone.
+         * The template's own name is a real person's name: keeping it puts
+         * that person's name and job under a different person's face, and the
+         * card looks finished, so nobody checks it. An empty line is obviously
+         * unfinished, which is the whole difference.
+         *
+         * Not wanting that is what "(leave the name alone)" in the layer list
+         * is for - picking a layer here says this line is yours to manage.
          */
         function writeSideText(target, what, value, mapping, log) {
-            if (!target) { return; }
-            if (trim(value || "") === "") {
-                log.push("    note: no " + what + " for this card, the template's " +
-                         what + " is kept as it was");
-                return;
-            }
+            if (!target) { return 0; }
             var layer = mapping[target.comp.id].layer(target.index);
+            if (trim(value || "") === "") {
+                if (setLayerText(layer, "", log)) {
+                    log.push("    " + what + " CLEARED on " + layer.name + " - the quote list " +
+                             "does not say who this is, and the template's " + what +
+                             " belongs to somebody else");
+                    return 1;
+                }
+                return 0;
+            }
             if (setLayerText(layer, value, log)) {
                 log.push("    " + what + " set: \"" + value + "\" on " + layer.name);
                 if (cbFitText.value) { fitTextToBox(layer, log); }
             }
+            return 0;
         }
 
         // ------------------------------------------------- remembering the setup

@@ -108,5 +108,60 @@ var huge = new TextLayer('quote', new TextDoc(new Array(4000).join('x'), 48, tru
 sb.fitTextToBox(huge, log);
 eq('stops at 6pt or above', huge._prop._doc.fontSize >= 6, true);
 
+// ------------------------------------------------- the name and title lines
+//
+// A card built from a template carries the template's guest - a real person,
+// named on screen. When the quote list does not say who said this quote, that
+// name used to be left exactly where it was, so a real person's name and job
+// sat under a different person's face on a card that looked finished.
+console.log('\n-- a line with nothing to put in it is cleared, not left --');
+
+var ui = fs.readFileSync(path.join(AE, 'lib', 'ui-quotecards.jsxinc'), 'utf8');
+var fnSrc = ui.slice(ui.indexOf('function writeSideText('),
+                     ui.indexOf('// ------------------------------------------------- remembering the setup'));
+eq('the shipped function was found', /^function writeSideText\(/.test(fnSrc), true);
+
+// run the real function body against recording stubs
+var calls, fitted;
+var side = new Function('trim', 'setLayerText', 'fitTextToBox', 'cbFitText',
+                        fnSrc + '\nreturn writeSideText;')(
+  function (x) { return String(x).replace(/^\s+|\s+$/g, ''); },
+  function (layer, str) { calls.push([layer.name, str]); return true; },
+  function (layer) { fitted.push(layer.name); return true; },
+  { value: true });
+
+function Layer(name) { this.name = name; }
+function mappingFor(layer) { return { 7: { layer: function () { return layer; } } }; }
+var nameLayer = new Layer('Name');
+var TARGET = { comp: { id: 7 }, index: 1 };
+
+calls = []; fitted = []; log = [];
+var n1 = side(TARGET, 'name', 'محمد مشينش', mappingFor(nameLayer), log);
+eq('a real name is written', calls, [['Name', 'محمد مشينش']]);
+eq('and fitted to its box', fitted, ['Name']);
+eq('nothing was cleared', n1, 0);
+
+calls = []; fitted = []; log = [];
+var n2 = side(TARGET, 'name', '', mappingFor(nameLayer), log);
+eq('an empty name CLEARS the layer', calls, [['Name', '']]);
+eq('it is counted as cleared', n2, 1);
+eq('and an empty line is not squeezed to fit', fitted, []);
+eq('the log says the template name belonged to someone else',
+   /belongs to somebody else/.test(log.join(' ')), true);
+
+calls = []; log = [];
+eq('whitespace counts as empty too',
+   side(TARGET, 'name', '   ', mappingFor(nameLayer), log), 1);
+eq('cleared, not written through', calls, [['Name', '']]);
+
+calls = []; log = [];
+eq('"leave the name alone" touches nothing',
+   side(null, 'name', '', mappingFor(nameLayer), log), 0);
+eq('no write at all', calls, []);
+
+calls = []; log = [];
+side(TARGET, 'title', '', mappingFor(new Layer('TITLE')), log);
+eq('the job title is cleared on the same rule', calls, [['TITLE', '']]);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
