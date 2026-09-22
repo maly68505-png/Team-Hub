@@ -173,13 +173,15 @@ user copies one file and nothing else.
 ```
 node ae/tests/parse.test.js       # 46 assertions
 node ae/tests/discovery.test.js   # 11 assertions
-node ae/tests/quotes.test.js      # 19 assertions
-node ae/tests/nested.test.js      # 48 assertions
+node ae/tests/form.test.js        # 75 assertions
+node ae/tests/quotes.test.js      # 83 assertions
+node ae/tests/nested.test.js      # 54 assertions
 node ae/tests/timing.test.js      # 16 assertions
-node ae/tests/text.test.js        # 20 assertions
+node ae/tests/text.test.js        # 33 assertions
 node ae/tests/alpha.test.js       # 26 assertions
 node ae/tests/write.test.js       # 10 assertions
-node ae/tests/roto.test.js        # 16 assertions
+node ae/tests/roto.test.js        # 35 assertions
+node ae/tests/setup.test.js       # 11 assertions
 ```
 
 `parse.test.js` covers timecode parsing across every accepted format, range and
@@ -190,6 +192,12 @@ input, and that both built files still embed the shared core verbatim.
 auto-discovery against simulated project trees: the expected layout, nested and
 oddly-named folders, decoy `.txt` files, loose clips, an empty project, and the
 tool's own log file.
+
+`form.test.js` covers reading the producer's weekly form: numbered quotes in
+every shape they arrive in, a guest list with or without a heading over it and
+with or without the bullets Word drops on copy, a list numbered rather than
+bulleted (the number arrives glued to the name), a paste that came apart in a
+PDF copy, and guest numbers typed as one run of digits instead of separated.
 
 `quotes.test.js` covers natural clip ordering, the CSV reader (quoted commas,
 header detection, headerless files), and reading quotes out of `.csv`, `.txt`
@@ -222,6 +230,12 @@ repainted from script. It asserts those effects are recognised by match name
 or by whatever they were renamed to, that ordinary effects are left alone,
 and that the template's disabled alpha route gets switched back on once a
 cut-out clip is supplied.
+
+`setup.test.js` covers the choices that travel with the episode folder: a
+round trip through `QuoteCards_setup.txt`, a file somebody hand-edited, and
+matching a stored label back to its layer. It also asserts that no path is
+ever written into that file — paths are the one thing that differs between
+machines, and the layer choices are the one thing that does not.
 
 The AE-API parts — layer targeting, `replaceSource`, layer splitting, matte
 setup — need a running After Effects and are **not** covered by these tests.
