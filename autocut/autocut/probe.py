@@ -81,4 +81,18 @@ def probe(path: Path) -> MediaInfo:
                 a0 = _seconds(audio.start_time, audio.time_base) or 0.0
                 v0 = _seconds(video.start_time, video.time_base) or 0.0
                 info.av_offset = a0 - v0
+        if info.duration <= 0:
+            # some recorder WAVs (long BWF / RF64) carry no duration in the header:
+            # measure it from the packets instead of treating the file as empty
+            stream = audio if audio is not None else video
+            if stream is not None:
+                info.duration = demux_duration(c, stream)
     return info
+
+
+def demux_duration(c, stream) -> float:
+    total = 0
+    for pkt in c.demux(stream):
+        if pkt.duration:
+            total += pkt.duration
+    return float(total * stream.time_base) if stream.time_base else 0.0

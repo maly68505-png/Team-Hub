@@ -428,7 +428,13 @@ async function reportJob(code) {
     130: ["warn", "تم الإيقاف."],
     [-15]: ["warn", "تم الإيقاف."],
   };
-  const [k, text] = msgs[code] || ["error", "حدث خطأ — افتح السجل لمعرفة السبب."];
+  let [k, text] = msgs[code] || ["error", "حدث خطأ — افتح السجل لمعرفة السبب."];
+  const low = (S.project && S.project.sync || []).filter((r) => r.status === "LOW").map((r) => r.clip);
+  if (code === 0 && kind === "run" && low.length) {
+    k = "warn";
+    text += `\n⚠ ${low.length} ملف مزامنته ضعيفة لم يدخل القطع (والقطع رجع للكاميرا الواسعة مكانه): `
+      + low.slice(0, 6).join("، ") + (low.length > 6 ? "…" : "") + " — راجع جدول المزامنة في الخطوة ٣.";
+  }
   jobMessage(k, text);
   if (k === "error") show($("log"), true);
   if (code === 0 && kind === "run") $("outputs").scrollIntoView({ behavior: "smooth", block: "center" });

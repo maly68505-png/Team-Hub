@@ -192,15 +192,22 @@ class Writer:
         _sub(asc, "depth", 16)
         _sub(asc, "samplerate", 48000)
         seq_in = rate.frames(tl.t0)
+        n_audio = 0
         for info in self.p.audio:
             total = int(info.duration * rate.float)
             end = min(tl.n, total - seq_in)
+            if end <= 0:
+                log.warning("clean audio %s (%.1fs long) does not reach this part of the "
+                            "recording — not placed", info.path.name, info.duration)
             for ch in range(1, max(1, info.audio_channels) + 1):
                 tr = _sub(audio, "track", premiereTrackType="Mono")
                 if end > 0:
                     self._audio_item(tr, info, ch, 0, end, seq_in)
+                    n_audio += 1
                 _sub(tr, "enabled", "TRUE")
                 _sub(tr, "locked", "FALSE")
+        if not n_audio:
+            log.error("NO clean audio could be placed on the audio tracks — check the audio files")
         log.info("XML: V1 %d clip(s), V2..V%d cameras, A1..A%d clean audio",
                  n_v1, 1 + len(self.p.cameras), len(audio.findall("track")))
         return root
