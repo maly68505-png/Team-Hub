@@ -29,7 +29,7 @@ import yaml
 
 from . import __version__, models
 from .config import DEFAULTS, ConfigError, load
-from .scan import AUDIO_NAME, WORK_DIR, ScanError, discover_cameras, find_audio_dir, scan
+from .scan import AUDIO_NAME, WORK_DIR, ScanError, clean_audio_files, discover_cameras, find_audio_dir, scan
 
 UI_DIR = Path(__file__).parent / "ui"
 DEFAULT_PORT = 47821
@@ -119,8 +119,10 @@ def project_state(path: Path) -> dict:
         out["audio_dir"] = str(ad)
         if cfg.get("audio_folder") in (None, "", "audio"):
             cfg["audio_folder"] = os.path.relpath(ad, path)
+        out["audio_files"] = [str(f.relative_to(ad)) for f in clean_audio_files(ad)]
     except ScanError as e:
         out["audio_error"] = str(e)
+        out["audio_error_ar"] = e.ar or str(e)
     if cfg.get("cameras"):
         cams = [str(c) for c in cfg["cameras"]]
     else:
@@ -286,6 +288,11 @@ def make_handler(state: State):
                     cfg["audio_folder"] = os.path.relpath(audio, proj)
                 (proj / "config.yaml").write_text(config_text(cfg), encoding="utf-8")
                 load(proj / "config.yaml")  # validate what we wrote
+                return self._json({"ok": True})
+            if path == "/api/config/reset":
+                f = Path(b["path"]).expanduser().resolve() / "config.yaml"
+                if f.is_file():
+                    f.unlink()
                 return self._json({"ok": True})
             if path == "/api/reveal":
                 reveal(b["path"], bool(b.get("open")))

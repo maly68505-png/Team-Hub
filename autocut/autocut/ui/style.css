@@ -123,3 +123,6 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
 }
 
 .warn-text { color: var(--warn); }
+.recent .chip { display: inline-flex; align-items: center; gap: 2px; }
+.recent .chip .x { border: 0; background: none; padding: 0 4px; color: var(--muted); }
+.recent .chip .x:hover { color: var(--bad); }

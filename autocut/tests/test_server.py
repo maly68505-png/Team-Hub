@@ -127,3 +127,13 @@ def test_stale_long_camera_is_replaced_and_flagged(srv, project):
     code, st = call(base, "/api/project?path=" + str(project))
     assert st["long_camera_reset"] == "3_Proxy"
     assert st["config"]["long_camera"] in st["cameras"]
+
+
+def test_reset_settings_deletes_config_only(srv, project):
+    base, _ = srv
+    (project / "config.yaml").write_text("long_camera: CAM_A\n")
+    (project / "_autocut").mkdir()
+    (project / "_autocut" / "sync.json").write_text("{}")
+    assert call(base, "/api/config/reset", {"path": str(project)})[0] == 200
+    assert not (project / "config.yaml").exists()
+    assert (project / "_autocut" / "sync.json").exists()  # analysis kept

@@ -86,8 +86,13 @@ function renderRecent() {
   const recent = recall("autocut-recent", []).slice(0, 6);
   if (recent.length) box.append(h("span", { class: "muted" }, "آخر المجلدات:"));
   for (const p of recent) {
-    box.append(h("button", { type: "button", dir: "ltr", title: p, onclick: () => loadProject(p) },
-      p.split("/").filter(Boolean).pop()));
+    box.append(h("span", { class: "chip" },
+      h("button", { type: "button", dir: "ltr", title: p, onclick: () => loadProject(p) },
+        p.split("/").filter(Boolean).pop()),
+      h("button", { type: "button", class: "x", title: "إزالة من القائمة", onclick: () => {
+        store("autocut-recent", recall("autocut-recent", []).filter((x) => x !== p));
+        renderRecent();
+      } }, "×")));
   }
 }
 
@@ -104,6 +109,8 @@ async function loadProject(path) {
   }
   if (!st.exists) return showScanError("المجلد غير موجود");
   S.project = st;
+  show($("btnClose"), true);
+  store("autocut-last-closed", false);
   const rec = [st.path, ...recall("autocut-recent", []).filter((p) => p !== st.path)];
   store("autocut-recent", rec.slice(0, 8));
   renderRecent();
@@ -156,8 +163,11 @@ function renderScan() {
 function renderSettings() {
   const st = S.project, cfg = st.config;
   $("cfgAudio").value = st.audio_dir || "";
-  $("audioError").textContent = st.audio_error ? "لم أجد مجلد الصوت النظيف — اضغط «اختر…» وحدده." : "";
+  $("audioError").textContent = st.audio_error_ar || "";
   show($("audioError"), !!st.audio_error);
+  const af = st.audio_files || [];
+  $("audioInfo").textContent = af.length
+    ? `${af.length} ملف صوت: ${af.slice(0, 4).join("، ")}${af.length > 4 ? "…" : ""}` : "";
   const cams = st.cameras || (st.scan ? st.scan.cameras.map((c) => c.name) : []);
   $("longHint").textContent = st.long_camera_reset
     ? `«${st.long_camera_reset}» ليس كاميرا — اختر الكاميرا الواسعة ثم احفظ`
@@ -460,6 +470,32 @@ $("btnChoose").onclick = async () => {
   }
 };
 $("btnLoad").onclick = () => loadProject($("projPath").value);
+
+function closeProject() {
+  S.project = null;
+  S.path = "";
+  $("projPath").value = "";
+  show($("scanBox"), false);
+  show($("btnClose"), false);
+  ["secSettings", "secAnalyze", "secSpeakers", "secCut"].forEach((id) => show($(id), false));
+  store("autocut-last-closed", true);
+}
+$("btnClose").onclick = closeProject;
+
+let resetArmed = null;
+$("btnResetCfg").onclick = async () => {
+  const b = $("btnResetCfg");
+  if (!resetArmed) {  // first click arms, second click (within 4 s) resets
+    b.textContent = "متأكد؟ اضغط مرة ثانية";
+    resetArmed = setTimeout(() => { b.textContent = "إعادة الضبط"; resetArmed = null; }, 4000);
+    return;
+  }
+  clearTimeout(resetArmed);
+  resetArmed = null;
+  b.textContent = "إعادة الضبط";
+  try { await api("/api/config/reset", { path: S.project.path }); await loadProject(S.path); flash($("cfgSaved"), "رجعت الإعدادات الافتراضية ✓"); }
+  catch (e) { flash($("cfgSaved"), "خطأ: " + e.message); }
+};
 $("projPath").addEventListener("keydown", (e) => { if (e.key === "Enter") loadProject(e.target.value); });
 $("btnSaveCfg").onclick = async () => {
   try { await saveConfig(); flash($("cfgSaved"), "تم الحفظ ✓"); await loadProject(S.path); }
@@ -517,5 +553,5 @@ setInterval(() => api("/api/heartbeat", {}).catch(() => {}), 60000);
     }
   } catch (e) { /* not running */ }
   const last = recall("autocut-recent", [])[0];
-  if (last && !S.path) loadProject(last);
+  if (last && !S.path && !recall("autocut-last-closed", false)) loadProject(last);
 })();

@@ -11,12 +11,16 @@ from .probe import MediaInfo, probe
 from .timecode import Rate, tc_to_frames
 
 VIDEO_EXT = {".mp4", ".mov", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".m4v", ".mpg", ".mpeg"}
-AUDIO_EXT = {".wav", ".bwf", ".aif", ".aiff", ".flac", ".mp3", ".m4a", ".aac"}
+AUDIO_EXT = {".wav", ".bwf", ".rf64", ".aif", ".aiff", ".caf", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus"}
 WORK_DIR = "_autocut"
 
 
 class ScanError(Exception):
-    pass
+    """`ar` carries the same problem in Arabic for the app."""
+
+    def __init__(self, msg: str, ar: str | None = None):
+        super().__init__(msg)
+        self.ar = ar
 
 
 @dataclass
@@ -83,11 +87,13 @@ def find_audio_dir(root: Path, name: str) -> Path:
                 log.info("Clean audio folder found: %s", cands[0])
                 return cands[0].resolve()
             if len(cands) > 1:
-                raise ScanError("several folders look like the clean audio: "
-                                + ", ".join(c.name for c in cands)
-                                + " — choose one (audio_folder in config.yaml / the app settings)")
+                names = ", ".join(c.name for c in cands)
+                raise ScanError(f"several folders look like the clean audio: {names} — choose one "
+                                f"(audio_folder in config.yaml / the app settings)",
+                                ar=f"أكثر من مجلد يبدو أنه الصوت النظيف: {names} — اختر واحداً.")
     raise ScanError(f"clean audio folder not found ('{name}' in {root}). Choose it in the app "
-                    f"settings, or set audio_folder in config.yaml (e.g. ../2_AUDIO)")
+                    f"settings, or set audio_folder in config.yaml (e.g. ../2_AUDIO)",
+                    ar="لم أجد مجلد الصوت النظيف — اضغط «اختر…» وحدده.")
 
 
 def _order_clips(cam: Camera, rate: Rate) -> None:
@@ -121,6 +127,46 @@ def _video_subdirs(folder: Path, audio_dir: Path | None) -> dict[str, list[Path]
             else:
                 log.debug("folder '%s' has no video files — not a camera", p.name)
     return out
+
+
+def _describe(folder: Path) -> str:
+    """What is in a folder, for error messages: '3 folders, 12 .mp4, 1 .txt'."""
+    kinds: Counter = Counter()
+    for p in folder.iterdir():
+        if p.name.startswith("."):
+            continue
+        kinds["folders" if p.is_dir() else (p.suffix.lower() or "no extension")] += 1
+    return ", ".join(f"{n} {k}" for k, n in kinds.most_common()) or "empty"
+
+
+def clean_audio_files(audio_dir: Path) -> list[Path]:
+    """Audio files of ONE recording: directly in the folder, or in its only
+    sub-folder that has audio (recorders like Zoom write ZOOM0001/...WAV).
+    Several sub-folders with audio are separate takes: the user must choose."""
+    flat = _files(audio_dir, AUDIO_EXT)
+    if flat:
+        return flat
+    deep = _files(audio_dir, AUDIO_EXT, recursive=True)
+    if not deep:
+        exts = " ".join(sorted(AUDIO_EXT))
+        raise ScanError(
+            f"no audio files in {audio_dir} (looked for {exts}, also in sub-folders); "
+            f"it contains: {_describe(audio_dir)}",
+            ar=f"لا توجد ملفات صوت داخل «{audio_dir.name}» ولا داخل مجلداته الفرعية. "
+               f"محتواه: {_describe(audio_dir)}. اختر المجلد الذي فيه ملفات WAV.")
+    groups: dict[Path, list[Path]] = {}
+    for f in deep:
+        groups.setdefault(f.parent, []).append(f)
+    if len(groups) == 1:
+        (folder, files), = groups.items()
+        log.info("Clean audio is in the sub-folder %s", folder.relative_to(audio_dir))
+        return files
+    listing = ", ".join(f"{g.relative_to(audio_dir)} ({len(fs)})" for g, fs in groups.items())
+    raise ScanError(
+        f"audio files are in several sub-folders of {audio_dir}: {listing} — these look like "
+        f"separate takes; choose the one sub-folder of this recording as the clean-audio folder",
+        ar=f"ملفات الصوت موزّعة على أكثر من مجلد فرعي داخل «{audio_dir.name}»: {listing}. "
+           f"غالباً هذه تسجيلات منفصلة — اختر المجلد الفرعي الخاص بهذا التصوير من «مجلد الصوت النظيف».")
 
 
 def discover_cameras(root: Path, audio_dir: Path | None) -> tuple[Path, dict[str, list[Path]]]:
@@ -213,9 +259,7 @@ def scan(root: Path, cfg: dict) -> Project:
     log.info("Sequence frame rate: %s fps (from the cameras)", rate)
 
     log.info("Clean audio folder: %s", audio_dir)
-    audio_files = _files(audio_dir, AUDIO_EXT)
-    if not audio_files:
-        raise ScanError(f"no audio files in {audio_dir}")
+    audio_files = clean_audio_files(audio_dir)
     audio = []
     log.info("Clean audio (%d files):", len(audio_files))
     for p in audio_files:

@@ -26,6 +26,7 @@
       <button id="btnChoose" class="primary" type="button">اختر المجلد…</button>
       <input id="projPath" class="grow ltr" placeholder="/Volumes/Shoot/Episode12" spellcheck="false">
       <button id="btnLoad" type="button">فتح</button>
+      <button id="btnClose" type="button" class="hidden" title="إغلاق المشروع والرجوع للبداية">✕</button>
     </div>
     <div id="recent" class="recent"></div>
     <div id="scanBox" class="hidden">
@@ -43,6 +44,7 @@
       <button id="btnAudio" type="button">اختر…</button>
     </div>
     <div id="audioError" class="alert error hidden"></div>
+    <small id="audioInfo" class="muted"></small>
     <div class="grid">
       <label>الكاميرا الواسعة
         <select id="cfgLong"></select>
@@ -63,6 +65,7 @@
     </details>
     <div class="row end">
       <span id="cfgSaved" class="muted"></span>
+      <button id="btnResetCfg" type="button" class="danger" title="يحذف config.yaml لهذا المشروع — نتائج التحليل تبقى">إعادة الضبط</button>
       <button id="btnSaveCfg" type="button">حفظ الإعدادات</button>
     </div>
   </section>

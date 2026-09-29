@@ -81,3 +81,34 @@ def test_choosing_the_top_folder_finds_cameras_inside_proxy(tmp_path, clip):
     assert p.audio_dir == audio.resolve()
     assert list(p.cameras) == ["CAM 01", "CAM 02", "CAM 03", "CAM 04"]
     assert p.cameras["CAM 01"].clips[0].path.resolve() == (proxy / "CAM 01" / "C0001.MP4").resolve()
+
+
+def test_audio_in_the_recorders_subfolder(tmp_path, clip):
+    proxy, audio = shoot(tmp_path, clip)
+    (audio / "TR1.WAV").rename(audio / "tmp.wav")
+    (audio / "ZOOM0001").mkdir()
+    (audio / "tmp.wav").rename(audio / "ZOOM0001" / "ZOOM0001_Tr1.WAV")
+    p = scan(proxy.parent, cfg())
+    assert [a.path.name for a in p.audio] == ["ZOOM0001_Tr1.WAV"]
+
+
+def test_several_takes_must_be_chosen(tmp_path, clip):
+    proxy, audio = shoot(tmp_path, clip)
+    for take in ("ZOOM0001", "ZOOM0002"):
+        (audio / take).mkdir()
+        shutil.copy(audio / "TR1.WAV", audio / take / f"{take}_Tr1.WAV")
+    (audio / "TR1.WAV").unlink()
+    with pytest.raises(ScanError, match="several sub-folders") as e:
+        scan(proxy.parent, cfg())
+    assert "ZOOM0001" in e.value.ar and "ZOOM0002" in e.value.ar
+    p = scan(proxy.parent, cfg(audio_folder="2_AUDIO/ZOOM0002"))
+    assert [a.path.name for a in p.audio] == ["ZOOM0002_Tr1.WAV"]
+
+
+def test_audio_folder_without_audio_says_what_is_there(tmp_path, clip):
+    proxy, audio = shoot(tmp_path, clip)
+    (audio / "TR1.WAV").unlink()
+    shutil.copy(clip, audio / "camera_by_mistake.mp4")
+    with pytest.raises(ScanError, match=r"1 \.mp4") as e:
+        scan(proxy.parent, cfg())
+    assert "WAV" in e.value.ar
