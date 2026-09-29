@@ -49,8 +49,8 @@ sync:
   #  CAM_B/C0003.MP4: 1234.56
 
 diarization:
-  model: pyannote/speaker-diarization-3.1
-  hf_token_env: HF_TOKEN      # name of the env var holding your Hugging Face token
+  model: community-1          # offline model installed by the app (or a folder path / HF id)
+  hf_token_env: HF_TOKEN      # only used when `model` is a Hugging Face id
   num_speakers: null          # set if you know it — improves diarization a lot
   min_speakers: null
   max_speakers: null

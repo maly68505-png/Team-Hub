@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Autocut</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1d1d1f; color: #e8e8ea;
+    font: 13px/1.6 -apple-system, "SF Arabic", "Geeza Pro", sans-serif; }
+  #ui { border: 0; width: 100%; height: 100%; display: none; }
+  #boot { padding: 24px; }
+  #boot .err { color: #ff5d5d; white-space: pre-wrap; }
+  button { font: inherit; color: inherit; background: #2e2e31; border: 1px solid #3a3a3e; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="boot">
+  <p id="bootMsg">جارٍ تشغيل Autocut…</p>
+  <p><button id="retry" type="button" hidden>إعادة المحاولة</button></p>
+</div>
+<iframe id="ui" title="Autocut"></iframe>
+<script>
+"use strict";
+/* The panel hosts the same UI as the Autocut app, served by the local engine.
+   It starts the engine if needed and bridges two things the page cannot do:
+   importing into Premiere (ExtendScript) and Premiere-native file dialogs. */
+const fs = require("fs"), path = require("path"), os = require("os"), http = require("http"), cp = require("child_process");
+const HOME = path.join(os.homedir(), "Library", "Application Support", "Autocut");
+const APPS = ["/Applications/Autocut.app", path.join(os.homedir(), "Applications", "Autocut.app")];
+let ORIGIN = null;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function readServer() {
+  try { return JSON.parse(fs.readFileSync(path.join(HOME, "server.json"), "utf8")); } catch (e) { return null; }
+}
+
+function ping(info) {
+  return new Promise((resolve) => {
+    const req = http.get({ host: "127.0.0.1", port: info.port, path: "/api/ping",
+      headers: { "X-Autocut-Token": info.token }, timeout: 1500 }, (res) => { res.resume(); resolve(res.statusCode === 200); });
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => { req.destroy(); resolve(false); });
+  });
+}
+
+async function ensureEngine() {
+  let info = readServer();
+  if (info && await ping(info)) return info;
+  const app = APPS.find((a) => fs.existsSync(a));
+  if (!app) throw new Error("لم يُعثر على Autocut.app في مجلد Applications.\nثبّت Autocut أولاً (Install Autocut.command).");
+  const bin = path.join(app, "Contents", "Resources", "bin", "autocut");
+  const child = cp.spawn(bin, ["serve", "--app"], { detached: true, stdio: "ignore" });
+  child.unref();
+  for (let i = 0; i < 60; i++) {
+    await sleep(500);
+    info = readServer();
+    if (info && await ping(info)) return info;
+  }
+  throw new Error("لم يبدأ محرك Autocut. جرّب فتح Autocut.app مرة، ثم أعد المحاولة.");
+}
+
+function evalScript(script) {
+  return new Promise((resolve) => window.__adobe_cep__.evalScript(script, resolve));
+}
+
+function nativeChoose(kind, prompt) {
+  const r = window.cep.fs.showOpenDialogEx(false, kind === "folder", prompt, "", kind === "folder" ? [] : ["zip"]);
+  return r && !r.err && r.data && r.data.length ? r.data[0] : null;
+}
+
+window.addEventListener("message", async (ev) => {
+  const frame = document.getElementById("ui");
+  if (!ORIGIN || ev.origin !== ORIGIN || ev.source !== frame.contentWindow) return;
+  const m = ev.data || {};
+  if (m.type === "autocut-import") {
+    const res = await evalScript("autocutImport(" + JSON.stringify(String(m.path)) + ")");
+    const ok = typeof res === "string" && res.indexOf("OK") === 0;
+    frame.contentWindow.postMessage({ type: "autocut-import-result", ok, message: ok ? "" : String(res).replace(/^ERR:/, "") }, ORIGIN);
+  } else if (m.type === "autocut-choose") {
+    frame.contentWindow.postMessage({ type: "autocut-choose-result", id: m.id, path: nativeChoose(m.kind, m.prompt) }, ORIGIN);
+  }
+});
+
+async function boot() {
+  const msg = document.getElementById("bootMsg"), retry = document.getElementById("retry");
+  retry.hidden = true;
+  msg.className = "";
+  msg.textContent = "جارٍ تشغيل Autocut…";
+  try {
+    const info = await ensureEngine();
+    ORIGIN = "http://127.0.0.1:" + info.port;
+    const frame = document.getElementById("ui");
+    frame.src = ORIGIN + "/?host=premiere&t=" + encodeURIComponent(info.token);
+    frame.style.display = "block";
+    document.getElementById("boot").style.display = "none";
+  } catch (e) {
+    msg.className = "err";
+    msg.textContent = e.message;
+    retry.hidden = false;
+  }
+}
+document.getElementById("retry").onclick = boot;
+boot();
+</script>
+</body>
+</html>

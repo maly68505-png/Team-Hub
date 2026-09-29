@@ -10,6 +10,7 @@ from autocut.config import DEFAULTS
 from autocut.diarize import DiarizationError, Segment, diarize, pick_samples
 
 CALLS = []
+LOADED = []
 
 
 class Turn:
@@ -34,7 +35,9 @@ def install_fakes(monkeypatch, api):
     torch.device = lambda name: name
 
     class Pipe:
-        def __call__(self, audio, **kw):
+        def __call__(self, audio, hook=None, **kw):
+            assert callable(hook)
+            hook("segmentation", None, total=10, completed=5)
             CALLS.append((audio["waveform"].shape, kw))
             dur = audio["waveform"].shape[1] / audio["sample_rate"]
             ann = Annotation(dur)
@@ -43,6 +46,9 @@ def install_fakes(monkeypatch, api):
     class Pipeline:
         @staticmethod
         def from_pretrained(model, **kw):
+            LOADED.append((model, kw))
+            if api == "local":
+                return Pipe()
             if api == 4 and "token" not in kw:
                 raise TypeError
             if api == 3 and "use_auth_token" not in kw:
@@ -69,6 +75,16 @@ class FakeTensor:
         return self.a.shape
 
 
+@pytest.fixture(autouse=True)
+def isolated_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOCUT_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("PYANNOTE_METRICS_ENABLED", raising=False)
+
+
+HF_ID = "pyannote/speaker-diarization-3.1"
+
+
 @pytest.fixture
 def wav(tmp_path):
     p = tmp_path / "ref.wav"
@@ -81,7 +97,7 @@ def test_pyannote_api_versions_and_cache(monkeypatch, tmp_path, wav, api):
     install_fakes(monkeypatch, api)
     monkeypatch.setenv("HF_TOKEN", "hf_x")
     CALLS.clear()
-    dcfg = dict(DEFAULTS["diarization"], num_speakers=2)
+    dcfg = dict(DEFAULTS["diarization"], num_speakers=2, model=HF_ID)
     segs = diarize(wav, "fp", 100.0, (0.0, 100.0), dcfg, tmp_path)
     assert [s.speaker for s in segs] == ["SPEAKER_00", "SPEAKER_01"]
     assert CALLS[0][1] == {"num_speakers": 2}
@@ -94,7 +110,7 @@ def test_segment_only_is_offset_to_reference_time(monkeypatch, tmp_path, wav):
     install_fakes(monkeypatch, 4)
     monkeypatch.setenv("HF_TOKEN", "hf_x")
     CALLS.clear()
-    segs = diarize(wav, "fp2", 100.0, (60.0, 90.0), DEFAULTS["diarization"], tmp_path)
+    segs = diarize(wav, "fp2", 100.0, (60.0, 90.0), dict(DEFAULTS["diarization"], model=HF_ID), tmp_path)
     assert CALLS[0][0] == (1, 30 * 16000)
     assert segs[0].start == pytest.approx(60.5) and segs[-1].end == pytest.approx(89.5)
 
@@ -103,7 +119,28 @@ def test_missing_token_is_a_clear_error(monkeypatch, tmp_path, wav):
     install_fakes(monkeypatch, 4)
     monkeypatch.delenv("HF_TOKEN", raising=False)
     with pytest.raises(DiarizationError, match="HF_TOKEN"):
-        diarize(wav, "fp3", 100.0, (0.0, 100.0), DEFAULTS["diarization"], tmp_path)
+        diarize(wav, "fp3", 100.0, (0.0, 100.0), dict(DEFAULTS["diarization"], model=HF_ID), tmp_path)
+
+
+def test_offline_local_model_no_token_no_telemetry(monkeypatch, tmp_path, wav):
+    import os
+    from autocut import models
+    install_fakes(monkeypatch, "local")
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    models.local_pipeline().mkdir(parents=True)
+    (models.local_pipeline() / "config.yaml").write_text("pipeline: {}\n")
+    LOADED.clear()
+    segs = diarize(wav, "fp4", 100.0, (0.0, 100.0), DEFAULTS["diarization"], tmp_path)
+    assert LOADED == [(str(models.local_pipeline()), {})]   # a folder, no token
+    assert os.environ["HF_HUB_OFFLINE"] == "1"
+    assert os.environ["PYANNOTE_METRICS_ENABLED"] == "false"
+    assert len(segs) == 2
+
+
+def test_missing_offline_model_explains_how_to_get_it(monkeypatch, tmp_path, wav):
+    install_fakes(monkeypatch, "local")
+    with pytest.raises(DiarizationError, match="autocut-models.zip"):
+        diarize(wav, "fp5", 100.0, (0.0, 100.0), DEFAULTS["diarization"], tmp_path)
 
 
 def test_samples_spread_and_solo():

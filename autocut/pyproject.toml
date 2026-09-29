@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autocut"
-version = "0.1.0"
+version = "0.2.0"
 description = "Multicam rough cut for Adobe Premiere Pro from clean audio + speaker diarization"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.23", "scipy>=1.9", "PyYAML>=6"]
+dependencies = ["numpy>=1.23", "scipy>=1.9", "PyYAML>=6", "av>=12"]
 
 [project.optional-dependencies]
-diarize = ["pyannote.audio>=3.1"]
+diarize = ["pyannote.audio>=4.0"]
 test = ["pytest>=7"]
 
 [project.scripts]
@@ -19,3 +19,6 @@ autocut = "autocut.cli:main"
 
 [tool.setuptools]
 packages = ["autocut"]
+
+[tool.setuptools.package-data]
+autocut = ["ui/*"]

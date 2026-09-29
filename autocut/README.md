@@ -32,51 +32,55 @@ autocut/
 
 ---
 
-## 1. Setup
+## 0. The Mac app (for the team)
 
-### ffmpeg
+Most people should use the packaged app, not this source tree:
 
-- **macOS:** `brew install ffmpeg`
-- **Windows:** `winget install Gyan.FFmpeg` (then open a new terminal)
-- **Linux:** `sudo apt install ffmpeg`
+- **Autocut.app** — double-click; an Arabic UI opens in the browser (all local,
+  127.0.0.1 only, token-protected).
+- **Premiere panel** — Window → Extensions → Autocut: the same UI inside
+  Premiere, with a one-click *Import into Premiere*.
+- **Offline** — own Python, FFmpeg (PyAV) and PyTorch inside the app; the
+  diarization model is imported from `autocut-models.zip` (one person downloads
+  it once with a Hugging Face token and shares the zip). pyannote's usage
+  telemetry is switched off and Hugging Face runs in offline mode.
 
-Check: `ffmpeg -version` and `ffprobe -version` both work.
+Build: GitHub Actions (`.github/workflows/autocut-mac.yml`) builds and tests it on
+an Apple Silicon runner and uploads `Autocut-mac-arm64.zip`; locally on a Mac:
+`bash packaging/build_mac.sh`. The zip contains the app, the panel,
+`Install Autocut.command` and the Arabic team guide (`packaging/README-AR.md`).
 
-### Python (3.10+)
+```
+packaging/      build_mac.sh, installer, smoke test, icon, Arabic guide
+premiere-panel/ CEP panel (manifest, iframe host, ExtendScript import)
+autocut/ui/     the web UI (Arabic, RTL)
+autocut/server.py  local engine server; jobs run as subprocesses
+autocut/models.py  offline model: download / export / import
+```
+
+## 1. Setup (from source)
 
 ```bash
 cd autocut
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -e ".[diarize]"        # core + pyannote.audio (pulls in PyTorch)
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[diarize]"        # core + pyannote.audio 4 (pulls in PyTorch)
+autocut serve --open               # the UI, or use the CLI below
 ```
 
-Core only (sync + cut from an RTTM you made elsewhere): `pip install -e .`
+Media decoding uses PyAV, which bundles FFmpeg — no separate install. (The test
+suite uses the `ffmpeg` command to build its fixtures.)
 
-GPU: if you have an NVIDIA card, install the CUDA build of PyTorch first
-(<https://pytorch.org/get-started/locally/>). On CPU, diarizing 2 hours can take
-an hour or more; on a GPU it's minutes. Either way the result is cached, so it
-only happens once. Apple Silicon uses `mps` automatically.
-
-### Hugging Face token (for pyannote)
-
-1. Make an account at <https://huggingface.co> and create a **read** token
-   (Settings → Access Tokens).
-2. Open <https://huggingface.co/pyannote/speaker-diarization-3.1> and
-   <https://huggingface.co/pyannote/segmentation-3.0> and accept the user
-   conditions on both (same account). With pyannote 4.x you can set
-   `diarization.model: pyannote/speaker-diarization-community-1` instead and
-   accept that page.
-3. Put the token in the environment:
+### Diarization model (offline)
 
 ```bash
-export HF_TOKEN=hf_xxxxxxxxxxxxxxxx          # macOS / Linux
-setx HF_TOKEN hf_xxxxxxxxxxxxxxxx            # Windows (new terminal after)
+autocut models download --token hf_...    # once, needs internet; accept the conditions of
+                                          # huggingface.co/pyannote/speaker-diarization-community-1 first
+autocut models export ~/Desktop           # -> autocut-models.zip for colleagues
+autocut models import autocut-models.zip  # on every other machine, offline
 ```
 
-The model downloads once and is cached by Hugging Face.
-
----
+The model lives in `~/Library/Application Support/Autocut/models/`. To use a
+Hugging Face id instead, set `diarization.model` to it and export `HF_TOKEN`.
 
 ## 2. Project folder
 
@@ -280,8 +284,8 @@ cross-correlates it with the clean audio at that timeline position. It fails
 if any clip is off by more than the frame-snap error the ground truth predicts
 (±3 ms).
 
-pyannote itself isn't exercised by the tests (it needs the token and model
-download). `--rttm FILE` feeds any diarization in the standard RTTM format
+pyannote itself is replaced by a fake in the tests (the real model needs the
+download); the macOS CI smoke test imports the real pyannote/torch in the built app. `--rttm FILE` feeds any diarization in the standard RTTM format
 through the same path.
 
 ## 9. Limits and notes

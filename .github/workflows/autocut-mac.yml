@@ -1,0 +1,36 @@
+name: autocut-mac
+
+on:
+  push:
+    paths:
+      - "autocut/**"
+      - ".github/workflows/autocut-mac.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14   # Apple Silicon
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Autocut.app
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash autocut/packaging/build_mac.sh
+
+      - name: ffmpeg for the test fixtures
+        run: brew install ffmpeg
+
+      - name: Smoke test the built app
+        run: bash autocut/packaging/smoke_test.sh autocut/dist/Autocut-mac-arm64/Autocut.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Autocut-mac-arm64
+          path: autocut/dist/Autocut-mac-arm64.zip
+          compression-level: 0
+          retention-days: 90
