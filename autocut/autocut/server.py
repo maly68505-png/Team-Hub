@@ -29,6 +29,7 @@ import yaml
 
 from . import __version__, models
 from .config import DEFAULTS, ConfigError, load
+from .takes import group_takes
 from .scan import AUDIO_NAME, WORK_DIR, ScanError, clean_audio_files, discover_cameras, find_audio_dir, scan
 
 UI_DIR = Path(__file__).parent / "ui"
@@ -150,6 +151,9 @@ def project_state(path: Path) -> dict:
                     for k in c.clips]} for c in p.cameras.values()],
                 "audio": [{"name": a.path.name, "duration": round(a.duration, 2),
                            "channels": a.audio_channels} for a in p.audio],
+                # display only: no audio decoding here (same-length files count as tracks)
+                "takes": len(group_takes(p.audio, str(cfg.get("audio_mode") or "auto"),
+                                         similar=lambda a, b: True)),
             }
         except (ScanError, Exception) as e:  # noqa: BLE001 — report any scan problem to the UI
             out["scan_error"] = str(e)

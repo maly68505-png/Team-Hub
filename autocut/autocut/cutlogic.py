@@ -46,9 +46,79 @@ def _runs(values: np.ndarray):
     return list(zip(starts.tolist(), ends.tolist()))
 
 
+ROT = "@rotate:"  # camera placeholder for a speaker shown on several cameras
+
+
+def silence_frames(x: np.ndarray, sr: int, window: tuple[float, float], rate: Rate) -> np.ndarray:
+    """Per sequence frame: True where the clean audio is quiet (25 dB under speech)."""
+    t0, t1 = window
+    n = rate.frames(t1 - t0)
+    seg = np.asarray(x[int(t0 * sr):int(t1 * sr)], dtype=np.float64)
+    if len(seg) == 0:
+        return np.zeros(n, bool)
+    e = np.concatenate([[0.0], np.cumsum(seg ** 2)])
+    edges = np.minimum((np.arange(n + 1) * sr / rate.float).astype(int), len(seg))
+    width = np.maximum(np.diff(edges), 1)
+    level = 10 * np.log10((e[edges[1:]] - e[edges[:-1]]) / width + 1e-12)
+    loud = level[level > -100]
+    if not len(loud):
+        return np.ones(n, bool)
+    return level < float(np.percentile(loud, 90)) - 25.0
+
+
+def _rotate(pieces: list[Shot], speaker_cam: dict, pauses: list[tuple[int, int]],
+            rate: Rate, ccfg: dict) -> list[Shot]:
+    """Replace ROT placeholders: switch between the speaker's cameras at pauses,
+    a shot every rotate_min..rotate_max seconds, longest pause first."""
+    fmin = rate.frames(float(ccfg["rotate_min_shot"]))
+    fmax = max(fmin + 1, rate.frames(float(ccfg["rotate_max_shot"])))
+    centres = [((a + b) // 2, b - a) for a, b in pauses]
+    out: list[Shot] = []
+    i = 0
+    while i < len(pieces):
+        p = pieces[i]
+        if not (isinstance(p.camera, str) and p.camera.startswith(ROT)):
+            out.append(p)
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(pieces) and pieces[j + 1].camera == p.camera:
+            j += 1
+        a, b = p.start, pieces[j].end
+        cams = speaker_cam[p.camera[len(ROT):]]
+        cuts, t = [], a
+        while b - t > fmax:
+            window = [(ln, c) for c, ln in centres if t + fmin <= c <= t + fmax]
+            if window:
+                c = max(window)[1]                      # longest pause = end of a sentence
+            else:
+                later = [c for c, _ in centres if t + fmax < c <= t + 2 * fmax]
+                c = later[0] if later else t + fmax     # no pause at all: cut anyway
+            if b - c < fmin:
+                break
+            cuts.append(c)
+            t = c
+        prev = out[-1].camera if out else None
+        k = next((n for n, cam in enumerate(cams) if cam != prev), 0)
+        bounds = [a] + cuts + [b]
+        for n, (s0, s1) in enumerate(zip(bounds, bounds[1:])):
+            cam = cams[k % len(cams)]
+            if out and cam == out[-1].camera and len(cams) > 1:
+                k += 1
+                cam = cams[k % len(cams)]
+            out.append(Shot(s0, s1, cam, p.speaker, p.reason if n == 0 else "angle change (pause)"))
+            k += 1
+        i = j + 1
+    return out
+
+
 def plan_cuts(segs: list[Segment], window: tuple[float, float], rate: Rate,
-              speaker_cam: dict[str, str], cameras: list[str], long_cam: str,
-              coverage: dict[str, np.ndarray], ccfg: dict) -> list[Shot]:
+              speaker_cam: dict, cameras: list[str], long_cam: str,
+              coverage: dict[str, np.ndarray], ccfg: dict,
+              quiet: np.ndarray | None = None) -> list[Shot]:
+    """speaker_cam values: one camera, or a list of cameras to switch between at
+    pauses (a single presenter shot from several angles). `quiet`: per-frame
+    silence of the clean audio, used to find those pauses."""
     t0, t1 = window
     n = rate.frames(t1 - t0)
     fps = rate.float
@@ -84,7 +154,12 @@ def plan_cuts(segs: list[Segment], window: tuple[float, float], rate: Rate,
         if len(who) == 1:
             spk = who[0]
             if spk in speaker_cam:
-                cam, reason = speaker_cam[spk], "speaker"
+                target = speaker_cam[spk]
+                if isinstance(target, (list, tuple)):
+                    cam = f"{ROT}{spk}" if len(target) > 1 else target[0]
+                else:
+                    cam = target
+                reason = "speaker"
             else:
                 cam, reason = long_cam, "unmapped speaker -> long"
         elif len(who) >= 2 and (b - a) / fps > float(ccfg["overlap_min"]):
@@ -100,6 +175,16 @@ def plan_cuts(segs: list[Segment], window: tuple[float, float], rate: Rate,
         pieces.append(Shot(a, b, cam, spk, reason))
         prev_cam, prev_spk = cam, spk if reason in ("speaker", "overlap") else prev_spk
     log.info("Overlaps longer than %.2fs (-> long camera): %d", float(ccfg["overlap_min"]), n_overlaps)
+
+    if any(isinstance(p.camera, str) and p.camera.startswith(ROT) for p in pieces):
+        silent = mask == 0
+        if quiet is not None and len(quiet) == n:
+            silent = silent | quiet
+        pmin = rate.frames(float(ccfg["pause_min"]))
+        pauses = [(a, b) for a, b in _runs(silent) if silent[a] and b - a >= max(1, pmin)]
+        pieces = _rotate(pieces, speaker_cam, pauses, rate, ccfg)
+        log.info("Angle changes for presenters on several cameras: %d pauses found",
+                 len(pauses))
 
     # --- footage availability ----------------------------------------------
     fallback_order = [long_cam] + [c for c in cameras if c != long_cam]

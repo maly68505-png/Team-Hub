@@ -126,3 +126,8 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
 .recent .chip { display: inline-flex; align-items: center; gap: 2px; }
 .recent .chip .x { border: 0; background: none; padding: 0 4px; color: var(--muted); }
 .recent .chip .x:hover { color: var(--bad); }
+.camchips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border: 1px solid var(--line);
+  border-radius: 999px; background: var(--panel2); cursor: pointer; font-size: 12px; direction: ltr; }
+.chip-toggle input { margin: 0; accent-color: var(--accent); }
+.chip-toggle:has(input:checked) { border-color: var(--accent); color: var(--text); }

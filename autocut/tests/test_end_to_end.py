@@ -8,6 +8,7 @@ import csv
 import shutil
 import subprocess
 import xml.etree.ElementTree as ET
+from urllib.parse import unquote
 
 import numpy as np
 import pytest
@@ -113,7 +114,7 @@ def _file_paths(root_el):
     paths = {}
     for f in root_el.iter("file"):
         if f.find("pathurl") is not None:
-            paths[f.get("id")] = f.find("pathurl").text.replace("file://localhost", "")
+            paths[f.get("id")] = unquote(f.find("pathurl").text.replace("file://localhost", ""))
     return paths
 
 

@@ -48,6 +48,7 @@ class Project:
     rate: Rate
     long_camera: str
     audio_dir: Path | None = None
+    takes: list = field(default_factory=list)  # set by the pipeline (takes.group_takes)
 
     @property
     def workdir(self) -> Path:
@@ -272,8 +273,8 @@ def scan(root: Path, cfg: dict) -> Project:
                  info.audio_channels, info.sample_rate)
     durs = [a.duration for a in audio]
     if max(durs) - min(durs) > 1.0:
-        log.warning("clean audio files differ in length by %.1fs — they are assumed to START "
-                    "together; check that they come from one recorder", max(durs) - min(durs))
+        log.info("clean audio files differ in length by %.1fs — treated as separate takes "
+                 "unless they are tracks of one recording", max(durs) - min(durs))
     return Project(root, cameras, audio, rate, cfg["long_camera"], audio_dir)
 
 

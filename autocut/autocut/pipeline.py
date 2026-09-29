@@ -5,13 +5,14 @@ from pathlib import Path
 
 from . import config as config_mod
 from .audio import build_reference
-from .cutlogic import plan_cuts, summarize
+from .cutlogic import plan_cuts, silence_frames, summarize
 from .diarize import clip_segments, diarize, speaker_stats, write_speakers_json
 from .log import banner, log, setup
 from .probe import require_tools
 from .report import write_cuts_csv
 from .scan import WORK_DIR, scan
-from .sync import sync_all, write_sync_csv
+from .sync import report_sync, sync_all, write_sync_csv
+from .takes import build_reference_takes, group_takes, place_takes
 from .timecode import fmt_seconds, parse_time
 from .timeline import Timeline
 from . import xmeml
@@ -37,11 +38,25 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
 
     banner("1. Scan")
     project = scan(project_dir, cfg)
+    takes = group_takes(project.audio, cfg["audio_mode"])
+    project.takes = takes
+    if len(takes) > 1:
+        log.info("Clean audio: %d separate takes (not simultaneous tracks)", len(takes))
     if until == "scan":
         return EXIT_OK
 
-    banner("2. Reference mix")
-    ref = build_reference(project.audio, workdir, int(cfg["sync"]["analysis_rate"]))
+    rate = int(cfg["sync"]["analysis_rate"])
+    if len(takes) > 1:
+        banner("2-3. Takes: sync and place on one timeline")
+        syncs = place_takes(project, takes, cfg)
+        ref = build_reference_takes(takes, workdir, rate)
+        report_sync(project, syncs, ref.duration)
+    else:
+        banner("2. Reference mix")
+        ref = build_reference(project.audio, workdir, rate)
+        banner("3. Sync")
+        syncs = sync_all(project, ref, cfg)
+
     t0 = parse_time(start, project.rate) if start else 0.0
     if t0 >= ref.duration:
         log.error("--start %s is past the end of the clean audio (%s)", fmt_seconds(t0),
@@ -53,8 +68,6 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
     log.info("Working range: %s -> %s (%s)%s", fmt_seconds(t0), fmt_seconds(t1),
              fmt_seconds(t1 - t0), "  [TEST SEGMENT]" if is_test else "  [FULL]")
 
-    banner("3. Sync")
-    syncs = sync_all(project, ref, cfg)
     out_dir = workdir / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
     write_sync_csv(out_dir / "sync_report.csv", syncs)
@@ -77,7 +90,10 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
         log.info("  %-14s %7.1fs  -> %s", spk, total, mapping.get(spk, "(not mapped)"))
     log.info("speakers.json: %s (samples in %s)", speakers_json, workdir / "speaker_samples")
 
-    bad = {k: v for k, v in mapping.items() if v != "long" and v not in cams}
+    def targets(v):
+        return v if isinstance(v, list) else [v]
+
+    bad = {k: v for k, v in mapping.items() if any(x != "long" and x not in cams for x in targets(v))}
     if bad:
         log.error("config speakers map to unknown cameras: %s (cameras: %s, or 'long')",
                   bad, ", ".join(cams))
@@ -125,9 +141,14 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
 
     banner("5. Cut")
     tl = Timeline(project, syncs, window, use_low=allow_low_confidence)
-    speaker_cam = {spk: (project.long_camera if cam == "long" else cam) for spk, cam in mapping.items()}
+    def resolve(v):
+        out = [project.long_camera if x == "long" else x for x in targets(v)]
+        return out if len(out) > 1 else out[0]
+
+    speaker_cam = {spk: resolve(v) for spk, v in mapping.items()}
+    quiet = silence_frames(ref.x, ref.rate, window, project.rate)
     shots = plan_cuts(clip_segments(segs, t0, t1), window, project.rate, speaker_cam, cams,
-                      project.long_camera, tl.coverage, cfg["cut"])
+                      project.long_camera, tl.coverage, cfg["cut"], quiet)
     summarize(shots, project.rate)
 
     banner("6. Output")

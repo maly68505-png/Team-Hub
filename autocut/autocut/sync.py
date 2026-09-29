@@ -332,11 +332,11 @@ def sync_all(project: Project, ref: Reference, cfg: dict) -> dict[str, SyncResul
     cache_p.parent.mkdir(parents=True, exist_ok=True)
     cache_p.write_text(json.dumps({"ref_fp": ref.fp, "cfg": _cfg_hash(scfg), "clips": new_cache},
                                   indent=1))
-    _report(project, results, ref.duration)
+    report_sync(project, results, ref.duration)
     return results
 
 
-def _report(project: Project, results: dict[str, SyncResult], ref_dur: float) -> None:
+def report_sync(project: Project, results: dict[str, SyncResult], ref_dur: float) -> None:
     fps = project.rate.float
     log.info("")
     log.info("%-30s %14s %16s %6s %6s %6s  %s", "clip", "starts at ref", "drift", "conf",

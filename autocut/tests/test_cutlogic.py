@@ -81,3 +81,42 @@ def test_unmapped_speaker_goes_wide():
 def test_cut_lead():
     shots = cut([(0, 10, "S_A"), (10, 20, "S_B")], dur=20, cut_lead=0.2)
     assert shots[1].start == 245
+
+
+def quiet_at(dur, pauses):
+    q = np.zeros(R.frames(dur), bool)
+    for a, b in pauses:
+        q[R.frames(a):R.frames(b)] = True
+    return q
+
+
+def test_presenter_on_several_cameras_changes_angle_at_pauses():
+    # one presenter talking for 60 s, sentence pauses every ~5 s
+    pauses = [(t, t + 0.5) for t in np.arange(5.0, 60.0, 5.3)]
+    segs = [(0, 60, "S_P")]
+    n = R.frames(60)
+    cov = {c: np.ones(n, bool) for c in CAMS}
+    ccfg = dict(DEFAULTS["cut"])
+    shots = plan_cuts([Segment(*s) for s in segs], (0.0, 60.0), R, {"S_P": ["A", "B", "WIDE"]}, CAMS,
+                      "WIDE", cov, ccfg, quiet_at(60, pauses))
+    assert len(shots) >= 6
+    assert all(x.camera != y.camera for x, y in zip(shots, shots[1:]))          # never the same angle twice
+    for s in shots[:-1]:
+        assert ccfg["rotate_min_shot"] * 25 <= s.length <= ccfg["rotate_max_shot"] * 25 + 1
+    centres = {R.frames(a + 0.25) for a, _ in pauses}
+    assert all(any(abs(s.end - c) <= 1 for c in centres) for s in shots[:-1])   # cuts sit in the pauses
+    assert {s.camera for s in shots} == {"A", "B", "WIDE"}
+
+
+def test_presenter_without_pauses_still_changes_angle():
+    shots = plan_cuts([Segment(0, 40, "S_P")], (0.0, 40.0), R, {"S_P": ["A", "B"]}, CAMS, "WIDE",
+                      {c: np.ones(R.frames(40), bool) for c in CAMS}, dict(DEFAULTS["cut"]))
+    assert len(shots) >= 3 and all(x.camera != y.camera for x, y in zip(shots, shots[1:]))
+
+
+def test_single_camera_list_is_just_that_camera():
+    shots = cut([(0, 20, "S_A")], dur=20)
+    assert [s.camera for s in shots] == ["A"]
+    shots = plan_cuts([Segment(0, 20, "S_A")], (0.0, 20.0), R, {"S_A": ["B"]}, CAMS, "WIDE",
+                      {c: np.ones(R.frames(20), bool) for c in CAMS}, dict(DEFAULTS["cut"]))
+    assert [s.camera for s in shots] == ["B"]

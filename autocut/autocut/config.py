@@ -10,6 +10,7 @@ DEFAULTS = {
     "fps": None,
     "long_camera": None,
     "audio_folder": "audio",
+    "audio_mode": "auto",  # auto | tracks (simultaneous, mixed) | takes (one after another)
     "cameras": None,
     "speakers": {},
     "sync": {
@@ -38,6 +39,9 @@ DEFAULTS = {
         "min_shot": 2.0,
         "cut_lead": 0.0,
         "opening_camera": "long",
+        "rotate_min_shot": 4.0,   # presenter on several cameras: shortest shot before an angle change
+        "rotate_max_shot": 9.0,   # ... and the longest (cuts at the longest pause in between)
+        "pause_min": 0.25,        # a pause at least this long is a place to change angle
     },
     "output": {
         "sequence_name": "autocut rough cut",
@@ -78,13 +82,15 @@ def load(path: Path) -> dict:
     if not isinstance(raw, dict):
         raise ConfigError(f"{path} must be a YAML mapping")
     cfg = _merge(DEFAULTS, raw)
-    cfg["speakers"] = {str(k): str(v) for k, v in (cfg["speakers"] or {}).items()}
+    cfg["speakers"] = {str(k): ([str(x) for x in v] if isinstance(v, (list, tuple)) else str(v))
+                       for k, v in (cfg["speakers"] or {}).items()}
     cfg["sync"]["overrides"] = {
         str(k).replace("\\", "/"): float(v) for k, v in (cfg["sync"]["overrides"] or {}).items()}
     if not cfg["long_camera"]:
         raise ConfigError("config: 'long_camera' is required (folder name of the wide shot)")
     c = cfg["cut"]
-    for key in ("min_segment", "overlap_min", "min_shot", "cut_lead"):
+    for key in ("min_segment", "overlap_min", "min_shot", "cut_lead", "rotate_min_shot",
+                "rotate_max_shot", "pause_min"):
         if float(c[key]) < 0:
             raise ConfigError(f"config: cut.{key} must be >= 0")
     return cfg

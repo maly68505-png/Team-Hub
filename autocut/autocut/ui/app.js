@@ -153,9 +153,11 @@ function renderScan() {
       warns.length ? h("div", { class: "warn" }, "⚠ " + warns.join("، ")) : null));
   }
   const aud = st.scan.audio;
+  const nt = st.scan.takes || 1;
+  const audTotal = nt > 1 ? aud.reduce((x, a) => x + a.duration, 0) : Math.max(0, ...aud.map((a) => a.duration));
   box.append(h("div", { class: "cam" },
     h("b", {}, "الصوت النظيف"),
-    h("span", { class: "muted" }, `${aud.length} ملف · ${fmtDur(Math.max(0, ...aud.map((a) => a.duration)))}`),
+    h("span", { class: "muted" }, nt > 1 ? `${nt} تيك متتالية · ${fmtDur(audTotal)}` : `${aud.length} ملف · ${fmtDur(audTotal)}`),
     h("div", { class: "muted" }, `${st.scan.fps} fps`)));
 }
 
@@ -179,6 +181,8 @@ function renderSettings() {
   $("cfgOverlap").value = cfg.cut.overlap_min;
   $("cfgMinSeg").value = cfg.cut.min_segment;
   $("cfgLead").value = cfg.cut.cut_lead;
+  $("cfgRotMin").value = cfg.cut.rotate_min_shot;
+  $("cfgRotMax").value = cfg.cut.rotate_max_shot;
 }
 
 function readSettings(cfg) {
@@ -190,6 +194,8 @@ function readSettings(cfg) {
   cfg.cut.overlap_min = num("cfgOverlap", cfg.cut.overlap_min);
   cfg.cut.min_segment = num("cfgMinSeg", cfg.cut.min_segment);
   cfg.cut.cut_lead = num("cfgLead", cfg.cut.cut_lead);
+  cfg.cut.rotate_min_shot = num("cfgRotMin", cfg.cut.rotate_min_shot);
+  cfg.cut.rotate_max_shot = Math.max(num("cfgRotMax", cfg.cut.rotate_max_shot), cfg.cut.rotate_min_shot + 1);
   return cfg;
 }
 
@@ -265,15 +271,22 @@ function renderSpeakers() {
   show($("secSpeakers"), !!sp);
   show($("secCut"), !!sp);
   if (!sp) return;
-  const mapping = S.project.config.speakers || {};
-  const cams = sp.cameras;
+  const cfg = S.project.config;
+  const mapping = cfg.speakers || {};
+  const cams = (S.project.cameras || sp.cameras.filter((c) => c !== "long"));
+  const needing = Object.values(sp.speakers).filter((i) => i.needs_mapping).length;
   const t = $("spkTable");
-  t.replaceChildren(h("tr", {}, ["المتحدث", "مدة الكلام", "عيّنات", "الكاميرا"].map((x) => h("th", {}, x))));
+  t.replaceChildren(h("tr", {}, ["المتحدث", "مدة الكلام", "عيّنات", "الكاميرات"].map((x) => h("th", {}, x))));
   for (const [label, info] of Object.entries(sp.speakers)) {
-    const sel = h("select", {},
-      h("option", { value: "" }, info.needs_mapping ? "— اختر —" : "(الواسعة تلقائياً)"),
-      cams.map((c) => h("option", { value: c, selected: mapping[label] === c }, camLabel(c))));
-    sel.dataset.label = label;
+    let chosen = mapping[label];
+    chosen = chosen == null ? [] : Array.isArray(chosen) ? chosen : [chosen];
+    chosen = chosen.map((c) => (c === "long" ? cfg.long_camera : c));
+    if (!chosen.length && needing === 1 && info.needs_mapping) chosen = cams.slice();  // one presenter: all angles
+    const box = h("div", { class: "camchips" }, cams.map((c) =>
+      h("label", { class: "chip-toggle" },
+        h("input", { type: "checkbox", value: c, checked: chosen.includes(c) }),
+        h("span", {}, c))));
+    box.dataset.label = label;
     t.append(h("tr", {},
       h("td", { class: "ltr" }, label),
       h("td", { class: "num-cell" }, fmtDur(info.total_seconds)),
@@ -281,14 +294,19 @@ function renderSpeakers() {
         ? h("button", { type: "button", class: "small", title: s.hhmmss,
             onclick: (e) => play(s.wav.split("/").pop(), e.currentTarget) }, "▶ " + (i + 1))
         : null)),
-      h("td", {}, sel)));
+      h("td", {}, box)));
   }
+  t.append(h("tr", {}, h("td", { colspan: 4, class: "muted" },
+    "كاميرا واحدة = القطع عليها كلما تكلّم. أكثر من كاميرا = تنويع بينها عند الوقفات بين الجمل (مناسب للمذيع الواحد).")));
 }
 
 async function saveSpeakers() {
   if (!S.project || !S.project.speakers) return;  // table not shown: keep the saved mapping
   const map = {};
-  document.querySelectorAll("#spkTable select").forEach((s) => { if (s.value) map[s.dataset.label] = s.value; });
+  document.querySelectorAll("#spkTable .camchips").forEach((box) => {
+    const picked = [...box.querySelectorAll("input:checked")].map((i) => i.value);
+    if (picked.length) map[box.dataset.label] = picked.length === 1 ? picked[0] : picked;
+  });
   await saveConfig((cfg) => { cfg.speakers = map; });
   flash($("spkSaved"), "تم الحفظ ✓");
 }
