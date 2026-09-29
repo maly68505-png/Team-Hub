@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write   # publish the download link (release "autocut-latest")
 
 jobs:
   build:
@@ -34,3 +34,30 @@ jobs:
           path: autocut/dist/Autocut-mac-arm64.zip
           compression-level: 0
           retention-days: 90
+
+      # A permanent public download link, refreshed on every green build:
+      # https://github.com/<owner>/<repo>/releases/download/autocut-latest/Autocut-mac-arm64.zip
+      - name: Publish download link
+        if: github.ref_name == github.event.repository.default_branch || github.ref_name == 'claude/fervent-maxwell-4yuya3'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(autocut/dist/Autocut-mac-arm64/Autocut.app/Contents/Resources/bin/autocut --version)
+          cat > notes.md <<EOF
+          ## ${VERSION} — ماك Apple Silicon (M1–M4)
+
+          **التحميل:** Autocut-mac-arm64.zip من الأسفل.
+
+          **التثبيت:** فك الضغط، افتح Terminal، اكتب \`bash\` ثم مسافة، واسحب ملف
+          **Install Autocut.command** إلى النافذة واضغط Enter.
+          التفاصيل في ملف «اقرأني.md» داخل المجلد.
+
+          يعمل بدون إنترنت. بُني واختُبر آلياً على ماك Apple Silicon من الـ commit ${GITHUB_SHA::7}.
+          EOF
+          if gh release view autocut-latest >/dev/null 2>&1; then
+            gh release upload autocut-latest autocut/dist/Autocut-mac-arm64.zip --clobber
+            gh release edit autocut-latest --notes-file notes.md --title "Autocut for Mac — ${VERSION}"
+          else
+            gh release create autocut-latest autocut/dist/Autocut-mac-arm64.zip \
+              --target "$GITHUB_SHA" --title "Autocut for Mac — ${VERSION}" --notes-file notes.md --latest
+          fi
