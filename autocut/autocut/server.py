@@ -111,24 +111,31 @@ def project_state(path: Path) -> dict:
             out["config_error"] = str(e)
     if cfg is None:
         cfg = json.loads(json.dumps(DEFAULTS))
-        try:
-            ad = find_audio_dir(path, "audio")
-        except ScanError:
-            ad = None
-        try:
-            cands = list(discover_cameras(path, ad)[1])
-        except ScanError:
-            cands = [d for d in subdirs if not AUDIO_NAME.search(d)]
-        wide = [d for d in cands if any(k in d.lower() for k in ("wide", "long", "master", "واسع"))]
-        cfg["long_camera"] = (wide or cands or [None])[0]
         cfg["fps"] = 25
     out["config"] = cfg
+    ad = None
     try:
-        out["audio_dir"] = str(find_audio_dir(path, str(cfg.get("audio_folder") or "audio")))
+        ad = find_audio_dir(path, str(cfg.get("audio_folder") or "audio"))
+        out["audio_dir"] = str(ad)
         if cfg.get("audio_folder") in (None, "", "audio"):
-            cfg["audio_folder"] = os.path.relpath(out["audio_dir"], path)
+            cfg["audio_folder"] = os.path.relpath(ad, path)
     except ScanError as e:
         out["audio_error"] = str(e)
+    if cfg.get("cameras"):
+        cams = [str(c) for c in cfg["cameras"]]
+    else:
+        try:
+            cams = list(discover_cameras(path, ad)[1])
+        except ScanError:
+            cams = [d for d in subdirs if not AUDIO_NAME.search(d)]
+    out["cameras"] = cams
+    if cams and cfg.get("long_camera") not in cams:
+        # no choice yet, or a saved one that no longer exists: guess, and say so
+        wide = [d for d in cams if any(k in d.lower() for k in ("wide", "long", "master", "واسع"))]
+        if cfg.get("long_camera"):
+            out["long_camera_reset"] = cfg["long_camera"]
+        cfg["long_camera"] = (wide or cams)[0]
+        out["long_camera_guessed"] = True
     if cfg.get("long_camera"):
         try:
             p = scan(path, cfg)

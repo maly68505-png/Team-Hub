@@ -6,6 +6,9 @@ set -e
 cd "$(dirname "$0")"
 echo "=== تثبيت Autocut ==="
 
+# stop a running older version so the new one starts fresh
+pkill -f "autocut serve" 2>/dev/null || true
+
 DEST="/Applications"
 [ -w "$DEST" ] || DEST="$HOME/Applications"
 mkdir -p "$DEST"

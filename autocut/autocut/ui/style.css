@@ -121,3 +121,5 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
   main { padding: 10px; }
   .top { padding: 10px 12px; }
 }
+
+.warn-text { color: var(--warn); }

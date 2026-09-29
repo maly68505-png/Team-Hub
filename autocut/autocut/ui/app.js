@@ -158,7 +158,10 @@ function renderSettings() {
   $("cfgAudio").value = st.audio_dir || "";
   $("audioError").textContent = st.audio_error ? "لم أجد مجلد الصوت النظيف — اضغط «اختر…» وحدده." : "";
   show($("audioError"), !!st.audio_error);
-  const cams = st.scan ? st.scan.cameras.map((c) => c.name) : (st.folders || []).filter((f) => f !== (cfg.audio_folder || "audio"));
+  const cams = st.cameras || (st.scan ? st.scan.cameras.map((c) => c.name) : []);
+  $("longHint").textContent = st.long_camera_reset
+    ? `«${st.long_camera_reset}» ليس كاميرا — اختر الكاميرا الواسعة ثم احفظ`
+    : st.long_camera_guessed ? "اختيار تلقائي — تأكد منه ثم احفظ" : "";
   const sel = $("cfgLong");
   sel.replaceChildren(...cams.map((c) => h("option", { value: c, selected: c === cfg.long_camera }, c)));
   $("cfgSpeakers").value = cfg.diarization.num_speakers ?? "";

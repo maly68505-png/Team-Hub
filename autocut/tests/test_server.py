@@ -118,3 +118,12 @@ def test_absolute_audio_folder_saved_relative(srv, project):
     cfg["audio_folder"] = str(audio)
     assert call(base, "/api/config", {"path": str(project), "config": cfg})[0] == 200
     assert load(project / "config.yaml")["audio_folder"] == "../2_AUDIO"
+
+
+def test_stale_long_camera_is_replaced_and_flagged(srv, project):
+    """A config saved by an older version named a folder that is not a camera."""
+    base, _ = srv
+    (project / "config.yaml").write_text("long_camera: 3_Proxy\n")
+    code, st = call(base, "/api/project?path=" + str(project))
+    assert st["long_camera_reset"] == "3_Proxy"
+    assert st["config"]["long_camera"] in st["cameras"]
