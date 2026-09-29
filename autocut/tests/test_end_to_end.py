@@ -36,11 +36,18 @@ def mapped(root):
         (root / "config.yaml").write_text(cfg)
 
 
+_DECODED = {}
+
+
 def decode(path, start_s, dur_s, sr=8000):
-    out = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{max(0, start_s):.4f}", "-i", str(path),
-                          "-t", f"{dur_s}", "-vn", "-ac", "1", "-ar", str(sr), "-f", "f32le", "-"],
-                         capture_output=True, check=True).stdout
-    return np.frombuffer(out, np.float32)
+    """Independent decoder (ffmpeg CLI). Whole file, no seeking: how a seek
+    lands on AAC differs between ffmpeg builds, whole-file decoding does not."""
+    if path not in _DECODED:
+        out = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", str(sr),
+                              "-f", "f32le", "-"], capture_output=True, check=True).stdout
+        _DECODED[path] = np.frombuffer(out, np.float32)
+    a = int(max(0.0, start_s) * sr)
+    return _DECODED[path][a:a + int(dur_s * sr)]
 
 
 def lag_ms(a, b, sr=8000, max_lag=0.2):

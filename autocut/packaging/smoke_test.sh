@@ -32,5 +32,8 @@ kill $PID
 echo "==> test suite with the bundled Python"
 "$PY" -m venv --system-site-packages "$AUTOCUT_HOME/venv"
 "$AUTOCUT_HOME/venv/bin/python" -m pip install -q pytest
-cd "$ROOT" && "$AUTOCUT_HOME/venv/bin/python" -m pytest -q
+cd "$ROOT"
+ffmpeg -version | head -1
+"$AUTOCUT_HOME/venv/bin/python" -m pytest -q -s tests/test_decode_timing.py
+"$AUTOCUT_HOME/venv/bin/python" -m pytest -q
 echo "SMOKE TEST PASSED"
