@@ -17,6 +17,7 @@ examples/example_script.srt  a sample timecode script
 docs/WORKFLOW.md             folder layout + step-by-step
 docs/QUICKSTART-AR.md        دليل التشغيل السريع بالعربي
 docs/QUOTECARDS-AR.md        دليل مولّد كروت الاقتباسات بالعربي
+autocut/                     Python CLI: multicam rough cut for Premiere Pro (see autocut/README.md)
 ```
 
 ## Which file do I use?

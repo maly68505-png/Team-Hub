@@ -1,0 +1,69 @@
+# autocut project config — copy to <project>/config.yaml and edit.
+#
+# Folder layout this expects:
+#   <project>/
+#     config.yaml
+#     audio/            clean audio tracks (WAV/BWF, poly-WAV ok), all starting together
+#     CAM_WIDE/         one folder per camera, clips inside sorted by timecode/filename
+#     CAM_A/
+#     CAM_B/
+#     ...
+
+# Frame rate you expect the cameras to be. The sequence always uses the rate the
+# camera clips actually have; if that is not this number you get a loud warning.
+fps: 25
+
+# Folder name of the wide ("long") camera. Overlapping speech cuts to it.
+long_camera: CAM_WIDE
+
+# Optional. Folder holding the clean audio (default: audio).
+audio_folder: audio
+
+# Optional. Which camera folders to use, in this order (default: every
+# subfolder except the audio folder and _autocut). The order here is also the
+# order of V2..Vn in Premiere.
+# cameras: [CAM_WIDE, CAM_A, CAM_B]
+
+# Speaker label -> camera folder. Leave empty on the first run: autocut stops
+# after diarization and writes speakers.json with sample timestamps (and short
+# WAV samples) for each label. Listen, then fill this in and run again.
+# Use the value "long" to send a speaker to the wide camera.
+speakers:
+  # SPEAKER_00: CAM_A
+  # SPEAKER_01: CAM_B
+  # SPEAKER_02: long
+
+sync:
+  analysis_rate: 8000         # Hz, fine cross-correlation
+  coarse_rate: 1000           # Hz, full-length coarse search
+  probe_seconds: 60           # length of scratch-audio window matched against the clean mix
+  long_clip_minutes: 20       # clips longer than this are measured at start AND end (drift)
+  drift_correct_frames: 0.5   # drift over the clip larger than this (in frames) gets corrected
+  max_drift_ppm: 1000         # a "drift" larger than this is treated as a bad match, not drift
+  min_confidence: 0.5         # 0..1, below this a clip is flagged LOW and the run stops
+  good_peak_ratio: 2.0        # peak / second-best peak that counts as confidence 1.0
+  min_ncc: 0.1                # normalized correlation at the peak below this is flagged LOW
+  # Manual offsets for clips that cannot be synced from audio. Value = seconds
+  # into the clean audio where the clip's first frame lands (can be negative).
+  overrides: {}
+  #  CAM_B/C0003.MP4: 1234.56
+
+diarization:
+  model: pyannote/speaker-diarization-3.1
+  hf_token_env: HF_TOKEN      # name of the env var holding your Hugging Face token
+  num_speakers: null          # set if you know it — improves diarization a lot
+  min_speakers: null
+  max_speakers: null
+  min_speaker_seconds: 10     # labels that talk less than this don't need a mapping (go to long)
+
+cut:
+  min_segment: 0.7            # s, speech turns shorter than this are ignored (backchannels)
+  overlap_min: 0.5            # s, overlaps longer than this cut to the long camera
+  min_shot: 2.0               # s, minimum shot length on V1
+  cut_lead: 0.0               # s, cut this much BEFORE a speaker starts (0.1-0.3 feels natural)
+  opening_camera: long        # camera for silence before the first speech
+
+output:
+  sequence_name: autocut rough cut
+  lock_camera_tracks: true    # V2..Vn locked
+  disable_camera_tracks: true # V2..Vn disabled (they sit above V1 and would hide it otherwise)
