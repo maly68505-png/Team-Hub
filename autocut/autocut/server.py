@@ -29,7 +29,7 @@ import yaml
 
 from . import __version__, models
 from .config import DEFAULTS, ConfigError, load
-from .scan import WORK_DIR, ScanError, scan
+from .scan import AUDIO_NAME, WORK_DIR, ScanError, discover_cameras, find_audio_dir, scan
 
 UI_DIR = Path(__file__).parent / "ui"
 DEFAULT_PORT = 47821
@@ -111,11 +111,24 @@ def project_state(path: Path) -> dict:
             out["config_error"] = str(e)
     if cfg is None:
         cfg = json.loads(json.dumps(DEFAULTS))
-        cands = [d for d in subdirs if d != "audio"]
+        try:
+            ad = find_audio_dir(path, "audio")
+        except ScanError:
+            ad = None
+        try:
+            cands = list(discover_cameras(path, ad)[1])
+        except ScanError:
+            cands = [d for d in subdirs if not AUDIO_NAME.search(d)]
         wide = [d for d in cands if any(k in d.lower() for k in ("wide", "long", "master", "واسع"))]
         cfg["long_camera"] = (wide or cands or [None])[0]
         cfg["fps"] = 25
     out["config"] = cfg
+    try:
+        out["audio_dir"] = str(find_audio_dir(path, str(cfg.get("audio_folder") or "audio")))
+        if cfg.get("audio_folder") in (None, "", "audio"):
+            cfg["audio_folder"] = os.path.relpath(out["audio_dir"], path)
+    except ScanError as e:
+        out["audio_error"] = str(e)
     if cfg.get("long_camera"):
         try:
             p = scan(path, cfg)
@@ -261,6 +274,9 @@ def make_handler(state: State):
             if path == "/api/config":
                 proj = Path(b["path"]).expanduser().resolve()
                 cfg = b["config"]
+                audio = str(cfg.get("audio_folder") or "audio")
+                if os.path.isabs(audio):  # store it relative: survives moving the whole shoot
+                    cfg["audio_folder"] = os.path.relpath(audio, proj)
                 (proj / "config.yaml").write_text(config_text(cfg), encoding="utf-8")
                 load(proj / "config.yaml")  # validate what we wrote
                 return self._json({"ok": True})
@@ -336,15 +352,47 @@ def running_server() -> dict | None:
         return None
 
 
+APP_BROWSERS = ["Google Chrome", "Microsoft Edge", "Brave Browser", "Chromium", "Arc"]
+
+
+def open_ui(url: str) -> None:
+    """Its own window (no tabs, no address bar) when a Chromium browser is
+    installed; otherwise a tab in the default browser."""
+    if sys.platform == "darwin":
+        for name in APP_BROWSERS:
+            for base in (Path("/Applications"), Path.home() / "Applications"):
+                if (base / f"{name}.app").exists():
+                    r = subprocess.run(["open", "-na", str(base / f"{name}.app"), "--args",
+                                        f"--app={url}", "--window-size=1100,860"], check=False)
+                    if r.returncode == 0:
+                        return
+    webbrowser.open(url)
+
+
+def _token() -> str:
+    """Same token across restarts, so a bookmark / Safari 'Add to Dock' keeps working."""
+    f = models.home() / "token"
+    try:
+        tok = f.read_text().strip()
+        if len(tok) >= 24:
+            return tok
+    except OSError:
+        pass
+    tok = secrets.token_urlsafe(24)
+    f.write_text(tok)
+    os.chmod(f, 0o600)
+    return tok
+
+
 def serve(port: int = DEFAULT_PORT, open_browser: bool = False, app_mode: bool = False) -> int:
     existing = running_server()
     if existing:
         url = f"http://127.0.0.1:{existing['port']}/?t={existing['token']}"
         print(f"Autocut already running: {url}", flush=True)
         if open_browser:
-            webbrowser.open(url)
+            open_ui(url)
         return 0
-    token = secrets.token_urlsafe(24)
+    token = _token()
     state = State(token, app_mode)
     port = _free_port(port)
     httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(state))
@@ -364,7 +412,7 @@ def serve(port: int = DEFAULT_PORT, open_browser: bool = False, app_mode: bool =
                     return
         threading.Thread(target=idle_watch, daemon=True).start()
     if open_browser:
-        threading.Timer(0.3, webbrowser.open, args=(url,)).start()
+        threading.Timer(0.3, open_ui, args=(url,)).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

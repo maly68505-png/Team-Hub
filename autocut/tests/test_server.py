@@ -94,9 +94,27 @@ def test_job_runs_engine_and_streams_log(srv, project):
             break
         time.sleep(0.1)
     assert j["exit_code"] == 1  # no video in the camera folders
-    assert any("no video files" in line for line in j["lines"])
+    assert any("video files" in line for line in j["lines"])
 
 
 def test_unknown_job_rejected(srv):
     base, _ = srv
     assert call(base, "/api/run", {"kind": "rm -rf"})[0] == 400
+
+
+def test_token_is_stable_across_restarts(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOCUT_HOME", str(tmp_path / "h"))
+    a = server._token()
+    assert a == server._token() and len(a) >= 24
+    assert oct((tmp_path / "h" / "token").stat().st_mode)[-3:] == "600"
+
+
+def test_absolute_audio_folder_saved_relative(srv, project):
+    base, _ = srv
+    audio = project.parent / "2_AUDIO"
+    audio.mkdir()
+    code, st = call(base, "/api/project?path=" + str(project))
+    cfg = st["config"]
+    cfg["audio_folder"] = str(audio)
+    assert call(base, "/api/config", {"path": str(project), "config": cfg})[0] == 200
+    assert load(project / "config.yaml")["audio_folder"] == "../2_AUDIO"

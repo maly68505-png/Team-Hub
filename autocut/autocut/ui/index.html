@@ -37,6 +37,12 @@
   <!-- 2. settings -->
   <section class="card hidden" id="secSettings">
     <h2><span class="num">٢</span> الإعدادات</h2>
+    <label>مجلد الصوت النظيف</label>
+    <div class="row">
+      <input id="cfgAudio" class="grow ltr" readonly placeholder="—">
+      <button id="btnAudio" type="button">اختر…</button>
+    </div>
+    <div id="audioError" class="alert error hidden"></div>
     <div class="grid">
       <label>الكاميرا الواسعة
         <select id="cfgLong"></select>

@@ -2,9 +2,11 @@
 "use strict";
 
 const qs = new URLSearchParams(location.search);
-let TOKEN = qs.get("t") || sessionStorage.getItem("autocut-token") || "";
+function tokStore(v) { try { if (v) localStorage.setItem("autocut-token", v); return localStorage.getItem("autocut-token"); } catch (e) { return null; } }
+let TOKEN = qs.get("t") || sessionStorage.getItem("autocut-token") || tokStore() || "";
 if (qs.get("t")) {
   sessionStorage.setItem("autocut-token", TOKEN);
+  tokStore(TOKEN);  // the token is stable: a Dock web app / bookmark without it keeps working
   qs.delete("t");
   history.replaceState(null, "", location.pathname + (qs.toString() ? "?" + qs : ""));
 }
@@ -81,8 +83,10 @@ async function refreshModels() {
 function renderRecent() {
   const box = $("recent");
   box.replaceChildren();
-  for (const p of recall("autocut-recent", []).slice(0, 6)) {
-    box.append(h("button", { type: "button", title: p, onclick: () => loadProject(p) },
+  const recent = recall("autocut-recent", []).slice(0, 6);
+  if (recent.length) box.append(h("span", { class: "muted" }, "آخر المجلدات:"));
+  for (const p of recent) {
+    box.append(h("button", { type: "button", dir: "ltr", title: p, onclick: () => loadProject(p) },
       p.split("/").filter(Boolean).pop()));
   }
 }
@@ -120,7 +124,7 @@ function showScanError(msg) {
 function renderScan() {
   const st = S.project;
   show($("scanBox"), true);
-  const err = st.scan_error || st.config_error;
+  const err = st.audio_error ? null : (st.scan_error || st.config_error);
   $("scanError").textContent = err ? "تنبيه: " + err : "";
   show($("scanError"), !!err);
   const box = $("scanSummary");
@@ -151,6 +155,9 @@ function renderScan() {
 // ---------------------------------------------------------------- settings
 function renderSettings() {
   const st = S.project, cfg = st.config;
+  $("cfgAudio").value = st.audio_dir || "";
+  $("audioError").textContent = st.audio_error ? "لم أجد مجلد الصوت النظيف — اضغط «اختر…» وحدده." : "";
+  show($("audioError"), !!st.audio_error);
   const cams = st.scan ? st.scan.cameras.map((c) => c.name) : (st.folders || []).filter((f) => f !== (cfg.audio_folder || "audio"));
   const sel = $("cfgLong");
   sel.replaceChildren(...cams.map((c) => h("option", { value: c, selected: c === cfg.long_camera }, c)));
@@ -453,6 +460,12 @@ $("btnLoad").onclick = () => loadProject($("projPath").value);
 $("projPath").addEventListener("keydown", (e) => { if (e.key === "Enter") loadProject(e.target.value); });
 $("btnSaveCfg").onclick = async () => {
   try { await saveConfig(); flash($("cfgSaved"), "تم الحفظ ✓"); await loadProject(S.path); }
+  catch (e) { flash($("cfgSaved"), "خطأ: " + e.message); }
+};
+$("btnAudio").onclick = async () => {
+  const p = await choose("folder", "اختر مجلد الصوت النظيف");
+  if (!p) return;
+  try { await saveConfig((cfg) => { cfg.audio_folder = p; }); await loadProject(S.path); }
   catch (e) { flash($("cfgSaved"), "خطأ: " + e.message); }
 };
 $("btnSaveSpk").onclick = () => saveSpeakers().catch((e) => flash($("spkSaved"), "خطأ: " + e.message));

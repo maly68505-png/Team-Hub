@@ -43,6 +43,7 @@ class Project:
     audio: list[MediaInfo]
     rate: Rate
     long_camera: str
+    audio_dir: Path | None = None
 
     @property
     def workdir(self) -> Path:
@@ -56,10 +57,37 @@ def natural_key(name: str):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name)]
 
 
-def _files(folder: Path, exts: set[str]) -> list[Path]:
-    return sorted((p for p in folder.iterdir()
-                   if p.is_file() and not p.name.startswith(".") and p.suffix.lower() in exts),
-                  key=lambda p: natural_key(p.name))
+def _files(folder: Path, exts: set[str], recursive: bool = False) -> list[Path]:
+    it = folder.rglob("*") if recursive else folder.iterdir()
+    found = [p for p in it
+             if p.is_file() and p.suffix.lower() in exts
+             and not any(part.startswith(".") for part in p.relative_to(folder).parts)]
+    return sorted(found, key=lambda p: natural_key(p.relative_to(folder).as_posix()))
+
+
+AUDIO_NAME = re.compile(r"audio|sound|صوت|wav", re.IGNORECASE)
+
+
+def find_audio_dir(root: Path, name: str) -> Path:
+    """The clean-audio folder: `audio_folder` from the config (relative to the
+    project, e.g. "../2_AUDIO", or absolute); with the default name, a folder
+    called like audio/sound/صوت inside the project or next to it."""
+    p = (root / name).resolve()
+    if p.is_dir():
+        return p
+    if name == "audio":
+        for where in (root, root.parent):
+            cands = [d for d in where.iterdir() if d.is_dir() and d.resolve() != root
+                     and not d.name.startswith(".") and d.name != WORK_DIR and AUDIO_NAME.search(d.name)]
+            if len(cands) == 1:
+                log.info("Clean audio folder found: %s", cands[0])
+                return cands[0].resolve()
+            if len(cands) > 1:
+                raise ScanError("several folders look like the clean audio: "
+                                + ", ".join(c.name for c in cands)
+                                + " — choose one (audio_folder in config.yaml / the app settings)")
+    raise ScanError(f"clean audio folder not found ('{name}' in {root}). Choose it in the app "
+                    f"settings, or set audio_folder in config.yaml (e.g. ../2_AUDIO)")
 
 
 def _order_clips(cam: Camera, rate: Rate) -> None:
@@ -82,29 +110,61 @@ def _order_clips(cam: Camera, rate: Rate) -> None:
         log.info("  %s: clips ordered by filename (timecode missing or duplicated)", cam.name)
 
 
+def _video_subdirs(folder: Path, audio_dir: Path | None) -> dict[str, list[Path]]:
+    out = {}
+    for p in sorted(folder.iterdir(), key=lambda p: natural_key(p.name)):
+        if (p.is_dir() and p.name != WORK_DIR and not p.name.startswith(".")
+                and (audio_dir is None or p.resolve() != audio_dir)):
+            files = _files(p, VIDEO_EXT, recursive=True)
+            if files:
+                out[p.name] = files
+            else:
+                log.debug("folder '%s' has no video files — not a camera", p.name)
+    return out
+
+
+def discover_cameras(root: Path, audio_dir: Path | None) -> tuple[Path, dict[str, list[Path]]]:
+    """Camera folders with their video files. If the chosen folder holds just one
+    folder that itself holds several camera folders (e.g. 0000/3_Proxy/CAM 01..),
+    the cameras are taken from there."""
+    found = _video_subdirs(root, audio_dir)
+    if len(found) == 1:
+        (only,) = found
+        inner = _video_subdirs(root / only, audio_dir)
+        if len(inner) >= 2:
+            return root / only, inner
+    if not found:
+        raise ScanError(f"no camera folders with video files in {root}")
+    return root, found
+
+
 def scan(root: Path, cfg: dict) -> Project:
     root = Path(root).resolve()
     if not root.is_dir():
         raise ScanError(f"project folder not found: {root}")
-    audio_name = cfg["audio_folder"]
-    audio_dir = root / audio_name
-    if not audio_dir.is_dir():
-        raise ScanError(f"no '{audio_name}' folder with the clean audio in {root}")
+    audio_dir = find_audio_dir(root, str(cfg["audio_folder"] or "audio"))
 
-    if cfg["cameras"]:
+    explicit = bool(cfg["cameras"])
+    if explicit:
+        cam_root = root
         cam_names = [str(c) for c in cfg["cameras"]]
         for n in cam_names:
             if not (root / n).is_dir():
                 raise ScanError(f"camera folder listed in config not found: {root / n}")
+        videos = {n: _files(root / n, VIDEO_EXT, recursive=True) for n in cam_names}
+        for n, v in videos.items():
+            if not v:
+                raise ScanError(f"camera folder '{n}' has no video files ({', '.join(sorted(VIDEO_EXT))})")
     else:
-        cam_names = sorted((p.name for p in root.iterdir()
-                            if p.is_dir() and p.name not in (audio_name, WORK_DIR)
-                            and not p.name.startswith(".")), key=natural_key)
+        cam_root, videos = discover_cameras(root, audio_dir)
+        cam_names = list(videos)
+    if cam_root != root:
+        log.info("Camera folders are in %s", cam_root)
     if cfg["long_camera"] not in cam_names:
         raise ScanError(f"long_camera '{cfg['long_camera']}' is not one of the camera folders: "
-                        f"{', '.join(cam_names) or '(none)'}")
-    if not 1 <= len(cam_names) <= 12:
-        raise ScanError(f"found {len(cam_names)} camera folders — expected 1..12: {cam_names}")
+                        f"{', '.join(cam_names)}")
+    if len(cam_names) > 12:
+        raise ScanError(f"found {len(cam_names)} camera folders — expected at most 12: {cam_names}")
     if not 4 <= len(cam_names) <= 7:
         log.warning("found %d cameras (expected 4-7) — continuing", len(cam_names))
 
@@ -112,15 +172,13 @@ def scan(root: Path, cfg: dict) -> Project:
     fps_votes: Counter = Counter()
     for name in cam_names:
         cam = Camera(name)
-        files = _files(root / name, VIDEO_EXT)
-        if not files:
-            raise ScanError(f"camera folder '{name}' has no video files ({', '.join(sorted(VIDEO_EXT))})")
-        for p in files:
+        for p in videos[name]:
+            rel = f"{name}/{p.relative_to(cam_root / name).as_posix()}"
             info = probe(p)
             if not info.has_video:
-                log.warning("  skip %s/%s: no video stream", name, p.name)
+                log.warning("  skip %s: no video stream", rel)
                 continue
-            cam.clips.append(Clip(name, info, f"{name}/{p.name}"))
+            cam.clips.append(Clip(name, info, rel))
             if info.fps:
                 fps_votes[info.fps] += 1
         cameras[name] = cam
@@ -154,6 +212,7 @@ def scan(root: Path, cfg: dict) -> Project:
                     "cameras' %s fps", expected, rate, rate)
     log.info("Sequence frame rate: %s fps (from the cameras)", rate)
 
+    log.info("Clean audio folder: %s", audio_dir)
     audio_files = _files(audio_dir, AUDIO_EXT)
     if not audio_files:
         raise ScanError(f"no audio files in {audio_dir}")
@@ -171,7 +230,7 @@ def scan(root: Path, cfg: dict) -> Project:
     if max(durs) - min(durs) > 1.0:
         log.warning("clean audio files differ in length by %.1fs — they are assumed to START "
                     "together; check that they come from one recorder", max(durs) - min(durs))
-    return Project(root, cameras, audio, rate, cfg["long_camera"])
+    return Project(root, cameras, audio, rate, cfg["long_camera"], audio_dir)
 
 
 def _dur(sec: float) -> str:
