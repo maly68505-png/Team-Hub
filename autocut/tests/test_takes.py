@@ -141,3 +141,48 @@ def test_full_run_places_takes_and_audio(shoot):
         assert abs(lag_ms(a[:m], cam[:m])) <= 1000 / 25 * 0.75 + 3, c.find("name").text
         checked += 1
     assert checked >= 10
+
+
+def test_silence_removal_keeps_every_track_in_sync(shoot):
+    """Pauses and the dead time between takes removed on all tracks alike."""
+    cfgtxt = (shoot / "config.yaml").read_text()
+    if "SPEAKER_00" not in cfgtxt:
+        cfgtxt = cfgtxt.replace("speakers:\n", "speakers:\n  SPEAKER_00: [CAM 02, CAM 03, CAM 04]\n")
+    cfgtxt += "cut:\n  remove_silence: true\n  silence_max: 0.6\n"
+    (shoot / "config.yaml").write_text(cfgtxt)
+    try:
+        assert run(shoot, rttm=shoot / "truth.rttm") == EXIT_OK
+        root = ET.parse(shoot / "_autocut" / "output" / "roughcut_tight.xml").getroot()
+    finally:
+        (shoot / "config.yaml").write_text(cfgtxt.split("cut:\n")[0])
+    seq = root.find("sequence")
+    n = int(seq.find("duration").text)
+    base = TAKES[0][1]
+    full = (TAKES[-1][2] - base) * 25
+    speech_in_takes = sum(b - a for _, a, b in TAKES) * 25
+    assert n < full - 15 * 25                 # the two 10 s gaps between takes and long pauses are gone
+    assert n > speech_in_takes * 0.6          # ... but the talking is still there
+    assert "no-silence" in seq.find("name").text
+
+    from test_end_to_end import _file_paths, decode, lag_ms
+    paths = _file_paths(root)
+    audio = [c for tr in seq.findall("media/audio/track") for c in tr.findall("clipitem")]
+    assert len(audio) > 20                    # the takes are cut at every removed pause
+    v1 = seq.findall("media/video/track")[0].findall("clipitem")
+    checked = 0
+    for c in v1:
+        start, end, src_in = (int(c.find(k).text) for k in ("start", "end", "in"))
+        if end - start < 50:
+            continue
+        a = next((x for x in audio if int(x.find("start").text) <= start < int(x.find("end").text) - 50), None)
+        if a is None:
+            continue
+        a_src = (int(a.find("in").text) + start - int(a.find("start").text)) / 25
+        clean = decode(paths[a.find("file").get("id")], a_src, 2.0)
+        cam = decode(paths[c.find("file").get("id")], src_in / 25, 2.0)
+        m = min(len(clean), len(cam))
+        if m < 8000 or np.std(clean[:m]) < 1e-3:
+            continue
+        assert abs(lag_ms(clean[:m], cam[:m])) <= 1000 / 25 * 0.75 + 3, (c.find("name").text, start)
+        checked += 1
+    assert checked >= 8

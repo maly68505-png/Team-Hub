@@ -12,6 +12,7 @@ Premiere imports speed changes from XML unreliably, re-slips are exact).
 """
 from __future__ import annotations
 
+import bisect
 import math
 from dataclasses import dataclass
 
@@ -120,3 +121,39 @@ class Timeline:
                     s = e
             f = g
         return out
+
+
+class TimeMap:
+    """Which sequence frames are kept (silence removal) and where they land.
+
+    Every track goes through the same map, so V1, the camera tracks and the
+    clean audio are cut at exactly the same frames and stay in sync."""
+
+    def __init__(self, n: int, ranges: list[tuple[int, int]] | None = None):
+        self.ranges = [(a, b) for a, b in (ranges if ranges is not None else [(0, n)]) if b > a]
+        self.starts = [a for a, _ in self.ranges]
+        self.cum: list[int] = []
+        c = 0
+        for a, b in self.ranges:
+            self.cum.append(c)
+            c += b - a
+        self.total = c
+        self.removed = n - c
+
+    def split(self, s: int, e: int) -> list[tuple[int, int, int]]:
+        """Kept parts of [s, e): (out_start, out_end, frames skipped from s)."""
+        out = []
+        i = max(0, bisect.bisect_right(self.starts, s) - 1)
+        while i < len(self.ranges) and self.ranges[i][0] < e:
+            a, b = self.ranges[i]
+            lo, hi = max(s, a), min(e, b)
+            if hi > lo:
+                out.append((self.cum[i] + lo - a, self.cum[i] + hi - a, lo - s))
+            i += 1
+        return out
+
+    def map(self, f: int) -> int | None:
+        i = bisect.bisect_right(self.starts, f) - 1
+        if i >= 0 and f < self.ranges[i][1]:
+            return self.cum[i] + f - self.ranges[i][0]
+        return None

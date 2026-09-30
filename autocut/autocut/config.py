@@ -42,6 +42,9 @@ DEFAULTS = {
         "rotate_min_shot": 4.0,   # presenter on several cameras: shortest shot before an angle change
         "rotate_max_shot": 9.0,   # ... and the longest (cuts at the longest pause in between)
         "pause_min": 0.25,        # a pause at least this long is a place to change angle
+        "remove_silence": False,  # shorten long pauses on every track (jump cuts)
+        "silence_max": 0.6,       # pauses longer than this are shortened ...
+        "silence_pad": 0.15,      # ... to this much on each side of the cut
     },
     "output": {
         "sequence_name": "autocut rough cut",
@@ -90,7 +93,7 @@ def load(path: Path) -> dict:
         raise ConfigError("config: 'long_camera' is required (folder name of the wide shot)")
     c = cfg["cut"]
     for key in ("min_segment", "overlap_min", "min_shot", "cut_lead", "rotate_min_shot",
-                "rotate_max_shot", "pause_min"):
+                "rotate_max_shot", "pause_min", "silence_max", "silence_pad"):
         if float(c[key]) < 0:
             raise ConfigError(f"config: cut.{key} must be >= 0")
     return cfg

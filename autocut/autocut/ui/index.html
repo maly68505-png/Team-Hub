@@ -103,11 +103,16 @@
       <label>التجربة تبدأ من<input id="testStart" class="ltr" value="00:00:00"></label>
       <label>مدة التجربة<input id="testDur" class="ltr" value="5:00"></label>
     </div>
+    <label class="check"><input id="cfgNoSilence" type="checkbox"> إزالة السكتات بين الكلام (من كل المسارات معاً — تبقى متزامنة)</label>
+    <div class="grid" id="silenceOpts">
+      <label>أي سكتة أطول من (ث) تُقصَّر<input id="cfgSilenceMax" type="number" step="0.1" min="0.2"></label>
+    </div>
     <label class="check"><input id="allowLow" type="checkbox"> تابع رغم وجود ملفات مزامنتها ضعيفة (تُعلَّم بالأحمر ولا تدخل في القطع)</label>
     <div class="row">
       <button id="btnTest" type="button">تجربة</button>
       <button id="btnFull" class="primary" type="button">القطع الكامل</button>
     </div>
+    <div id="summary"></div>
     <div id="outputs"></div>
   </section>
 </main>

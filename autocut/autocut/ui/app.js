@@ -182,6 +182,9 @@ function renderSettings() {
   $("cfgMinSeg").value = cfg.cut.min_segment;
   $("cfgLead").value = cfg.cut.cut_lead;
   $("cfgRotMin").value = cfg.cut.rotate_min_shot;
+  $("cfgNoSilence").checked = !!cfg.cut.remove_silence;
+  $("cfgSilenceMax").value = cfg.cut.silence_max;
+  show($("silenceOpts"), !!cfg.cut.remove_silence);
   $("cfgRotMax").value = cfg.cut.rotate_max_shot;
 }
 
@@ -195,6 +198,8 @@ function readSettings(cfg) {
   cfg.cut.min_segment = num("cfgMinSeg", cfg.cut.min_segment);
   cfg.cut.cut_lead = num("cfgLead", cfg.cut.cut_lead);
   cfg.cut.rotate_min_shot = num("cfgRotMin", cfg.cut.rotate_min_shot);
+  cfg.cut.remove_silence = $("cfgNoSilence").checked;
+  cfg.cut.silence_max = Math.max(0.2, num("cfgSilenceMax", cfg.cut.silence_max));
   cfg.cut.rotate_max_shot = Math.max(num("cfgRotMax", cfg.cut.rotate_max_shot), cfg.cut.rotate_min_shot + 1);
   return cfg;
 }
@@ -312,7 +317,43 @@ async function saveSpeakers() {
 }
 
 // ---------------------------------------------------------------- outputs
+const WHY = {
+  speaker: "على المتكلم", angle: "تنويع الزوايا عند الوقفات", hold: "إبقاء اللقطة أثناء الصمت",
+  overlap: "أصوات متداخلة ← الواسعة", unmapped: "متحدث غير مربوط بكاميرا ← الواسعة",
+  fallback: "الكاميرا المطلوبة بلا تصوير هنا ← بديل", gap: "لا توجد أي كاميرا (فراغ أسود)",
+  opening: "قبل أول كلمة", other: "أخرى",
+};
+
+function renderSummary() {
+  const box = $("summary");
+  box.replaceChildren();
+  const sm = S.project.summary;
+  if (!sm) return;
+  const bar = (label, pct) => h("div", { class: "sumrow" },
+    h("span", { class: "sumlabel" }, label), h("span", { class: "sumbar" }, h("i", { style: `width:${pct}%` })),
+    h("span", { class: "num-cell" }, pct.toFixed(0) + "%"));
+  box.append(h("h3", {}, `ماذا حدث في آخر قطع (${sm.full ? "كامل" : "تجربة"}): ${sm.shots} لقطة · ${fmtDur(sm.length)}`
+    + (sm.removed ? ` · حُذف ${fmtDur(sm.removed)} سكتات` : "")));
+  box.append(h("div", { class: "sumgrid" },
+    h("div", {}, h("b", {}, "نصيب كل كاميرا"), Object.entries(sm.cameras).map(([c, p]) => bar(c === "(gap)" ? "فراغ" : c, p))),
+    h("div", {}, h("b", {}, "السبب"), Object.entries(sm.reasons).map(([r, p]) => bar(WHY[r] || r, p)))));
+  const tips = [];
+  if ((sm.reasons.unmapped || 0) > 15) tips.push("جزء كبير لمتحدث غير مربوط: في الخطوة ٤ اختر كاميرات لكل متحدث (قد يكون المذيع ظهر كمتحدثَين).");
+  if ((sm.reasons.fallback || 0) > 15) tips.push("كاميرات كثيرة بلا تصوير في أماكنها: راجع جدول المزامنة (الملفات الضعيفة لا تدخل القطع).");
+  if ((sm.reasons.gap || 0) > 5 && !sm.removed) tips.push("فيه فراغات بلا تصوير (غالباً بين التيكات): فعّل «إزالة السكتات» لحذفها.");
+  const top = Object.entries(sm.cameras)[0];
+  if (top && top[1] > 60 && !(sm.reasons.angle > 20)) tips.push(`كاميرا ${top[0]} أخذت أغلب الوقت: لو فيه مذيع واحد اختر له أكثر من كاميرا في الخطوة ٤.`);
+  tips.forEach((t) => box.append(h("div", { class: "alert warn" }, t)));
+}
+
+function outputTag(name) {
+  const tags = [/_\d{6}_\d+s/.test(name) ? "تجربة" : "كامل"];
+  if (name.includes("_tight")) tags.push("بدون سكتات");
+  return tags.join(" · ");
+}
+
 function renderOutputs() {
+  renderSummary();
   const box = $("outputs");
   box.replaceChildren();
   const outs = (S.project.outputs || []).filter((o) => o.name.endsWith(".xml") || o.name.startsWith("cuts"));
@@ -321,7 +362,7 @@ function renderOutputs() {
   for (const o of outs) {
     const isXml = o.name.endsWith(".xml");
     box.append(h("div", { class: "outfile" },
-      h("span", { class: "name ltr" }, o.name),
+      h("span", { class: "name" }, h("span", { class: "pill" }, outputTag(o.name)), " ", h("span", { class: "ltr" }, o.name)),
       h("span", { class: "muted" }, new Date(o.mtime * 1000).toLocaleString("ar")),
       isXml && IN_PREMIERE ? h("button", { type: "button", class: "primary", onclick: () => importToPremiere(o.path) }, "استيراد في بريمير") : null,
       h("button", { type: "button", onclick: () => api("/api/reveal", { path: o.path }) }, "إظهار في Finder"),
@@ -525,6 +566,7 @@ $("btnSaveCfg").onclick = async () => {
   try { await saveConfig(); flash($("cfgSaved"), "تم الحفظ ✓"); await loadProject(S.path); }
   catch (e) { flash($("cfgSaved"), "خطأ: " + e.message); }
 };
+$("cfgNoSilence").onchange = () => show($("silenceOpts"), $("cfgNoSilence").checked);
 $("btnAudio").onclick = async () => {
   const p = await choose("folder", "اختر مجلد الصوت النظيف");
   if (!p) return;

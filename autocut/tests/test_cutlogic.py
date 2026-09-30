@@ -120,3 +120,31 @@ def test_single_camera_list_is_just_that_camera():
     shots = plan_cuts([Segment(0, 20, "S_A")], (0.0, 20.0), R, {"S_A": ["B"]}, CAMS, "WIDE",
                       {c: np.ones(R.frames(20), bool) for c in CAMS}, dict(DEFAULTS["cut"]))
     assert [s.camera for s in shots] == ["B"]
+
+
+def test_keep_ranges_shortens_long_pauses_only():
+    from autocut.cutlogic import keep_ranges
+    sound = np.zeros(R.frames(20), bool)
+    for a, b in [(1, 5), (5.3, 9), (11, 15), (18, 19)]:       # pauses: 0.3 s, 2 s, 3 s
+        sound[R.frames(a):R.frames(b)] = True
+    keep = keep_ranges(sound, R, max_pause=0.6, pad=0.15)
+    # leading silence trimmed to the pad, the 0.3 s pause kept whole, 2 s and 3 s pauses cut to 2 x 0.15 s
+    assert keep[0][0] == R.frames(1) - R.frames(0.15)
+    kept = sum(b - a for a, b in keep)
+    # speech 4+3.7+4+1, the 0.3 s pause, 2 x 0.15 for each long pause, 0.15 at each end
+    assert abs(kept - R.frames(4 + 3.7 + 4 + 1 + 0.3 + 0.3 + 0.3 + 0.15 + 0.15)) <= 2
+    for a, b in keep:
+        assert sound[a:b].sum() > 0                               # no all-silent piece left
+
+
+def test_rotation_picks_cameras_that_are_rolling():
+    n = R.frames(60)
+    cov = {c: np.ones(n, bool) for c in CAMS}
+    cov["A"][:R.frames(30)] = False          # A only rolls in the second half
+    pauses = [(t, t + 0.5) for t in np.arange(5.0, 60.0, 5.3)]
+    shots = plan_cuts([Segment(0, 60, "S_P")], (0.0, 60.0), R, {"S_P": ["A", "B", "WIDE"]}, CAMS, "WIDE",
+                      cov, dict(DEFAULTS["cut"]), quiet_at(60, pauses))
+    assert not any("no footage" in s.reason for s in shots)
+    assert all(s.camera != "A" for s in shots if s.end <= R.frames(30))
+    assert any(s.camera == "A" for s in shots if s.start >= R.frames(30))
+    assert all(x.camera != y.camera for x, y in zip(shots, shots[1:]))

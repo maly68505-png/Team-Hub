@@ -1,11 +1,12 @@
 """Runs the stages in order, with caching in <project>/_autocut/."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from . import config as config_mod
 from .audio import build_reference
-from .cutlogic import plan_cuts, silence_frames, summarize
+from .cutlogic import breakdown, keep_ranges, plan_cuts, silence_frames, speech_mask, summarize
 from .diarize import clip_segments, diarize, speaker_stats, write_speakers_json
 from .log import banner, log, setup
 from .probe import require_tools
@@ -14,7 +15,7 @@ from .scan import WORK_DIR, scan
 from .sync import report_sync, sync_all, write_sync_csv
 from .takes import build_reference_takes, group_takes, place_takes
 from .timecode import fmt_seconds, parse_time
-from .timeline import Timeline
+from .timeline import TimeMap, Timeline
 from . import xmeml
 
 EXIT_OK = 0
@@ -151,15 +152,33 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
                       project.long_camera, tl.coverage, cfg["cut"], quiet)
     summarize(shots, project.rate)
 
+    cc = cfg["cut"]
+    tm = TimeMap(tl.n)
+    if cc["remove_silence"]:
+        sound = speech_mask(clip_segments(segs, t0, t1), window, project.rate) | ~quiet
+        max_pause = max(float(cc["silence_max"]), 2 * float(cc["silence_pad"]) + 1 / project.rate.float)
+        tm = TimeMap(tl.n, keep_ranges(sound, project.rate, max_pause, float(cc["silence_pad"])))
+        log.info("Silence removal: pauses over %.2fs shortened — %s removed, %s -> %s",
+                 max_pause, fmt_seconds(tm.removed / project.rate.float),
+                 fmt_seconds(tl.n / project.rate.float), fmt_seconds(tm.total / project.rate.float))
+
     banner("6. Output")
     suffix = ""
     if is_test:
         suffix = "_" + fmt_seconds(t0).replace(":", "").split(".")[0] + f"_{int(round(t1 - t0))}s"
+    if cc["remove_silence"]:
+        suffix += "_tight"
     xml_p = out_dir / f"roughcut{suffix}.xml"
     csv_p = out_dir / f"cuts{suffix}.csv"
-    name = cfg["output"]["sequence_name"] + (f" [test {fmt_seconds(t0)[:8]}]" if is_test else "")
-    xmeml.write(xml_p, project, tl, shots, cfg, name)
-    write_cuts_csv(csv_p, shots, tl, project.rate)
+    name = cfg["output"]["sequence_name"] + (
+        f" TEST {fmt_seconds(t0)[:8]} +{fmt_seconds(t1 - t0)[3:8]}" if is_test else " FULL") + (
+        " no-silence" if cc["remove_silence"] else "")
+    xmeml.write(xml_p, project, tl, shots, cfg, name, tm)
+    write_cuts_csv(csv_p, shots, tl, project.rate, tm)
+    summary = dict(breakdown(shots, project.rate), full=not is_test, sequence=name, xml=xml_p.name,
+                   length=round(tm.total / project.rate.float, 1),
+                   removed=round(tm.removed / project.rate.float, 1))
+    (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
     log.info("Premiere XML: %s", xml_p)
     log.info("Cut list:     %s", csv_p)
     log.info("Log:          %s", workdir / "autocut.log")

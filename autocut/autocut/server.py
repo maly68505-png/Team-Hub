@@ -167,6 +167,12 @@ def project_state(path: Path) -> dict:
         with open(rep, encoding="utf-8") as fh:
             out["sync"] = list(csv.DictReader(fh))
     outdir = work / "output"
+    sm = outdir / "summary.json"
+    if sm.exists():
+        try:
+            out["summary"] = json.loads(sm.read_text(encoding="utf-8"))
+        except ValueError:
+            pass
     if outdir.exists():
         out["outputs"] = [{"name": f.name, "path": str(f), "mtime": f.stat().st_mtime}
                           for f in sorted(outdir.iterdir(), key=lambda f: -f.stat().st_mtime)

@@ -67,7 +67,7 @@ def silence_frames(x: np.ndarray, sr: int, window: tuple[float, float], rate: Ra
 
 
 def _rotate(pieces: list[Shot], speaker_cam: dict, pauses: list[tuple[int, int]],
-            rate: Rate, ccfg: dict) -> list[Shot]:
+            rate: Rate, ccfg: dict, coverage: dict | None = None) -> list[Shot]:
     """Replace ROT placeholders: switch between the speaker's cameras at pauses,
     a shot every rotate_min..rotate_max seconds, longest pause first."""
     fmin = rate.frames(float(ccfg["rotate_min_shot"]))
@@ -101,13 +101,19 @@ def _rotate(pieces: list[Shot], speaker_cam: dict, pauses: list[tuple[int, int]]
         prev = out[-1].camera if out else None
         k = next((n for n, cam in enumerate(cams) if cam != prev), 0)
         bounds = [a] + cuts + [b]
+        def rolling(cam, s0, s1):
+            c = (coverage or {}).get(cam)
+            return c is None or bool(c[s0:s1].all())
+
         for n, (s0, s1) in enumerate(zip(bounds, bounds[1:])):
-            cam = cams[k % len(cams)]
-            if out and cam == out[-1].camera and len(cams) > 1:
-                k += 1
-                cam = cams[k % len(cams)]
+            last = out[-1].camera if out else None
+            order = [cams[(k + i) % len(cams)] for i in range(len(cams))]
+            # next camera in turn that is rolling for the whole shot and is not the last angle
+            cam = next((c for c in order if c != last and rolling(c, s0, s1)), None)
+            if cam is None:
+                cam = next((c for c in order if rolling(c, s0, s1)), None) or order[0]
+            k = cams.index(cam) + 1
             out.append(Shot(s0, s1, cam, p.speaker, p.reason if n == 0 else "angle change (pause)"))
-            k += 1
         i = j + 1
     return out
 
@@ -182,7 +188,7 @@ def plan_cuts(segs: list[Segment], window: tuple[float, float], rate: Rate,
             silent = silent | quiet
         pmin = rate.frames(float(ccfg["pause_min"]))
         pauses = [(a, b) for a, b in _runs(silent) if silent[a] and b - a >= max(1, pmin)]
-        pieces = _rotate(pieces, speaker_cam, pauses, rate, ccfg)
+        pieces = _rotate(pieces, speaker_cam, pauses, rate, ccfg, coverage)
         log.info("Angle changes for presenters on several cameras: %d pauses found",
                  len(pauses))
 
@@ -278,6 +284,62 @@ def enforce_min_shot(shots: list[Shot], min_frames: int,
     return _coalesce(shots)
 
 
+def speech_mask(segs: list[Segment], window: tuple[float, float], rate: Rate) -> np.ndarray:
+    """Per sequence frame: True where diarization heard anyone (short turns included)."""
+    t0, t1 = window
+    n = rate.frames(t1 - t0)
+    m = np.zeros(n, bool)
+    for s in segs:
+        a, b = max(0, rate.frames(s.start - t0)), min(n, rate.frames(s.end - t0))
+        if b > a:
+            m[a:b] = True
+    return m
+
+
+def keep_ranges(sound: np.ndarray, rate: Rate, max_pause: float, pad: float) -> list[tuple[int, int]]:
+    """Frames to keep when removing silences: every quiet stretch longer than
+    `max_pause` is cut down to `pad` seconds on each side of it (leading and
+    trailing silence to `pad`)."""
+    n = len(sound)
+    lim = max(1, rate.frames(max_pause))
+    p = max(0, rate.frames(pad))
+    cuts = []
+    for a, b in _runs(sound):
+        if sound[a] or b - a <= lim:
+            continue
+        lo = 0 if a == 0 else a + p
+        hi = n if b == n else b - p
+        if hi > lo:
+            cuts.append((lo, hi))
+    keep, pos = [], 0
+    for lo, hi in cuts:
+        if lo > pos:
+            keep.append((pos, lo))
+        pos = hi
+    if pos < n:
+        keep.append((pos, n))
+    return keep
+
+
+REASON_GROUPS = [("angle change", "angle"), ("no footage on", "fallback"), ("NO FOOTAGE", "gap"),
+                 ("unmapped", "unmapped"), ("overlap", "overlap"), ("hold", "hold"),
+                 ("opening", "opening"), ("speaker", "speaker")]
+
+
+def breakdown(shots: list[Shot], rate: Rate) -> dict:
+    """Screen time per camera and per reason — the why of a rough cut."""
+    total = sum(s.length for s in shots) or 1
+    cams, reasons = Counter(), Counter()
+    for s in shots:
+        cams[s.camera or "(gap)"] += s.length
+        key = next((g for k, g in REASON_GROUPS if k in s.reason), "other")
+        reasons[key] += s.length
+    return {"shots": len(shots),
+            "cameras": {k: round(100 * v / total, 1) for k, v in cams.most_common()},
+            "reasons": {k: round(100 * v / total, 1) for k, v in reasons.most_common()},
+            "seconds": round(total / rate.float, 1)}
+
+
 def summarize(shots: list[Shot], rate: Rate) -> None:
     if not shots:
         log.warning("no shots")
@@ -294,6 +356,8 @@ def summarize(shots: list[Shot], rate: Rate) -> None:
     gaps = [s for s in shots if s.camera is None]
     if gaps:
         log.warning("%d gap(s) where no camera has footage", len(gaps))
+    why = breakdown(shots, rate)["reasons"]
+    log.info("Why: %s", ", ".join(f"{k} {v:.0f}%" for k, v in why.items()))
 
 
 def _mmss(sec: float) -> str:

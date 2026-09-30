@@ -15,7 +15,7 @@ from .log import log
 from .probe import MediaInfo
 from .scan import Clip, Project
 from .timecode import Rate, frames_to_tc, tc_to_frames
-from .timeline import Piece, Timeline
+from .timeline import Piece, TimeMap, Timeline
 
 LABELS = ["Iris", "Caribbean", "Lavender", "Forest", "Mango", "Cerulean", "Violet",
           "Magenta", "Teal", "Tan", "Blue", "Purple", "Green", "Brown", "Yellow"]
@@ -53,9 +53,10 @@ def _timecode(parent, rate: Rate, frame: int):
 
 
 class Writer:
-    def __init__(self, project: Project, tl: Timeline, cfg: dict):
+    def __init__(self, project: Project, tl: Timeline, cfg: dict, tm: TimeMap | None = None):
         self.p = project
         self.tl = tl
+        self.tm = tm or TimeMap(tl.n)
         self.rate = project.rate
         self.cfg = cfg
         self.files: dict[str, str] = {}
@@ -100,6 +101,15 @@ class Writer:
             _sub(a, "channelcount", info.audio_channels)
 
     # --- clipitems -------------------------------------------------------
+    def _video(self, track, piece: Piece, name: str, label: str, enabled: bool) -> int:
+        """Emit the kept parts of a piece (silence removal may split it)."""
+        n = 0
+        for s, e, skip in self.tm.split(piece.start, piece.end):
+            self._video_item(track, Piece(piece.clip, s, e, piece.src_in + skip, piece.low),
+                             name, label, enabled)
+            n += 1
+        return n
+
     def _video_item(self, track, piece: Piece, name: str, label: str, enabled: bool):
         self.clip_n += 1
         ci = _sub(track, "clipitem", id=f"clipitem-{self.clip_n}")
@@ -143,7 +153,7 @@ class Writer:
         root = ET.Element("xmeml", version="4")
         seq = _sub(root, "sequence", id="sequence-1")
         _sub(seq, "name", name)
-        _sub(seq, "duration", tl.n)
+        _sub(seq, "duration", self.tm.total)
         _rate(seq, rate)
         _timecode(seq, rate, rate.frames(tl.t0))
         _sub(seq, "in", -1)
@@ -168,9 +178,8 @@ class Writer:
             if shot.camera is None:
                 continue
             for piece in tl.pieces(shot.camera, shot.start, shot.end):
-                self._video_item(v1, piece, f"{shot.camera} | {piece.clip.path.name}",
-                                 self.cam_label[shot.camera], True)
-                n_v1 += 1
+                n_v1 += self._video(v1, piece, f"{shot.camera} | {piece.clip.path.name}",
+                                    self.cam_label[shot.camera], True)
         _sub(v1, "enabled", "TRUE")
         _sub(v1, "locked", "FALSE")
 
@@ -180,7 +189,7 @@ class Writer:
             tr = _sub(video, "track")
             for piece in tl.pieces(cam, 0, tl.n):
                 label = f"{'LOW-SYNC ' if piece.low else ''}{cam} | {piece.clip.path.name}"
-                self._video_item(tr, piece, label, self.cam_label[cam], cam_on)
+                self._video(tr, piece, label, self.cam_label[cam], cam_on)
             _sub(tr, "enabled", "TRUE" if cam_on else "FALSE")
             _sub(tr, "locked", "TRUE" if ocfg["lock_camera_tracks"] else "FALSE")
 
@@ -215,8 +224,9 @@ class Writer:
                     a, b = max(0, start_f), min(tl.n, start_f + total)
                     if b <= a:
                         continue
-                    self._audio_item(tr, info, ch, a, b, a - start_f)
-                    n_audio += 1
+                    for s2, e2, skip in self.tm.split(a, b):
+                        self._audio_item(tr, info, ch, s2, e2, a - start_f + skip)
+                        n_audio += 1
                 _sub(tr, "enabled", "TRUE")
                 _sub(tr, "locked", "FALSE")
         if not n_audio:
@@ -233,8 +243,9 @@ class _OneTake:
         self.files, self.position = list(files), 0.0
 
 
-def write(path: Path, project: Project, tl: Timeline, shots: list[Shot], cfg: dict, name: str) -> None:
-    root = Writer(project, tl, cfg).build(shots, name)
+def write(path: Path, project: Project, tl: Timeline, shots: list[Shot], cfg: dict, name: str,
+          tm: TimeMap | None = None) -> None:
+    root = Writer(project, tl, cfg, tm).build(shots, name)
     ET.indent(root, space="  ")
     body = ET.tostring(root, encoding="unicode")
     Path(path).write_text('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE xmeml>\n' + body + "\n",
