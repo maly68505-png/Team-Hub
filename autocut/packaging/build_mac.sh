@@ -91,6 +91,13 @@ echo "==> icon"
   iconutil -c icns "$OUT/icon.iconset" -o "$APP/Contents/Resources/Autocut.icns" || echo "    (no icon)"
 rm -rf "$OUT/icon.iconset"
 
+echo "==> ad-hoc signature for the whole bundle"
+# Not an Apple Developer ID, but a sealed bundle: a downloaded copy is reported
+# as "could not be verified" (System Settings > Privacy & Security > Open Anyway)
+# instead of "is damaged" (no way to open it).
+codesign --force --deep --sign - "$APP"
+codesign --verify --deep --strict "$APP" && echo "    signature OK"
+
 echo "==> Premiere panel + installer"
 ditto "$ROOT/premiere-panel" "$OUT/AutocutPanel"
 cp "$HERE/Install Autocut.command" "$OUT/"
