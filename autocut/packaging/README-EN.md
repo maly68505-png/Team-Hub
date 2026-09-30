@@ -74,6 +74,10 @@ Open **Autocut** from Applications, or inside Premiere: Window → Extensions �
 
 To swap a shot: unlock the camera track, enable the clip you want and use it — it is already in sync.
 
+**Layered timeline** (tick it in step 5): no separate V1 — every camera is on its own track (V1, V2, …), fully synced and cut in place. Only the chosen camera's clip is enabled at each moment.
+- **Move a cut:** with the Rolling Edit tool (N), select the edit point on the two camera tracks (Cmd-click the second one) and drag.
+- **Change the camera of a shot:** disable the clip that shows (Shift+E) and enable the one on the camera you want.
+
 ## Common problems
 
 | Problem | Fix |

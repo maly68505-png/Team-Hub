@@ -189,6 +189,7 @@ function renderSettings() {
   $("cfgLead").value = cfg.cut.cut_lead;
   $("cfgRotMin").value = cfg.cut.rotate_min_shot;
   $("cfgNoSilence").checked = !!cfg.cut.remove_silence;
+  $("cfgLayered").checked = !!cfg.output.layered;
   $("cfgSilenceMax").value = cfg.cut.silence_max;
   show($("silenceOpts"), !!cfg.cut.remove_silence);
   $("cfgRotMax").value = cfg.cut.rotate_max_shot;
@@ -205,6 +206,7 @@ function readSettings(cfg) {
   cfg.cut.cut_lead = num("cfgLead", cfg.cut.cut_lead);
   cfg.cut.rotate_min_shot = num("cfgRotMin", cfg.cut.rotate_min_shot);
   cfg.cut.remove_silence = $("cfgNoSilence").checked;
+  cfg.output.layered = $("cfgLayered").checked;
   cfg.cut.silence_max = Math.max(0.2, num("cfgSilenceMax", cfg.cut.silence_max));
   cfg.cut.rotate_max_shot = Math.max(num("cfgRotMax", cfg.cut.rotate_max_shot), cfg.cut.rotate_min_shot + 1);
   return cfg;
@@ -371,6 +373,7 @@ function renderSummary() {
 function outputTag(name) {
   const tags = [/_\d{6}_\d+s/.test(name) ? L("تجربة", "test") : L("كامل", "full")];
   if (name.includes("_tight")) tags.push(L("بدون سكتات", "no silences"));
+  if (name.includes("_layers")) tags.push(L("طبقات", "layered"));
   return tags.join(" · ");
 }
 
