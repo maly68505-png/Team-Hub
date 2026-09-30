@@ -11,6 +11,8 @@ if (qs.get("t")) {
   history.replaceState(null, "", location.pathname + (qs.toString() ? "?" + qs : ""));
 }
 const IN_PREMIERE = qs.get("host") === "premiere" && window.parent !== window;
+// inside Autocut.app (native window): folder / file pickers come from the app
+const APP_BRIDGE = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.autocut;
 
 const $ = (id) => document.getElementById(id);
 const S = { project: null, path: "", jobKind: null, running: false };
@@ -402,9 +404,10 @@ function importToPremiere(path) {
 let chooseSeq = 0;
 const chooseWaiters = {};
 function choose(kind, prompt) {
-  if (!IN_PREMIERE) return api("/api/choose", { kind, prompt }).then((r) => r.path);
+  if (!IN_PREMIERE && !APP_BRIDGE) return api("/api/choose", { kind, prompt }).then((r) => r.path);
   const id = ++chooseSeq;
-  window.parent.postMessage({ type: "autocut-choose", id, kind, prompt }, "*");
+  if (APP_BRIDGE) APP_BRIDGE.postMessage({ type: "choose", id, kind, prompt });
+  else window.parent.postMessage({ type: "autocut-choose", id, kind, prompt }, "*");
   return new Promise((resolve) => { chooseWaiters[id] = resolve; });
 }
 window.addEventListener("message", (ev) => {

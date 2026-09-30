@@ -53,15 +53,11 @@ R="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 PYANNOTE_METRICS_ENABLED=false
 exec "$R/python/bin/python3" -m autocut "$@"
 SH
-cat > "$APP/Contents/MacOS/Autocut" <<'SH'
-#!/bin/bash
-# Double-click: start the local engine in the background and open the UI.
-R="$(cd "$(dirname "$0")/../Resources" && pwd)"
-mkdir -p "$HOME/Library/Logs"
-nohup "$R/bin/autocut" serve --app --open >> "$HOME/Library/Logs/Autocut.log" 2>&1 &
-disown
-SH
-chmod +x "$APP/Contents/Resources/bin/autocut" "$APP/Contents/MacOS/Autocut"
+chmod +x "$APP/Contents/Resources/bin/autocut"
+
+echo "==> native window (Swift + WebKit: the UI opens in the app, not in a browser)"
+swiftc -O -target arm64-apple-macos12 -framework Cocoa -framework WebKit \
+  "$HERE/mac-app/main.swift" -o "$APP/Contents/MacOS/Autocut"
 
 VERSION="$("$PY" -c 'import autocut; print(autocut.__version__)')"
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -80,6 +76,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSArchitecturePriority</key><array><string>arm64</string></array>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key><true/>
+    <key>NSAllowsArbitraryLoads</key><true/>
+  </dict>
 </dict>
 </plist>
 PLIST

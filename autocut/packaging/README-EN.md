@@ -39,6 +39,8 @@ Manual import: badge → **Import autocut-models.zip…**.
 
 Open **Autocut** from Applications, or inside Premiere: Window → Extensions → Autocut.
 
+> Autocut opens in **its own window** like any other app (no browser needed) and runs only on your Mac. The first start on a new Mac can take up to a minute.
+
 1. **Shoot folder**: pick the episode folder. Either layout works:
    ```
    Episode/                   or      0000/

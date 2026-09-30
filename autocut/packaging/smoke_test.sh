@@ -18,6 +18,10 @@ print("torch", torch.__version__, "mps", torch.backends.mps.is_available(), "av"
 assert os.environ["PYANNOTE_METRICS_ENABLED"] == "false"
 PY
 
+echo "==> native app binary"
+file "$APP/Contents/MacOS/Autocut" | grep -q "Mach-O 64-bit executable arm64"
+plutil -lint "$APP/Contents/Info.plist"
+
 echo "==> engine server"
 "$CLI" serve --port 0 > "$AUTOCUT_HOME/serve.log" 2>&1 &
 PID=$!
