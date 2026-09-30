@@ -334,6 +334,7 @@ function renderSummary() {
     h("span", { class: "num-cell" }, pct.toFixed(0) + "%"));
   box.append(h("h3", {}, `ماذا حدث في آخر قطع (${sm.full ? "كامل" : "تجربة"}): ${sm.shots} لقطة · ${fmtDur(sm.length)}`
     + (sm.removed ? ` · حُذف ${fmtDur(sm.removed)} سكتات` : "")));
+  if (sm.sequence) box.append(h("p", { class: "muted" }, "اسم التسلسل في بريمير: ", h("b", { class: "ltr" }, sm.sequence)));
   box.append(h("div", { class: "sumgrid" },
     h("div", {}, h("b", {}, "نصيب كل كاميرا"), Object.entries(sm.cameras).map(([c, p]) => bar(c === "(gap)" ? "فراغ" : c, p))),
     h("div", {}, h("b", {}, "السبب"), Object.entries(sm.reasons).map(([r, p]) => bar(WHY[r] || r, p)))));
