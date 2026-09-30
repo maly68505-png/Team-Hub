@@ -48,7 +48,7 @@ DEFAULTS = {
     },
     "output": {
         "sequence_name": "autocut rough cut",
-        "layered": False,  # every camera on its own track, cut there (no V1): cuts editable in place
+        "layered": True,   # every camera on its own track, cut there (no V1): cuts editable in place
         "lock_camera_tracks": True,
         "disable_camera_tracks": True,
     },

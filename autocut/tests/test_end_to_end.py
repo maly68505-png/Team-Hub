@@ -196,7 +196,7 @@ def test_layered_timeline(project, tmp_path):
     shutil.copytree(project, root, ignore=shutil.ignore_patterns("_autocut"))
     mapped(root)
     cfg = (root / "config.yaml").read_text()
-    (root / "config.yaml").write_text(cfg + "\noutput:\n  layered: true\n")
+    (root / "config.yaml").write_text(cfg.replace("layered: false", "layered: true"))
     assert run(root, rttm=root / "truth.rttm") == EXIT_OK
     out = root / "_autocut" / "output"
     seq, vt, _ = xml_tracks(out / "roughcut_layers.xml")

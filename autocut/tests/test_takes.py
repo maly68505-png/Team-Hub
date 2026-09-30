@@ -59,7 +59,8 @@ def shoot(tmp_path_factory):
                 if e2 - s2 > 0.2:
                     fh.write(f"SPEAKER ref 1 {s2 - base:.3f} {e2 - s2:.3f} <NA> <NA> SPEAKER_00 <NA> <NA>\n")
     (top / "config.yaml").write_text("fps: 25\nlong_camera: CAM 01\nspeakers:\n"
-                                     "sync:\n  long_clip_minutes: 2\n  probe_seconds: 30\n")
+                                     "sync:\n  long_clip_minutes: 2\n  probe_seconds: 30\n"
+                                     "output:\n  layered: false\n")
     return top
 
 
