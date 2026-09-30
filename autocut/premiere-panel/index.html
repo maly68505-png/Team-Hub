@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
 <meta charset="utf-8">
 <title>Autocut</title>
@@ -14,8 +14,8 @@
 </head>
 <body>
 <div id="boot">
-  <p id="bootMsg">جارٍ تشغيل Autocut…</p>
-  <p><button id="retry" type="button" hidden>إعادة المحاولة</button></p>
+  <p id="bootMsg">Starting Autocut…</p>
+  <p><button id="retry" type="button" hidden>Retry</button></p>
 </div>
 <iframe id="ui" title="Autocut"></iframe>
 <script>
@@ -47,7 +47,7 @@ async function ensureEngine() {
   let info = readServer();
   if (info && await ping(info)) return info;
   const app = APPS.find((a) => fs.existsSync(a));
-  if (!app) throw new Error("لم يُعثر على Autocut.app في مجلد Applications.\nثبّت Autocut أولاً (Install Autocut.command).");
+  if (!app) throw new Error("Autocut.app was not found in Applications.\nInstall Autocut first (Install Autocut.command).");
   const bin = path.join(app, "Contents", "Resources", "bin", "autocut");
   const child = cp.spawn(bin, ["serve", "--app"], { detached: true, stdio: "ignore" });
   child.unref();
@@ -56,7 +56,7 @@ async function ensureEngine() {
     info = readServer();
     if (info && await ping(info)) return info;
   }
-  throw new Error("لم يبدأ محرك Autocut. جرّب فتح Autocut.app مرة، ثم أعد المحاولة.");
+  throw new Error("The Autocut engine did not start. Open Autocut.app once, then retry.");
 }
 
 function evalScript(script) {
@@ -85,7 +85,7 @@ async function boot() {
   const msg = document.getElementById("bootMsg"), retry = document.getElementById("retry");
   retry.hidden = true;
   msg.className = "";
-  msg.textContent = "جارٍ تشغيل Autocut…";
+  msg.textContent = "Starting Autocut…";
   try {
     const info = await ensureEngine();
     ORIGIN = "http://127.0.0.1:" + info.port;

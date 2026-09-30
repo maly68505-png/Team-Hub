@@ -38,7 +38,7 @@ async function api(path, body) {
   }
   const r = await fetch(path, opt);
   const data = await r.json().catch(() => ({}));
-  if (r.status === 401) throw new Error("انتهت الجلسة — أعد فتح Autocut");
+  if (r.status === 401) throw new Error(L("انتهت الجلسة — أعد فتح Autocut", "Session expired — reopen Autocut"));
   if (!r.ok) throw new Error(data.error || r.statusText);
   return data;
 }
@@ -53,7 +53,7 @@ function fmtOffset(s) {
   const a = Math.abs(v);
   return sign + fmtDur(Math.floor(a)) + "." + String(Math.round((a % 1) * 1000)).padStart(3, "0");
 }
-const camLabel = (c) => (c === "long" ? "الواسعة" : c);
+const camLabel = (c) => (c === "long" ? L("الواسعة", "wide") : c);
 function flash(el, text) { el.textContent = text; setTimeout(() => (el.textContent = ""), 2500); }
 function show(el, on) { el.classList.toggle("hidden", !on); }
 
@@ -67,14 +67,15 @@ async function refreshModels() {
     const m = p.models;
     const b = $("modelsBadge");
     b.className = "badge " + (m.ready ? "ok" : "warn");
-    b.textContent = m.ready ? "النموذج جاهز ✓" : "النموذج غير مثبت";
+    b.textContent = m.ready ? L("النموذج جاهز ✓", "Model ready ✓") : L("النموذج غير مثبت", "Model not installed");
     $("mdlStatus").textContent = m.ready
-      ? `مثبت (${m.size_mb} MB) — يعمل بدون إنترنت.`
-      : "غير مثبت على هذا الجهاز. استورده من زميل أو حمّله مرة واحدة.";
+      ? L(`مثبت (${m.size_mb} MB) — يعمل بدون إنترنت.`, `Installed (${m.size_mb} MB) — works offline.`)
+      : L("غير مثبت على هذا الجهاز. استورده من زميل أو حمّله مرة واحدة.",
+          "Not installed on this Mac. Import it from a colleague or download it once.");
     $("btnExport").disabled = !m.ready;
     return m.ready;
   } catch (e) {
-    $("modelsBadge").textContent = "غير متصل";
+    $("modelsBadge").textContent = L("غير متصل", "Not connected");
     return false;
   }
 }
@@ -84,12 +85,12 @@ function renderRecent() {
   const box = $("recent");
   box.replaceChildren();
   const recent = recall("autocut-recent", []).slice(0, 6);
-  if (recent.length) box.append(h("span", { class: "muted" }, "آخر المجلدات:"));
+  if (recent.length) box.append(h("span", { class: "muted" }, L("آخر المجلدات:", "Recent:")));
   for (const p of recent) {
     box.append(h("span", { class: "chip" },
       h("button", { type: "button", dir: "ltr", title: p, onclick: () => loadProject(p) },
         p.split("/").filter(Boolean).pop()),
-      h("button", { type: "button", class: "x", title: "إزالة من القائمة", onclick: () => {
+      h("button", { type: "button", class: "x", title: L("إزالة من القائمة", "Remove from list"), onclick: () => {
         store("autocut-recent", recall("autocut-recent", []).filter((x) => x !== p));
         renderRecent();
       } }, "×")));
@@ -107,7 +108,7 @@ async function loadProject(path) {
   } catch (e) {
     return showScanError(e.message);
   }
-  if (!st.exists) return showScanError("المجلد غير موجود");
+  if (!st.exists) return showScanError(L("المجلد غير موجود", "Folder not found"));
   S.project = st;
   show($("btnClose"), true);
   store("autocut-last-closed", false);
@@ -132,7 +133,7 @@ function renderScan() {
   const st = S.project;
   show($("scanBox"), true);
   const err = st.audio_error ? null : (st.scan_error || st.config_error);
-  $("scanError").textContent = err ? "تنبيه: " + err : "";
+  $("scanError").textContent = err ? L("تنبيه: ", "Note: ") + err : "";
   show($("scanError"), !!err);
   const box = $("scanSummary");
   box.replaceChildren();
@@ -145,19 +146,20 @@ function renderScan() {
   for (const cam of st.scan.cameras) {
     const dur = cam.clips.reduce((a, c) => a + c.duration, 0);
     const warns = [];
-    if (cam.clips.some((c) => c.fps && Math.abs(c.fps - seqFps) > 0.01)) warns.push("fps مختلف");
-    if (cam.clips.some((c) => !c.audio)) warns.push("ملف بدون صوت");
+    if (cam.clips.some((c) => c.fps && Math.abs(c.fps - seqFps) > 0.01)) warns.push(L("fps مختلف", "different fps"));
+    if (cam.clips.some((c) => !c.audio)) warns.push(L("ملف بدون صوت", "file without audio"));
     box.append(h("div", { class: "cam" + (cam.name === st.config.long_camera ? " long" : "") },
       h("b", {}, cam.name),
-      h("span", { class: "muted" }, `${cam.clips.length} ملف · ${fmtDur(dur)}`),
-      warns.length ? h("div", { class: "warn" }, "⚠ " + warns.join("، ")) : null));
+      h("span", { class: "muted" }, L(`${cam.clips.length} ملف · ${fmtDur(dur)}`, `${cam.clips.length} file(s) · ${fmtDur(dur)}`)),
+      warns.length ? h("div", { class: "warn" }, "⚠ " + warns.join(L("، ", ", "))) : null));
   }
   const aud = st.scan.audio;
   const nt = st.scan.takes || 1;
   const audTotal = nt > 1 ? aud.reduce((x, a) => x + a.duration, 0) : Math.max(0, ...aud.map((a) => a.duration));
   box.append(h("div", { class: "cam" },
-    h("b", {}, "الصوت النظيف"),
-    h("span", { class: "muted" }, nt > 1 ? `${nt} تيك متتالية · ${fmtDur(audTotal)}` : `${aud.length} ملف · ${fmtDur(audTotal)}`),
+    h("b", {}, L("الصوت النظيف", "Clean audio")),
+    h("span", { class: "muted" }, nt > 1 ? L(`${nt} تيك متتالية · ${fmtDur(audTotal)}`, `${nt} takes in a row · ${fmtDur(audTotal)}`)
+      : L(`${aud.length} ملف · ${fmtDur(audTotal)}`, `${aud.length} file(s) · ${fmtDur(audTotal)}`)),
     h("div", { class: "muted" }, `${st.scan.fps} fps`)));
 }
 
@@ -165,15 +167,17 @@ function renderScan() {
 function renderSettings() {
   const st = S.project, cfg = st.config;
   $("cfgAudio").value = st.audio_dir || "";
-  $("audioError").textContent = st.audio_error_ar || "";
+  $("audioError").textContent = (EN() ? st.audio_error : st.audio_error_ar || st.audio_error) || "";
   show($("audioError"), !!st.audio_error);
   const af = st.audio_files || [];
   $("audioInfo").textContent = af.length
-    ? `${af.length} ملف صوت: ${af.slice(0, 4).join("، ")}${af.length > 4 ? "…" : ""}` : "";
+    ? L(`${af.length} ملف صوت: ${af.slice(0, 4).join("، ")}`, `${af.length} audio file(s): ${af.slice(0, 4).join(", ")}`)
+      + (af.length > 4 ? "…" : "") : "";
   const cams = st.cameras || (st.scan ? st.scan.cameras.map((c) => c.name) : []);
   $("longHint").textContent = st.long_camera_reset
-    ? `«${st.long_camera_reset}» ليس كاميرا — اختر الكاميرا الواسعة ثم احفظ`
-    : st.long_camera_guessed ? "اختيار تلقائي — تأكد منه ثم احفظ" : "";
+    ? L(`«${st.long_camera_reset}» ليس كاميرا — اختر الكاميرا الواسعة ثم احفظ`,
+        `"${st.long_camera_reset}" is not a camera — pick the wide camera, then save`)
+    : st.long_camera_guessed ? L("اختيار تلقائي — تأكد منه ثم احفظ", "Picked automatically — check it, then save") : "";
   const sel = $("cfgLong");
   sel.replaceChildren(...cams.map((c) => h("option", { value: c, selected: c === cfg.long_camera }, c)));
   $("cfgSpeakers").value = cfg.diarization.num_speakers ?? "";
@@ -220,30 +224,32 @@ function renderSync() {
   const overrides = S.project.config.sync.overrides || {};
   const t = $("syncTable");
   t.replaceChildren(h("tr", {},
-    ["الملف", "يبدأ عند", "انحراف الساعة", "الثقة", "الحالة", "تصحيح يدوي (ث)"].map((x) => h("th", {}, x))));
+    (EN() ? ["File", "Starts at", "Clock drift", "Confidence", "Status", "Manual fix (s)"]
+      : ["الملف", "يبدأ عند", "انحراف الساعة", "الثقة", "الحالة", "تصحيح يدوي (ث)"]).map((x) => h("th", {}, x))));
   for (const r of rows) {
     const low = r.status === "LOW";
     const conf = Number(r.confidence);
     const color = conf >= 0.8 ? "var(--ok)" : conf >= 0.5 ? "var(--warn)" : "var(--bad)";
     const ov = h("input", { class: "override ltr", type: "number", step: "0.001",
-      placeholder: low ? "مطلوب" : "", value: overrides[r.clip] ?? "" });
+      placeholder: low ? L("مطلوب", "needed") : "", value: overrides[r.clip] ?? "" });
     ov.dataset.clip = r.clip;
-    const drift = r.drift_ppm_measured ? `${Math.round(r.drift_ppm_measured)} ppm` + (Number(r.drift_ppm_applied) ? " (صُحّح)" : "") : "—";
+    const drift = r.drift_ppm_measured ? `${Math.round(r.drift_ppm_measured)} ppm` + (Number(r.drift_ppm_applied) ? L(" (صُحّح)", " (corrected)") : "") : "—";
     t.append(h("tr", { class: low ? "low" : "", title: r.notes || "" },
       h("td", { class: "ltr" }, r.clip),
       h("td", { class: "num-cell" }, r.method === "failed" ? "—" : fmtOffset(r.offset_s)),
       h("td", { class: "num-cell" }, drift),
       h("td", {}, h("span", { class: "conf" }, h("i", { style: `width:${Math.round(conf * 100)}%;background:${color}` }))),
-      h("td", {}, r.method === "override" ? h("span", { class: "pill ok" }, "يدوي")
-        : low ? h("span", { class: "pill bad" }, "ضعيفة") : h("span", { class: "pill ok" }, "ممتازة")),
+      h("td", {}, r.method === "override" ? h("span", { class: "pill ok" }, L("يدوي", "manual"))
+        : low ? h("span", { class: "pill bad" }, L("ضعيفة", "weak")) : h("span", { class: "pill ok" }, L("ممتازة", "good"))),
       h("td", {}, ov)));
   }
   const anyLow = rows.some((r) => r.status === "LOW");
   if (anyLow || Object.keys(overrides).length) {
     t.append(h("tr", {}, h("td", { colspan: 6 },
       h("div", { class: "row end" },
-        h("span", { class: "muted" }, "اكتب الثانية في الصوت النظيف التي يبدأ عندها أول إطار من الملف"),
-        h("button", { type: "button", onclick: saveOverrides }, "حفظ التصحيحات")))));
+        h("span", { class: "muted" }, L("اكتب الثانية في الصوت النظيف التي يبدأ عندها أول إطار من الملف",
+          "Type the second in the clean audio where the file's first frame lands")),
+        h("button", { type: "button", onclick: saveOverrides }, L("حفظ التصحيحات", "Save fixes"))))));
   }
 }
 
@@ -281,7 +287,7 @@ function renderSpeakers() {
   const cams = (S.project.cameras || sp.cameras.filter((c) => c !== "long"));
   const needing = Object.values(sp.speakers).filter((i) => i.needs_mapping).length;
   const t = $("spkTable");
-  t.replaceChildren(h("tr", {}, ["المتحدث", "مدة الكلام", "عيّنات", "الكاميرات"].map((x) => h("th", {}, x))));
+  t.replaceChildren(h("tr", {}, (EN() ? ["Speaker", "Talk time", "Samples", "Cameras"] : ["المتحدث", "مدة الكلام", "عيّنات", "الكاميرات"]).map((x) => h("th", {}, x))));
   for (const [label, info] of Object.entries(sp.speakers)) {
     let chosen = mapping[label];
     chosen = chosen == null ? [] : Array.isArray(chosen) ? chosen : [chosen];
@@ -302,7 +308,8 @@ function renderSpeakers() {
       h("td", {}, box)));
   }
   t.append(h("tr", {}, h("td", { colspan: 4, class: "muted" },
-    "كاميرا واحدة = القطع عليها كلما تكلّم. أكثر من كاميرا = تنويع بينها عند الوقفات بين الجمل (مناسب للمذيع الواحد).")));
+    L("كاميرا واحدة = القطع عليها كلما تكلّم. أكثر من كاميرا = تنويع بينها عند الوقفات بين الجمل (مناسب للمذيع الواحد).",
+      "One camera = cut to it whenever this speaker talks. Several cameras = switch between them at pauses between sentences (good for a single presenter)."))));
 }
 
 async function saveSpeakers() {
@@ -313,15 +320,21 @@ async function saveSpeakers() {
     if (picked.length) map[box.dataset.label] = picked.length === 1 ? picked[0] : picked;
   });
   await saveConfig((cfg) => { cfg.speakers = map; });
-  flash($("spkSaved"), "تم الحفظ ✓");
+  flash($("spkSaved"), L("تم الحفظ ✓", "Saved ✓"));
 }
 
 // ---------------------------------------------------------------- outputs
-const WHY = {
+const WHY_AR = {
   speaker: "على المتكلم", angle: "تنويع الزوايا عند الوقفات", hold: "إبقاء اللقطة أثناء الصمت",
   overlap: "أصوات متداخلة ← الواسعة", unmapped: "متحدث غير مربوط بكاميرا ← الواسعة",
   fallback: "الكاميرا المطلوبة بلا تصوير هنا ← بديل", gap: "لا توجد أي كاميرا (فراغ أسود)",
   opening: "قبل أول كلمة", other: "أخرى",
+};
+const WHY_EN = {
+  speaker: "on the speaker", angle: "angle change at pauses", hold: "hold the shot during silence",
+  overlap: "crosstalk → wide", unmapped: "speaker without a camera → wide",
+  fallback: "chosen camera has no footage here → another", gap: "no camera at all (black gap)",
+  opening: "before the first word", other: "other",
 };
 
 function renderSummary() {
@@ -332,24 +345,30 @@ function renderSummary() {
   const bar = (label, pct) => h("div", { class: "sumrow" },
     h("span", { class: "sumlabel" }, label), h("span", { class: "sumbar" }, h("i", { style: `width:${pct}%` })),
     h("span", { class: "num-cell" }, pct.toFixed(0) + "%"));
-  box.append(h("h3", {}, `ماذا حدث في آخر قطع (${sm.full ? "كامل" : "تجربة"}): ${sm.shots} لقطة · ${fmtDur(sm.length)}`
-    + (sm.removed ? ` · حُذف ${fmtDur(sm.removed)} سكتات` : "")));
-  if (sm.sequence) box.append(h("p", { class: "muted" }, "اسم التسلسل في بريمير: ", h("b", { class: "ltr" }, sm.sequence)));
+  const WHY = EN() ? WHY_EN : WHY_AR;
+  box.append(h("h3", {}, L(`ماذا حدث في آخر قطع (${sm.full ? "كامل" : "تجربة"}): ${sm.shots} لقطة · ${fmtDur(sm.length)}`,
+    `What happened in the last cut (${sm.full ? "full" : "test"}): ${sm.shots} shots · ${fmtDur(sm.length)}`)
+    + (sm.removed ? L(` · حُذف ${fmtDur(sm.removed)} سكتات`, ` · ${fmtDur(sm.removed)} of silence removed`) : "")));
+  if (sm.sequence) box.append(h("p", { class: "muted" }, L("اسم التسلسل في بريمير: ", "Sequence name in Premiere: "), h("b", { class: "ltr" }, sm.sequence)));
   box.append(h("div", { class: "sumgrid" },
-    h("div", {}, h("b", {}, "نصيب كل كاميرا"), Object.entries(sm.cameras).map(([c, p]) => bar(c === "(gap)" ? "فراغ" : c, p))),
-    h("div", {}, h("b", {}, "السبب"), Object.entries(sm.reasons).map(([r, p]) => bar(WHY[r] || r, p)))));
+    h("div", {}, h("b", {}, L("نصيب كل كاميرا", "Share per camera")), Object.entries(sm.cameras).map(([c, p]) => bar(c === "(gap)" ? L("فراغ", "gap") : c, p))),
+    h("div", {}, h("b", {}, L("السبب", "Why")), Object.entries(sm.reasons).map(([r, p]) => bar(WHY[r] || r, p)))));
   const tips = [];
-  if ((sm.reasons.unmapped || 0) > 15) tips.push("جزء كبير لمتحدث غير مربوط: في الخطوة ٤ اختر كاميرات لكل متحدث (قد يكون المذيع ظهر كمتحدثَين).");
-  if ((sm.reasons.fallback || 0) > 15) tips.push("كاميرات كثيرة بلا تصوير في أماكنها: راجع جدول المزامنة (الملفات الضعيفة لا تدخل القطع).");
-  if ((sm.reasons.gap || 0) > 5 && !sm.removed) tips.push("فيه فراغات بلا تصوير (غالباً بين التيكات): فعّل «إزالة السكتات» لحذفها.");
+  if ((sm.reasons.unmapped || 0) > 15) tips.push(L("جزء كبير لمتحدث غير مربوط: في الخطوة ٤ اختر كاميرات لكل متحدث (قد يكون المذيع ظهر كمتحدثَين).",
+    "A lot went to a speaker without a camera: in step 4 pick cameras for every speaker (the presenter may show up as two speakers)."));
+  if ((sm.reasons.fallback || 0) > 15) tips.push(L("كاميرات كثيرة بلا تصوير في أماكنها: راجع جدول المزامنة (الملفات الضعيفة لا تدخل القطع).",
+    "Chosen cameras often have no footage: check the sync table (weak files are left out of the cut)."));
+  if ((sm.reasons.gap || 0) > 5 && !sm.removed) tips.push(L("فيه فراغات بلا تصوير (غالباً بين التيكات): فعّل «إزالة السكتات» لحذفها.",
+    "There are gaps with no footage (usually between takes): turn on \"Remove silences\" to drop them."));
   const top = Object.entries(sm.cameras)[0];
-  if (top && top[1] > 60 && !(sm.reasons.angle > 20)) tips.push(`كاميرا ${top[0]} أخذت أغلب الوقت: لو فيه مذيع واحد اختر له أكثر من كاميرا في الخطوة ٤.`);
+  if (top && top[1] > 60 && !(sm.reasons.angle > 20)) tips.push(L(`كاميرا ${top[0]} أخذت أغلب الوقت: لو فيه مذيع واحد اختر له أكثر من كاميرا في الخطوة ٤.`,
+    `${top[0]} got most of the time: for a single presenter, tick several cameras in step 4.`));
   tips.forEach((t) => box.append(h("div", { class: "alert warn" }, t)));
 }
 
 function outputTag(name) {
-  const tags = [/_\d{6}_\d+s/.test(name) ? "تجربة" : "كامل"];
-  if (name.includes("_tight")) tags.push("بدون سكتات");
+  const tags = [/_\d{6}_\d+s/.test(name) ? L("تجربة", "test") : L("كامل", "full")];
+  if (name.includes("_tight")) tags.push(L("بدون سكتات", "no silences"));
   return tags.join(" · ");
 }
 
@@ -359,18 +378,19 @@ function renderOutputs() {
   box.replaceChildren();
   const outs = (S.project.outputs || []).filter((o) => o.name.endsWith(".xml") || o.name.startsWith("cuts"));
   if (!outs.length) return;
-  box.append(h("h3", {}, "الملفات الناتجة"));
+  box.append(h("h3", {}, L("الملفات الناتجة", "Output files")));
   for (const o of outs) {
     const isXml = o.name.endsWith(".xml");
     box.append(h("div", { class: "outfile" },
       h("span", { class: "name" }, h("span", { class: "pill" }, outputTag(o.name)), " ", h("span", { class: "ltr" }, o.name)),
-      h("span", { class: "muted" }, new Date(o.mtime * 1000).toLocaleString("ar")),
-      isXml && IN_PREMIERE ? h("button", { type: "button", class: "primary", onclick: () => importToPremiere(o.path) }, "استيراد في بريمير") : null,
-      h("button", { type: "button", onclick: () => api("/api/reveal", { path: o.path }) }, "إظهار في Finder"),
-      !isXml ? h("button", { type: "button", onclick: () => api("/api/reveal", { path: o.path, open: true }) }, "فتح") : null));
+      h("span", { class: "muted" }, new Date(o.mtime * 1000).toLocaleString(EN() ? "en" : "ar")),
+      isXml && IN_PREMIERE ? h("button", { type: "button", class: "primary", onclick: () => importToPremiere(o.path) }, L("استيراد في بريمير", "Import into Premiere")) : null,
+      h("button", { type: "button", onclick: () => api("/api/reveal", { path: o.path }) }, L("إظهار في Finder", "Show in Finder")),
+      !isXml ? h("button", { type: "button", onclick: () => api("/api/reveal", { path: o.path, open: true }) }, L("فتح", "Open")) : null));
   }
   if (!IN_PREMIERE) {
-    box.append(h("p", { class: "muted" }, "في بريمير: File ← Import ثم اختر ملف XML. أو استخدم لوحة Autocut داخل بريمير للاستيراد بضغطة."));
+    box.append(h("p", { class: "muted" }, L("في بريمير: File ← Import ثم اختر ملف XML. أو استخدم لوحة Autocut داخل بريمير للاستيراد بضغطة.",
+      "In Premiere: File → Import, then pick the XML file. Or use the Autocut panel inside Premiere to import in one click.")));
   }
 }
 
@@ -395,14 +415,19 @@ window.addEventListener("message", (ev) => {
 });
 window.addEventListener("message", (ev) => {
   if (ev.source !== window.parent || !ev.data || ev.data.type !== "autocut-import-result") return;
-  jobMessage(ev.data.ok ? "ok" : "error", ev.data.ok ? "تم الاستيراد في بريمير ✓" : "تعذّر الاستيراد: " + ev.data.message);
+  jobMessage(ev.data.ok ? "ok" : "error", ev.data.ok ? L("تم الاستيراد في بريمير ✓", "Imported into Premiere ✓") : L("تعذّر الاستيراد: ", "Import failed: ") + ev.data.message);
 });
 
 // ---------------------------------------------------------------- jobs
-const TITLES = {
+const TITLES_AR = {
   diarize: "التحليل (مزامنة + متحدثين)", run: "القطع", "models-download": "تحميل النموذج",
   "models-import": "استيراد النموذج", "models-export": "تصدير النموذج",
 };
+const TITLES_EN = {
+  diarize: "Analysis (sync + speakers)", run: "Cut", "models-download": "Downloading the model",
+  "models-import": "Importing the model", "models-export": "Exporting the model",
+};
+const jobTitle = (kind) => (EN() ? TITLES_EN : TITLES_AR)[kind] || kind;
 
 function jobMessage(kind, text) {
   const m = $("jobMsg");
@@ -440,7 +465,7 @@ async function startJob(body) {
   show($("btnCancel"), true);
   show($("btnCloseJob"), false);
   $("jobSpin").classList.remove("stop");
-  $("jobTitle").textContent = TITLES[body.kind] || body.kind;
+  $("jobTitle").textContent = jobTitle(body.kind);
   S.running = true;
   setBusy(true);
   pollJob(0);
@@ -476,24 +501,29 @@ async function reportJob(code) {
   const kind = S.jobKind;
   if (kind && kind.startsWith("models")) {
     await refreshModels();
-    jobMessage(code === 0 ? "ok" : "error", code === 0 ? "تم ✓" : "لم يكتمل — راجع السجل");
+    jobMessage(code === 0 ? "ok" : "error", code === 0 ? L("تم ✓", "Done ✓") : L("لم يكتمل — راجع السجل", "Did not finish — see the log"));
     if (code !== 0) show($("log"), true);
     return;
   }
   if (S.path) await loadProject(S.path);
   const msgs = {
-    0: ["ok", kind === "run" ? "تم! الملفات جاهزة في الخطوة ٥." : "تم التحليل ✓ — راجع المزامنة واختر كاميرا كل متحدث."],
-    2: ["warn", "اختر كاميرا لكل متحدث في الخطوة ٤ ثم احفظ، وبعدها اضغط تجربة."],
-    3: ["warn", "بعض الملفات مزامنتها ضعيفة (بالأحمر في الخطوة ٣). اكتب لها تصحيحاً يدوياً، أو فعّل «تابع رغم…» في الخطوة ٥."],
-    130: ["warn", "تم الإيقاف."],
-    [-15]: ["warn", "تم الإيقاف."],
+    0: ["ok", kind === "run" ? L("تم! الملفات جاهزة في الخطوة ٥.", "Done! The files are ready in step 5.")
+      : L("تم التحليل ✓ — راجع المزامنة واختر كاميرا كل متحدث.", "Analysis done ✓ — check the sync and pick each speaker's camera.")],
+    2: ["warn", L("اختر كاميرا لكل متحدث في الخطوة ٤ ثم احفظ، وبعدها اضغط تجربة.",
+      "Pick a camera for each speaker in step 4, save, then press Test.")],
+    3: ["warn", L("بعض الملفات مزامنتها ضعيفة (بالأحمر في الخطوة ٣). اكتب لها تصحيحاً يدوياً، أو فعّل «تابع رغم…» في الخطوة ٥.",
+      "Some files synced weakly (red in step 3). Type a manual fix for them, or tick \"Continue despite…\" in step 5.")],
+    130: ["warn", L("تم الإيقاف.", "Stopped.")],
+    [-15]: ["warn", L("تم الإيقاف.", "Stopped.")],
   };
-  let [k, text] = msgs[code] || ["error", "حدث خطأ — افتح السجل لمعرفة السبب."];
+  let [k, text] = msgs[code] || ["error", L("حدث خطأ — افتح السجل لمعرفة السبب.", "Something went wrong — open the log to see why.")];
   const low = (S.project && S.project.sync || []).filter((r) => r.status === "LOW").map((r) => r.clip);
   if (code === 0 && kind === "run" && low.length) {
     k = "warn";
-    text += `\n⚠ ${low.length} ملف مزامنته ضعيفة لم يدخل القطع (والقطع رجع للكاميرا الواسعة مكانه): `
-      + low.slice(0, 6).join("، ") + (low.length > 6 ? "…" : "") + " — راجع جدول المزامنة في الخطوة ٣.";
+    text += L(`\n⚠ ${low.length} ملف مزامنته ضعيفة لم يدخل القطع (والقطع رجع للكاميرا الواسعة مكانه): `,
+      `\n⚠ ${low.length} weakly synced file(s) left out of the cut (the wide camera was used there): `)
+      + low.slice(0, 6).join(L("، ", ", ")) + (low.length > 6 ? "…" : "")
+      + L(" — راجع جدول المزامنة في الخطوة ٣.", " — see the sync table in step 3.");
   }
   jobMessage(k, text);
   if (k === "error") show($("log"), true);
@@ -514,7 +544,7 @@ async function runStage(kind, extra, before) {
     await saveConfig();
   } catch (e) {
     setBusy(false);
-    return jobMessage("error", "الإعدادات: " + e.message);
+    return jobMessage("error", L("الإعدادات: ", "Settings: ") + e.message);
   }
   // diarization needs the model unless this project was already analysed
   if (!(await refreshModels()) && !S.project.speakers) {
@@ -529,7 +559,7 @@ async function runStage(kind, extra, before) {
 // ---------------------------------------------------------------- wiring
 $("btnChoose").onclick = async () => {
   try {
-    const p = await choose("folder", "اختر مجلد التصوير");
+    const p = await choose("folder", L("اختر مجلد التصوير", "Choose the shoot folder"));
     if (p) loadProject(p);
   } catch (e) {
     showScanError(e.message);
@@ -552,29 +582,29 @@ let resetArmed = null;
 $("btnResetCfg").onclick = async () => {
   const b = $("btnResetCfg");
   if (!resetArmed) {  // first click arms, second click (within 4 s) resets
-    b.textContent = "متأكد؟ اضغط مرة ثانية";
-    resetArmed = setTimeout(() => { b.textContent = "إعادة الضبط"; resetArmed = null; }, 4000);
+    b.textContent = L("متأكد؟ اضغط مرة ثانية", "Sure? Click again");
+    resetArmed = setTimeout(() => { b.textContent = L("إعادة الضبط", "Reset"); resetArmed = null; }, 4000);
     return;
   }
   clearTimeout(resetArmed);
   resetArmed = null;
-  b.textContent = "إعادة الضبط";
-  try { await api("/api/config/reset", { path: S.project.path }); await loadProject(S.path); flash($("cfgSaved"), "رجعت الإعدادات الافتراضية ✓"); }
-  catch (e) { flash($("cfgSaved"), "خطأ: " + e.message); }
+  b.textContent = L("إعادة الضبط", "Reset");
+  try { await api("/api/config/reset", { path: S.project.path }); await loadProject(S.path); flash($("cfgSaved"), L("رجعت الإعدادات الافتراضية ✓", "Back to default settings ✓")); }
+  catch (e) { flash($("cfgSaved"), L("خطأ: ", "Error: ") + e.message); }
 };
 $("projPath").addEventListener("keydown", (e) => { if (e.key === "Enter") loadProject(e.target.value); });
 $("btnSaveCfg").onclick = async () => {
-  try { await saveConfig(); flash($("cfgSaved"), "تم الحفظ ✓"); await loadProject(S.path); }
-  catch (e) { flash($("cfgSaved"), "خطأ: " + e.message); }
+  try { await saveConfig(); flash($("cfgSaved"), L("تم الحفظ ✓", "Saved ✓")); await loadProject(S.path); }
+  catch (e) { flash($("cfgSaved"), L("خطأ: ", "Error: ") + e.message); }
 };
 $("cfgNoSilence").onchange = () => show($("silenceOpts"), $("cfgNoSilence").checked);
 $("btnAudio").onclick = async () => {
-  const p = await choose("folder", "اختر مجلد الصوت النظيف");
+  const p = await choose("folder", L("اختر مجلد الصوت النظيف", "Choose the clean audio folder"));
   if (!p) return;
   try { await saveConfig((cfg) => { cfg.audio_folder = p; }); await loadProject(S.path); }
-  catch (e) { flash($("cfgSaved"), "خطأ: " + e.message); }
+  catch (e) { flash($("cfgSaved"), L("خطأ: ", "Error: ") + e.message); }
 };
-$("btnSaveSpk").onclick = () => saveSpeakers().catch((e) => flash($("spkSaved"), "خطأ: " + e.message));
+$("btnSaveSpk").onclick = () => saveSpeakers().catch((e) => flash($("spkSaved"), L("خطأ: ", "Error: ") + e.message));
 $("btnAnalyze").onclick = () => runStage("diarize", { diarize_full: true });
 $("btnTest").onclick = () => runStage("run", {
   start: $("testStart").value.trim(), duration: $("testDur").value.trim(), allow_low: $("allowLow").checked }, saveSpeakers);
@@ -583,13 +613,19 @@ $("btnCancel").onclick = () => api("/api/job/cancel", {});
 $("btnLog").onclick = () => show($("log"), $("log").classList.contains("hidden"));
 $("btnCloseJob").onclick = () => show($("jobBar"), false);
 
+$("btnLang").onclick = () => {
+  setLang(EN() ? "ar" : "en");
+  refreshModels();
+  if (S.project) loadProject(S.path);
+  if (S.jobKind) $("jobTitle").textContent = jobTitle(S.jobKind);
+};
 $("modelsBadge").onclick = () => { refreshModels(); $("modelsDlg").showModal(); };
 $("btnImport").onclick = async () => {
-  const p = await choose("file", "اختر autocut-models.zip");
+  const p = await choose("file", L("اختر autocut-models.zip", "Choose autocut-models.zip"));
   if (p) { $("modelsDlg").close(); startJob({ kind: "models-import", zip: p }); }
 };
 $("btnExport").onclick = async () => {
-  const p = await choose("folder", "أين تحفظ autocut-models.zip؟");
+  const p = await choose("folder", L("أين تحفظ autocut-models.zip؟", "Where to save autocut-models.zip?"));
   if (p) { $("modelsDlg").close(); startJob({ kind: "models-export", dest: p }); }
 };
 $("btnDownload").onclick = () => {
@@ -613,7 +649,7 @@ setInterval(() => api("/api/heartbeat", {}).catch(() => {}), 60000);
       S.jobKind = j.kind;
       S.running = true;
       show($("jobBar"), true);
-      $("jobTitle").textContent = TITLES[j.kind] || j.kind;
+      $("jobTitle").textContent = jobTitle(j.kind);
       setBusy(true);
       pollJob(0);
       if (j.project) loadProject(j.project);

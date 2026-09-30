@@ -4,7 +4,7 @@
 # autocut-models.zip sits next to this file. Needs no internet.
 set -e
 cd "$(dirname "$0")"
-echo "=== تثبيت Autocut ==="
+echo "=== Installing Autocut ==="
 
 # stop a running older version so the new one starts fresh
 pkill -f "autocut serve" 2>/dev/null || true
@@ -12,13 +12,13 @@ pkill -f "autocut serve" 2>/dev/null || true
 DEST="/Applications"
 [ -w "$DEST" ] || DEST="$HOME/Applications"
 mkdir -p "$DEST"
-echo "• البرنامج ← $DEST/Autocut.app"
+echo "• App → $DEST/Autocut.app"
 rm -rf "$DEST/Autocut.app"
 ditto "Autocut.app" "$DEST/Autocut.app"
 xattr -dr com.apple.quarantine "$DEST/Autocut.app" 2>/dev/null || true
 
 EXT="$HOME/Library/Application Support/Adobe/CEP/extensions/com.autocut.panel"
-echo "• لوحة بريمير ← Window > Extensions > Autocut"
+echo "• Premiere panel → Window > Extensions > Autocut"
 rm -rf "$EXT"
 mkdir -p "$(dirname "$EXT")"
 ditto "AutocutPanel" "$EXT"
@@ -28,15 +28,15 @@ for v in 9 10 11 12 13; do defaults write "com.adobe.CSXS.$v" PlayerDebugMode 1;
 
 CLI="$DEST/Autocut.app/Contents/Resources/bin/autocut"
 if [ -f "autocut-models.zip" ]; then
-  echo "• النموذج (بدون إنترنت) ..."
+  echo "• Model (offline) ..."
   "$CLI" models import "autocut-models.zip"
 fi
 if "$CLI" models status | grep -q '"ready": true'; then
-  echo "• النموذج: جاهز ✓"
+  echo "• Model: ready ✓"
 else
-  echo "• النموذج: غير مثبت — من داخل Autocut اضغط «النموذج غير مثبت» واستورد autocut-models.zip"
+  echo "• Model: not installed — in Autocut click 'Model not installed' and import autocut-models.zip"
 fi
 
 echo
-echo "تم التثبيت ✓  أعد تشغيل بريمير إن كان مفتوحاً."
+echo "Installed ✓  Restart Premiere if it is open."
 open "$DEST/Autocut.app"

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -15,7 +15,10 @@
       <p class="sub">قطع مبدئي تلقائي متعدد الكاميرات لبريمير</p>
     </div>
   </div>
-  <button id="modelsBadge" class="badge" type="button">…</button>
+  <div class="row">
+    <button id="btnLang" class="badge" type="button">عربي</button>
+    <button id="modelsBadge" class="badge" type="button">…</button>
+  </div>
 </header>
 
 <main>
@@ -154,6 +157,8 @@
   </form>
 </dialog>
 
+<script src="i18n.js"></script>
+<script>applyLang();</script>
 <script src="app.js"></script>
 </body>
 </html>

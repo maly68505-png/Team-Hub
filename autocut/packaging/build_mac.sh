@@ -93,6 +93,7 @@ echo "==> Premiere panel + installer"
 ditto "$ROOT/premiere-panel" "$OUT/AutocutPanel"
 cp "$HERE/Install Autocut.command" "$OUT/"
 chmod +x "$OUT/Install Autocut.command"
+cp "$HERE/README-EN.md" "$OUT/README.md"
 cp "$HERE/README-AR.md" "$OUT/اقرأني.md"
 
 echo "==> zip"
