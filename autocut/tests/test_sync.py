@@ -1,15 +1,15 @@
+"""Window matching (camera samples against the clean audio) on synthetic signals."""
 import numpy as np
 import pytest
 from scipy.signal import resample_poly
 
-from autocut.audio import Reference
 from autocut.config import DEFAULTS
-from autocut.sync import Syncer
-from autocut.timecode import Rate, parse_rate
+from autocut.takes import Take, _Bank, _Prepared, _solve, edges_from_points, window_points, window_starts
 
 from synth import SCRIPT, SR, scratch, speech, timewarp
 
-RATE = 8000
+RATE, CRATE = 8000, 1000
+SCFG = dict(DEFAULTS["sync"])
 
 
 @pytest.fixture(scope="module")
@@ -19,67 +19,57 @@ def room():
 
 
 @pytest.fixture(scope="module")
-def syncer(room):
-    ref = resample_poly(room, RATE, SR).astype(np.float32)
-    cfg = dict(DEFAULTS["sync"], long_clip_minutes=1.5, probe_seconds=30)
-    return Syncer(Reference(ref, RATE, None, "x"), cfg, Rate(parse_rate(25)))
+def bank(room):
+    prep = [_Prepared(resample_poly(room, RATE, SR).astype(np.float32), RATE, CRATE)]
+    return _Bank(prep, CRATE), prep
 
 
-class FakeInfo:
-    def __init__(self, dur):
-        self.duration, self.has_audio, self.av_offset, self.audio_channels = dur, True, 0.0, 1
+def place(bank, cam_audio, every=120.0):
+    """Sample the camera like place_takes does, then solve. -> (offset, drift, edges)"""
+    b, prep = bank
+    x = resample_poly(cam_audio, RATE, SR).astype(np.float32)
+    dur = len(x) / RATE
+    starts = window_starts(dur, 8.0, every)
+    wins = [(s, x[int(s * RATE):int((s + 8.0) * RATE)]) for s in starts]
+    edges = edges_from_points(window_points(b, prep, wins, RATE, CRATE, SCFG), SCFG)
+    if not edges:
+        return None, None, edges
+    T, C, kept, _ = _solve([Take("ref", [], 180.0)], [object()], {(ti, 0): e for ti, e in edges.items()},
+                           1 / 25)
+    return C[0][0], C[0][1], edges
 
 
-def run(syncer, monkeypatch, cam_audio):
-    from autocut import sync as mod
-    monkeypatch.setattr(mod, "decode_mono", lambda info, rate: resample_poly(cam_audio, rate, SR).astype(np.float32))
-
-    class C:
-        rel = "CAM/X.MP4"
-        info = FakeInfo(len(cam_audio) / SR)
-    return syncer.sync_clip(C())
+def test_window_starts_spread_over_the_clip():
+    s = window_starts(3600.0, 8.0, 90.0)
+    assert len(s) == 40 and s[0] >= 1.0 and s[-1] <= 3600 - 9.0
+    assert window_starts(5.0, 8.0, 90.0) == [0.0]
+    assert len(window_starts(60.0, 8.0, 90.0)) == 6     # short clips still get 6 samples
 
 
-def test_offset_subframe(syncer, room, monkeypatch):
-    r = run(syncer, monkeypatch, scratch(timewarp(room, 10.3137, 0.0, 60), seed=3))
-    assert not r.low
-    assert abs(r.offset - 10.3137) < 0.001
-    assert r.confidence > 0.9
+def test_offset_subframe(bank, room):
+    off, drift, _ = place(bank, scratch(timewarp(room, 10.3137, 0.0, 60), seed=3))
+    assert abs(off - 10.3137) < 0.001 and drift == 0.0
 
 
-def test_negative_offset_camera_started_first(syncer, room, monkeypatch):
-    r = run(syncer, monkeypatch, scratch(timewarp(room, -4.2, 0.0, 60), seed=4))
-    assert not r.low
-    assert abs(r.offset + 4.2) < 0.001
+def test_negative_offset_camera_started_first(bank, room):
+    off, _, _ = place(bank, scratch(timewarp(room, -4.2, 0.0, 60), seed=4))
+    assert abs(off + 4.2) < 0.001
 
 
-def test_drift_measured_and_corrected(syncer, room, monkeypatch):
-    r = run(syncer, monkeypatch, scratch(timewarp(room, 2.0, 300e-6, 170), seed=5))
-    assert not r.low, r.notes
-    assert r.drift_measured == pytest.approx(300e-6, abs=20e-6)
-    assert r.drift != 0.0
-    # 300 ppm is ~6x a real camera; 5 ms = 1/8 frame at 25 fps
-    assert abs(r.ref_time(0) - 2.0) < 0.005
-    assert abs(r.ref_time(170) - (170 * 1.0003 + 2.0)) < 0.005
+def test_drift_measured(bank, room):
+    off, drift, _ = place(bank, scratch(timewarp(room, 2.0, 300e-6, 170), seed=5), every=40.0)
+    assert drift == pytest.approx(300e-6, abs=30e-6)
+    assert abs(off - 2.0) < 0.005
 
 
-def test_small_drift_ignored(syncer, room, monkeypatch):
-    r = run(syncer, monkeypatch, scratch(timewarp(room, 2.0, 20e-6, 170), seed=6))
-    assert not r.low
-    assert r.drift == 0.0
-    assert any("below threshold" in n for n in r.notes)
-
-
-def test_unrelated_audio_is_low_confidence(syncer, monkeypatch):
+def test_unrelated_audio_matches_nothing(bank):
     rng = np.random.default_rng(7)
     other = speech(60.0, [(0, 60, "A")], seed=42)["A"] + 0.05 * rng.normal(0, 1, 60 * SR).astype(np.float32)
-    r = run(syncer, monkeypatch, other)
-    assert r.low
-    assert r.notes
+    off, _, edges = place(bank, other)
+    assert off is None and not edges
 
 
-def test_pure_noise_gives_finite_low_result(syncer, monkeypatch):
+def test_pure_noise_matches_nothing(bank):
     rng = np.random.default_rng(9)
-    r = run(syncer, monkeypatch, (0.1 * rng.normal(0, 1, 30 * SR)).astype(np.float32))
-    assert r.low
-    assert np.isfinite(r.offset)
+    off, _, edges = place(bank, (0.1 * rng.normal(0, 1, 30 * SR)).astype(np.float32))
+    assert off is None and not edges

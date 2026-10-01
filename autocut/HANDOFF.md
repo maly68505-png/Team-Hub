@@ -56,6 +56,19 @@ Offline Mac (Apple Silicon) tool that makes a multicam rough cut for Premiere Pr
 - The proxies appear to have a baked-in "look"; the tool adds no colour. Suggested using the
   original camera folders instead of `3_Proxy` (user has not confirmed where originals are).
 
+### Speed on big shoots (MXF on a network drive)
+- A second shoot: ~1.5 TB of MXF on `/Volumes/editing/...` was far too slow because camera
+  audio was decoded from whole files (MXF interleaves audio with video).
+- Now `audio.decode_windows` SEEKS and reads `sync.window_seconds` (8) every
+  `sync.sample_every` (90) seconds, min 6 windows per clip — ~9 % of an hour-long file.
+  One path for everything (`takes.place_takes`; a single recording = one take). The old
+  whole-file `Syncer`/`sync_all`/`build_reference` were removed. Sample-accurate in MP4/AAC,
+  MOV/PCM and MXF/PCM (`tests/test_decode_timing.py`).
+- That shoot's audio folder mixed a promo WAV and an "Audio Extracted" copy with the `_FIXED`
+  takes — the user was told to keep only the `_FIXED` files in the clean-audio folder.
+- Each new Mac needs the model once: export `autocut-models.zip` on a Mac that has it, import
+  on the new one (or put it on the shared drive next to the installer).
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.

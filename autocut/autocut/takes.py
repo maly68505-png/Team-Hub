@@ -1,28 +1,27 @@
-"""Clean audio recorded as separate TAKES (TAKE1.wav, TAKE2.wav ...), not as
-simultaneous tracks.
+"""Placing camera clips (and clean-audio takes) on one timeline.
 
-The recorder stopped between takes while cameras often kept rolling, so the
-takes' real start times are unknown. They are recovered from the cameras:
+The clean audio may be one recording (tracks that started together) or
+separate TAKES recorded one after another, with cameras rolling across them.
 
-  1. every take is matched against every camera clip (normalized FFT
-     cross-correlation of the whole take at 1 kHz, then 10 s windows refined
-     at 8 kHz where they overlap) -> measurement points
+  1. each camera file is sampled: `window_seconds` of audio every
+     `sample_every` seconds, read by seeking (MXF interleaves audio with
+     video, so this reads a few % of the file instead of all of it);
+  2. every window is searched across all takes at once (1 kHz normalized
+     cross-correlation), then refined at 8 kHz -> points
          take t at take-time tau  ==  clip c at video-time v
-  2. one least-squares solve places everything on one timeline:
+  3. one least-squares solve places everything:
          T_t + tau = C_c + v * (1 + d_c)
-     (T = take start, C = clip start, d = clip clock drift), edges whose
-     residual is over 2 frames are dropped as false matches and it re-solves;
-  3. groups that no camera connects are laid out one after another in take
-     order, with a warning.
-
-The reference is then the takes placed at T_t with silence between them, and
-everything downstream (diarization, cut, XML) works as with one recording.
+     (T take start, C clip start, d clip drift — only when a clip's points
+     span >= 2 min); inconsistent matches are dropped and it re-solves;
+  4. take groups no camera links are laid out in name order, with a warning.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -31,19 +30,17 @@ from scipy.io import wavfile
 from scipy.fft import next_fast_len
 from scipy.signal import fftconvolve, resample_poly
 
-from .audio import DIARIZE_RATE, Reference, decode_mono, fingerprint
+from .audio import DIARIZE_RATE, Reference, decode_mono, decode_windows, fingerprint
 from .log import log
 from .probe import MediaInfo
 from .scan import Project
 from .sync import SyncResult, Measurement, _parabolic, bandpass, ncc
 from .timecode import fmt_seconds
 
-TAKES_VERSION = 3
+TAKES_VERSION = 5
 GROUP_GAP_S = 5.0     # silence between take groups no camera connects
-WIN_S = 10.0          # refine window
-STEP_S = 15.0
+MIN_WINDOWS = 6       # even a short clip is sampled at least this many times
 DRIFT_SPAN_S = 120.0  # measurements must span this much of a clip to estimate its drift
-MIN_RATIO = 1.3       # coarse peak ratio to consider a take/clip pair at all
 
 
 @dataclass
@@ -128,26 +125,43 @@ class _Prepared:
         self.dur = len(x8) / rate
 
 
-CHUNK_S = 20.0        # coarse chunk of a take
-CHUNK_STEP_S = 30.0
+class _Bank:
+    """All takes end to end (1 s of silence between) at 1 kHz: one coarse search
+    finds both WHICH take a camera window belongs to and WHERE in it."""
 
+    def __init__(self, prep: list[_Prepared], crate: int):
+        gap = np.zeros(crate, np.float32)
+        parts, self.offsets, self.lens = [gap], [], []
+        pos = crate
+        for p in prep:
+            self.offsets.append(pos)
+            self.lens.append(len(p.c))
+            parts += [p.c, gap]
+            pos += len(p.c) + crate
+        self.c = np.concatenate(parts).astype(np.float64)
+        e = np.concatenate([[0.0], np.cumsum(self.c ** 2)])
+        self._e = e
+        self._cache: dict[int, tuple] = {}
 
-def _ncc_many(ref: np.ndarray, probes: list[np.ndarray], m: int) -> list[np.ndarray]:
-    """Normalized cross-correlation of several equal-length probes against one
-    reference, sharing the reference FFT. out[k] compares probe with ref[k:k+m]."""
-    nfft = next_fast_len(len(ref) + m)
-    fr = np.fft.rfft(ref.astype(np.float64), nfft)
-    e = np.concatenate([[0.0], np.cumsum(ref.astype(np.float64) ** 2)])
-    energy = e[m:] - e[:-m]
-    eps = 1e-3 * float(np.mean(energy)) + 1e-12
-    den = np.sqrt(np.maximum(energy, 0) + eps)
-    out = []
-    for p in probes:
-        p = p.astype(np.float64) - float(np.mean(p))
+    def search(self, probe: np.ndarray) -> np.ndarray:
+        """Normalized cross-correlation; out[k] compares probe with c[k:k+m]."""
+        m = len(probe)
+        if m not in self._cache:
+            nfft = next_fast_len(len(self.c) + m)
+            energy = self._e[m:] - self._e[:-m]
+            den = np.sqrt(np.maximum(energy, 0) + 1e-3 * float(np.mean(energy)) + 1e-12)
+            self._cache[m] = (nfft, np.fft.rfft(self.c, nfft), den)
+        nfft, fr, den = self._cache[m]
+        p = probe.astype(np.float64) - float(np.mean(probe))
         pn = float(np.linalg.norm(p)) + 1e-12
-        corr = np.fft.irfft(fr * np.conj(np.fft.rfft(p, nfft)), nfft)[:len(ref) - m + 1]
-        out.append(corr / (pn * den))
-    return out
+        corr = np.fft.irfft(fr * np.conj(np.fft.rfft(p, nfft)), nfft)[:len(self.c) - m + 1]
+        return corr / (pn * den)
+
+    def locate(self, k: int, m: int):
+        for ti, (off, n) in enumerate(zip(self.offsets, self.lens)):
+            if off <= k and k + m <= off + n:
+                return ti, (k - off)
+        return None
 
 
 def _line(taus, offs, tol: float, rounds: int = 3):
@@ -166,78 +180,76 @@ def _line(taus, offs, tol: float, rounds: int = 3):
     return float(a), float(b), keep
 
 
-def _match(tk: _Prepared, cl: _Prepared, rate: int, crate: int, scfg: dict):
-    """Measurement points (tau, v_audio, ncc) where take and clip overlap, or None.
+def window_starts(dur: float, win: float, every: float, shift: float = 0.0) -> list[float]:
+    """Where to read sample windows in a clip of `dur` seconds (audio time)."""
+    if dur <= win + 2.0:
+        return [0.0]
+    n = max(MIN_WINDOWS, int(np.ceil(dur / every)))
+    lo, hi = 1.0, dur - win - 1.0
+    starts = np.linspace(lo, hi, n)
+    if shift:
+        step = (hi - lo) / max(1, n - 1)
+        starts = np.clip(starts + shift * step, lo, hi)
+    return [float(x) for x in starts]
 
-    Coarse: 20 s chunks of the take searched across the whole clip at 1 kHz; the
-    chunks that agree on a (slowly drifting) alignment vote for it. Fine: 10 s
-    windows at 8 kHz around that alignment wherever take and clip overlap."""
-    m = int(CHUNK_S * crate)
-    if len(tk.c) < crate * 3 or len(cl.c) < crate * 3:
-        return None
-    m = min(m, len(tk.c))
-    starts = np.arange(0, max(1, len(tk.c) - m + 1), int(CHUNK_STEP_S * crate))
-    chunks, taus = [], []
-    for a in starts:
-        ch = tk.c[a:a + m]
-        if float(np.std(ch)) > 1e-5:
-            chunks.append(ch)
-            taus.append(a / crate)
-    if not chunks:
-        return None
-    padded = np.concatenate([np.zeros(m, np.float32), cl.c, np.zeros(m, np.float32)])
-    votes = []  # (tau_chunk_start, lag, ratio)
-    for tau, n in zip(taus, _ncc_many(padded, chunks, m)):
+
+def window_points(bank: _Bank, prep_t: list[_Prepared], windows, rate: int, crate: int, scfg: dict):
+    """Camera sample windows [(audio_start, x8k)] -> match points
+    [(take, tau_centre, v_centre, ncc, ratio)] — tau in the take, v in the clip's audio."""
+    pts = []
+    margin = int(0.25 * rate)
+    for v0, x in windows:
+        if len(x) < 2 * rate or float(np.std(x)) < 1e-5:
+            continue
+        f = bandpass(x, rate, 100, 3000)
+        c = bandpass(resample_poly(x, crate, rate).astype(np.float32), crate, 80, 450)
+        n = bank.search(c)
         k = int(np.argmax(n))
         peak = float(n[k])
         rest = np.concatenate([n[:max(0, k - crate)], n[k + crate + 1:]])
         second = float(np.max(rest)) if len(rest) else 0.0
         ratio = peak / max(second, 1e-6) if peak > 0 else 0.0
-        if ratio >= 1.4:
-            votes.append((tau, (k - m) / crate - tau, ratio))
-    if not votes:
-        return None
-    best = max(votes, key=lambda v: v[2])
-    agree = [v for v in votes if abs(v[1] - best[1]) < 0.05 + 300e-6 * abs(v[0] - best[0])]
-    if len(agree) < 2 and best[2] < 2.5:
-        return None
-    a0, b0, _ = _line([v[0] for v in agree], [v[1] for v in agree], tol=0.05)
-    ratio = float(np.median([v[2] for v in agree]))
+        if ratio < 1.4:
+            continue
+        loc = bank.locate(k, len(c))
+        if loc is None:
+            continue
+        ti, kk = loc
+        tk = prep_t[ti].f
+        s0 = int(round(kk / crate * rate)) - margin
+        seg = np.zeros(len(f) + 2 * margin, np.float32)
+        a, b = max(0, s0), min(len(tk), s0 + len(seg))
+        if b <= a:
+            continue
+        seg[a - s0:b - s0] = tk[a:b]
+        nf = ncc(seg, f)
+        j = int(np.argmax(nf))
+        if float(nf[j]) < float(scfg["min_ncc"]):
+            continue
+        tau = (s0 + j + _parabolic(nf, j)) / rate
+        w = len(x) / rate
+        pts.append((ti, tau + w / 2, v0 + w / 2, float(nf[j]), ratio))
+    return pts
 
-    def lag_at(tau):
-        return a0 + b0 * tau
 
-    lo = max(0.0, -lag_at(0.0))
-    hi = min(tk.dur, cl.dur - lag_at(tk.dur))
-    if hi - lo < 5.0:
-        return None
-    win = min(WIN_S, hi - lo)
-    margin = int(0.25 * rate)
-    pts = []
-    t = lo
-    while t + win <= hi + 1e-6:
-        a = int(t * rate)
-        probe = tk.f[a:a + int(win * rate)]
-        if len(probe) >= rate and float(np.std(probe)) > 1e-5:
-            s0 = int(round((t + lag_at(t)) * rate)) - margin
-            seg = np.zeros(len(probe) + 2 * margin, np.float32)
-            b0_, b1_ = max(0, s0), min(len(cl.f), s0 + len(seg))
-            if b1_ > b0_:
-                seg[b0_ - s0:b1_ - s0] = cl.f[b0_:b1_]
-                nf = ncc(seg, probe)
-                j = int(np.argmax(nf))
-                fine = (s0 + j + _parabolic(nf, j)) / rate - t
-                if float(nf[j]) >= float(scfg["min_ncc"]):
-                    pts.append((t + win / 2, t + win / 2 + fine, float(nf[j])))
-        t += STEP_S
-    if not pts:
-        return None
-    _, _, keep = _line([p[0] for p in pts], [p[1] - p[0] for p in pts], tol=0.010)
-    pts = [p for p, k in zip(pts, keep) if k]
-    if len(pts) < (1 if hi - lo < 25 else 2):
-        return None
-    conf = float(np.clip((ratio - 1.0) / max(float(scfg["good_peak_ratio"]) - 1.0, 1e-6), 0, 1))
-    return {"points": pts, "ratio": ratio, "confidence": conf}
+def edges_from_points(pts, scfg: dict) -> dict:
+    """Group a clip's points by take; keep the consistent ones."""
+    by: dict[int, list] = {}
+    for ti, tau, v, w, ratio in pts:
+        by.setdefault(ti, []).append((tau, v, w, ratio))
+    good_ratio = float(scfg["good_peak_ratio"])
+    edges = {}
+    for ti, ps in by.items():
+        _, _, keep = _line([p[0] for p in ps], [p[1] - p[0] for p in ps], tol=0.010)
+        ps = [p for p, k in zip(ps, keep) if k]
+        if not ps:
+            continue
+        ratio = float(np.median([p[3] for p in ps]))
+        if len(ps) < 2 and ratio < 2.5:   # one lone window must stand out clearly
+            continue
+        conf = float(np.clip((ratio - 1.0) / max(good_ratio - 1.0, 1e-6), 0, 1))
+        edges[ti] = {"points": [(tau, v, w) for tau, v, w, _ in ps], "ratio": ratio, "confidence": conf}
+    return edges
 
 
 def _solve(takes: list[Take], clips: list, edges: dict, frame_s: float):
@@ -346,26 +358,45 @@ def place_takes(project: Project, takes: list[Take], cfg: dict) -> dict[str, Syn
             log.info("Take placement: cached")
             for t, d in zip(takes, data["takes"]):
                 t.position, t.linked, t.notes = d["position"], d["linked"], d["notes"]
-            return {r["rel"]: SyncResult.from_dict(r) for r in data["clips"]}
+            return _apply_overrides({r["rel"]: SyncResult.from_dict(r) for r in data["clips"]}, clips, scfg)
 
-    log.info("Clean audio is %d separate takes — placing them on one timeline from the cameras", len(takes))
+    if len(takes) > 1:
+        log.info("Clean audio is %d separate takes — placing them on one timeline from the cameras", len(takes))
     prep_t = []
     for t in takes:
         log.info("  take %-28s %s", t.name, fmt_seconds(t.duration))
         prep_t.append(_Prepared(_mix(t, rate), rate, crate))
+    bank = _Bank(prep_t, crate)
+    win = float(scfg["window_seconds"])
+    every = float(scfg["sample_every"])
+    todo = [(ci, c) for ci, c in enumerate(clips) if c.info.has_audio]
+    total_s = sum(c.info.duration for _, c in todo)
+    log.info("Reading %.0fs of audio every %.0fs from %d camera files (%s of footage) ...",
+             win, every, len(todo), fmt_seconds(total_s))
+
+    def read(clip, shift=0.0):
+        starts = window_starts(clip.info.duration, win, every, shift)
+        length = min(win, clip.info.duration)
+        return starts, decode_windows(clip.info, rate, starts, length)
+
     edges: dict = {}
-    for ci, clip in enumerate(clips):
-        if not clip.info.has_audio or clip.rel in scfg["overrides"]:
-            continue
-        pc = _Prepared(decode_mono(clip.info, rate), rate, crate)
-        found = []
-        for ti, pt in enumerate(prep_t):
-            e = _match(pt, pc, rate, crate, scfg)
-            if e:
+    started = time.time()
+    with ThreadPoolExecutor(max_workers=3) as pool:   # network drives: keep a few reads in flight
+        futures = {ci: pool.submit(read, c) for ci, c in todo}
+        for n, (ci, clip) in enumerate(todo, 1):
+            starts, xs = futures[ci].result()
+            pts = window_points(bank, prep_t, list(zip(starts, xs)), rate, crate, scfg)
+            if not pts:  # nothing heard in those spots: try the spots in between
+                starts2, xs2 = read(clip, 0.5)
+                pts = window_points(bank, prep_t, list(zip(starts2, xs2)), rate, crate, scfg)
+            found = []
+            for ti, e in edges_from_points(pts, scfg).items():
                 e["points"] = [(tau, v + clip.info.av_offset, w) for tau, v, w in e["points"]]
                 edges[(ti, ci)] = e
                 found.append(takes[ti].name)
-        log.info("  %-34s matches %s", clip.rel, ", ".join(found) or "NO take")
+            log.info("  [%d/%d] %-34s %2d samples -> %s", n, len(todo), clip.rel, len(starts),
+                     ", ".join(found) or "NO match")
+    log.info("Camera audio read in %.0fs", time.time() - started)
 
     T, C, edges, comps = _solve(takes, clips, edges, frame_s)
 
@@ -399,10 +430,7 @@ def place_takes(project: Project, takes: list[Take], cfg: dict) -> dict[str, Syn
     results: dict[str, SyncResult] = {}
     for ci, clip in enumerate(clips):
         r = SyncResult(clip.rel, clip.info.duration)
-        if clip.rel in scfg["overrides"]:
-            r.offset, r.confidence, r.low, r.method = scfg["overrides"][clip.rel], 1.0, False, "override"
-            r.notes.append("manual offset from config.yaml")
-        elif C[ci] is None:
+        if C[ci] is None:
             r.method = "failed" if not clip.info.has_audio else "audio"
             r.notes.append("no audio stream" if not clip.info.has_audio else
                            "matches no take of the clean audio")
@@ -441,6 +469,16 @@ def place_takes(project: Project, takes: list[Take], cfg: dict) -> dict[str, Syn
         "key": key,
         "takes": [{"name": t.name, "position": t.position, "linked": t.linked, "notes": t.notes} for t in takes],
         "clips": [r.to_dict() for r in results.values()]}, indent=1))
+    return _apply_overrides(results, clips, scfg)
+
+
+def _apply_overrides(results: dict[str, SyncResult], clips: list, scfg: dict) -> dict[str, SyncResult]:
+    """Manual offsets from config.yaml win over the analysis (cached or not)."""
+    for clip in clips:
+        if clip.rel in scfg["overrides"]:
+            results[clip.rel] = SyncResult(clip.rel, clip.info.duration, offset=scfg["overrides"][clip.rel],
+                                           confidence=1.0, low=False, method="override",
+                                           notes=["manual offset from config.yaml"])
     return results
 
 
@@ -455,7 +493,7 @@ def build_reference_takes(takes: list[Take], workdir: Path, rate: int) -> Refere
         return Reference(np.load(npy, mmap_mode="r"), rate, wav16, fp)
     # place_takes lays the first take group out at 0, so positions are >= 0
     total = max(t.position + t.duration for t in takes)
-    x = np.zeros(int(total * DIARIZE_RATE) + DIARIZE_RATE, np.float32)
+    x = np.zeros(int(np.ceil(total * DIARIZE_RATE)), np.float32)
     for t in takes:
         y = _mix(t, DIARIZE_RATE)
         a = int(round(t.position * DIARIZE_RATE))

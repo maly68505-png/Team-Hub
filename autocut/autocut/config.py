@@ -15,6 +15,8 @@ DEFAULTS = {
     "speakers": {},
     "sync": {
         "analysis_rate": 8000,
+        "window_seconds": 8,      # camera audio read in windows of this length ...
+        "sample_every": 90,       # ... one every this many seconds (seeking: no full-file reads)
         "coarse_rate": 1000,
         "probe_seconds": 60,
         "long_clip_minutes": 20,

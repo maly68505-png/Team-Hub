@@ -5,14 +5,13 @@ import json
 from pathlib import Path
 
 from . import config as config_mod
-from .audio import build_reference
 from .cutlogic import breakdown, keep_ranges, plan_cuts, silence_frames, speech_mask, summarize
 from .diarize import clip_segments, diarize, speaker_stats, write_speakers_json
 from .log import banner, log, setup
 from .probe import require_tools
 from .report import write_cuts_csv
 from .scan import WORK_DIR, scan
-from .sync import report_sync, sync_all, write_sync_csv
+from .sync import report_sync, write_sync_csv
 from .takes import build_reference_takes, group_takes, place_takes
 from .timecode import fmt_seconds, parse_time
 from .timeline import TimeMap, Timeline
@@ -47,16 +46,10 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
         return EXIT_OK
 
     rate = int(cfg["sync"]["analysis_rate"])
-    if len(takes) > 1:
-        banner("2-3. Takes: sync and place on one timeline")
-        syncs = place_takes(project, takes, cfg)
-        ref = build_reference_takes(takes, workdir, rate)
-        report_sync(project, syncs, ref.duration)
-    else:
-        banner("2. Reference mix")
-        ref = build_reference(project.audio, workdir, rate)
-        banner("3. Sync")
-        syncs = sync_all(project, ref, cfg)
+    banner("2-3. Sync: camera samples against the clean audio")
+    syncs = place_takes(project, takes, cfg)
+    ref = build_reference_takes(takes, workdir, rate)
+    report_sync(project, syncs, ref.duration)
 
     t0 = parse_time(start, project.rate) if start else 0.0
     if t0 >= ref.duration:

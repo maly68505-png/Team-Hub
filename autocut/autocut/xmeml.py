@@ -13,7 +13,7 @@ from urllib.parse import quote
 from .cutlogic import Shot
 from .log import log
 from .probe import MediaInfo
-from .scan import Clip, Project
+from .scan import Project
 from .timecode import Rate, frames_to_tc, tc_to_frames
 from .timeline import Piece, TimeMap, Timeline
 
