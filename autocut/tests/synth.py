@@ -137,5 +137,7 @@ def make_project(root: Path, extra_noise_camera: bool = False) -> Path:
         "  long_clip_minutes: 2\n"
         "  probe_seconds: 30\n"
         "diarization:\n"
-        "  min_speaker_seconds: 5\n")
+        "  min_speaker_seconds: 5\n"
+        "output:\n"
+        "  layered: false\n")
     return root

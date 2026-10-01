@@ -53,15 +53,11 @@ R="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 PYANNOTE_METRICS_ENABLED=false
 exec "$R/python/bin/python3" -m autocut "$@"
 SH
-cat > "$APP/Contents/MacOS/Autocut" <<'SH'
-#!/bin/bash
-# Double-click: start the local engine in the background and open the UI.
-R="$(cd "$(dirname "$0")/../Resources" && pwd)"
-mkdir -p "$HOME/Library/Logs"
-nohup "$R/bin/autocut" serve --app --open >> "$HOME/Library/Logs/Autocut.log" 2>&1 &
-disown
-SH
-chmod +x "$APP/Contents/Resources/bin/autocut" "$APP/Contents/MacOS/Autocut"
+chmod +x "$APP/Contents/Resources/bin/autocut"
+
+echo "==> native window (Swift + WebKit: the UI opens in the app, not in a browser)"
+swiftc -O -target arm64-apple-macos12 -framework Cocoa -framework WebKit \
+  "$HERE/mac-app/main.swift" -o "$APP/Contents/MacOS/Autocut"
 
 VERSION="$("$PY" -c 'import autocut; print(autocut.__version__)')"
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -80,6 +76,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSArchitecturePriority</key><array><string>arm64</string></array>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key><true/>
+    <key>NSAllowsArbitraryLoads</key><true/>
+  </dict>
 </dict>
 </plist>
 PLIST
@@ -89,10 +91,18 @@ echo "==> icon"
   iconutil -c icns "$OUT/icon.iconset" -o "$APP/Contents/Resources/Autocut.icns" || echo "    (no icon)"
 rm -rf "$OUT/icon.iconset"
 
+echo "==> ad-hoc signature for the whole bundle"
+# Not an Apple Developer ID, but a sealed bundle: a downloaded copy is reported
+# as "could not be verified" (System Settings > Privacy & Security > Open Anyway)
+# instead of "is damaged" (no way to open it).
+codesign --force --deep --sign - "$APP"
+codesign --verify --deep --strict "$APP" && echo "    signature OK"
+
 echo "==> Premiere panel + installer"
 ditto "$ROOT/premiere-panel" "$OUT/AutocutPanel"
 cp "$HERE/Install Autocut.command" "$OUT/"
 chmod +x "$OUT/Install Autocut.command"
+cp "$HERE/README-EN.md" "$OUT/README.md"
 cp "$HERE/README-AR.md" "$OUT/اقرأني.md"
 
 echo "==> zip"

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -15,7 +15,10 @@
       <p class="sub">قطع مبدئي تلقائي متعدد الكاميرات لبريمير</p>
     </div>
   </div>
-  <button id="modelsBadge" class="badge" type="button">…</button>
+  <div class="row">
+    <button id="btnLang" class="badge" type="button">عربي</button>
+    <button id="modelsBadge" class="badge" type="button">…</button>
+  </div>
 </header>
 
 <main>
@@ -107,6 +110,7 @@
     <div class="grid" id="silenceOpts">
       <label>أي سكتة أطول من (ث) تُقصَّر<input id="cfgSilenceMax" type="number" step="0.1" min="0.2"></label>
     </div>
+    <label class="check"><input id="cfgLayered" type="checkbox"> تايم لاين طبقات: كل كاميرا في مسار خاص ومقطوعة في مكانها (تعديل القطع بالـ Rolling Edit)</label>
     <label class="check"><input id="allowLow" type="checkbox"> تابع رغم وجود ملفات مزامنتها ضعيفة (تُعلَّم بالأحمر ولا تدخل في القطع)</label>
     <div class="row">
       <button id="btnTest" type="button">تجربة</button>
@@ -154,6 +158,8 @@
   </form>
 </dialog>
 
+<script src="i18n.js"></script>
+<script>applyLang();</script>
 <script src="app.js"></script>
 </body>
 </html>

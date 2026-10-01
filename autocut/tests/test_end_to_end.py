@@ -187,3 +187,53 @@ def test_low_confidence_stops_and_is_excluded(project, tmp_path):
         "sync:\n", "sync:\n  overrides:\n    CAM_X/NOISE.MP4: 20.0\n")
     (root / "config.yaml").write_text(cfg)
     assert run(root, rttm=root / "truth.rttm") == EXIT_OK
+
+
+def test_layered_timeline(project, tmp_path):
+    """output.layered: one track per camera, cut in place; at every frame the
+    enabled clip is the camera cuts.csv chose, and camera audio stays in sync."""
+    root = tmp_path / "p"
+    shutil.copytree(project, root, ignore=shutil.ignore_patterns("_autocut"))
+    mapped(root)
+    cfg = (root / "config.yaml").read_text()
+    (root / "config.yaml").write_text(cfg.replace("layered: false", "layered: true"))
+    assert run(root, rttm=root / "truth.rttm") == EXIT_OK
+    out = root / "_autocut" / "output"
+    seq, vt, _ = xml_tracks(out / "roughcut_layers.xml")
+    assert "layers" in seq.find("name").text
+    assert len(vt) == 4                              # the cameras, no separate V1
+    n = int(seq.find("duration").text)
+    shown = np.full(n, "", dtype=object)
+    for tr in vt:
+        assert tr.find("enabled").text == "TRUE" and tr.find("locked").text == "FALSE"
+        items = tr.findall("clipitem")
+        for a, b in zip(items, items[1:]):
+            assert int(a.find("end").text) <= int(b.find("start").text)
+        for c in items:
+            s, e = int(c.find("start").text), int(c.find("end").text)
+            assert int(c.find("out").text) - int(c.find("in").text) == e - s
+            if c.find("enabled").text == "TRUE":
+                assert not any(shown[s:e]), "two cameras enabled at once"
+                shown[s:e] = c.find("name").text.split(" |")[0]
+    with open(out / "cuts_layers.csv", encoding="utf-8-sig") as fh:
+        rows = list(csv.DictReader(fh))
+    for r in rows:
+        s, e = int(r["start_frame"]), int(r["end_frame"])
+        want = "" if r["camera"] == "(gap)" else r["camera"]
+        assert set(shown[s:e]) == {want}, r
+    # every camera frame shows the same source frame as in the normal layout
+    (root / "config.yaml").write_text(cfg)
+    assert run(root, rttm=root / "truth.rttm") == EXIT_OK
+    _, vt_normal, _ = xml_tracks(out / "roughcut.xml")
+
+    def src_at(tracks):
+        m = {}
+        for tr in tracks:
+            for c in tr.findall("clipitem"):
+                s, e, src = int(c.find("start").text), int(c.find("end").text), int(c.find("in").text)
+                name = c.find("name").text.replace("LOW-SYNC ", "")
+                for f in range(s, e):
+                    m[(name, f)] = src + f - s
+        return m
+    a, b = src_at(vt), src_at(vt_normal[1:])
+    assert a == b

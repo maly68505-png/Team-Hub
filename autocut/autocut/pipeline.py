@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from . import config as config_mod
@@ -161,11 +162,14 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
         suffix = "_" + fmt_seconds(t0).replace(":", "").split(".")[0] + f"_{int(round(t1 - t0))}s"
     if cc["remove_silence"]:
         suffix += "_tight"
+    layered = bool(cfg["output"]["layered"])
+    if layered:
+        suffix += "_layers"
     xml_p = out_dir / f"roughcut{suffix}.xml"
     csv_p = out_dir / f"cuts{suffix}.csv"
     name = cfg["output"]["sequence_name"] + (
         f" TEST {fmt_seconds(t0)[:8]} +{fmt_seconds(t1 - t0)[3:8]}" if is_test else " FULL") + (
-        " no-silence" if cc["remove_silence"] else "")
+        " no-silence" if cc["remove_silence"] else "") + (" layers" if layered else "") + time.strftime(" %H.%M")  # tells re-imports apart
     xmeml.write(xml_p, project, tl, shots, cfg, name, tm)
     write_cuts_csv(csv_p, shots, tl, project.rate, tm)
     summary = dict(breakdown(shots, project.rate), full=not is_test, sequence=name, xml=xml_p.name,

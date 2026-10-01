@@ -3,6 +3,11 @@
   V1        the rough cut
   V2..Vn    each camera, fully synced, one track per camera (locked, disabled)
   A1..An    the clean audio, one track per channel of each file
+
+Layered (output.layered): no V1. V1..Vn are the cameras, each fully synced and
+split wherever that camera goes on or off the cut: its shots enabled, the rest
+disabled — one camera shows at a time. A cut moves with a rolling edit on the
+two tracks, a shot changes camera by enabling another track's clip there.
 """
 from __future__ import annotations
 
@@ -10,7 +15,9 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import quote
 
-from .cutlogic import Shot
+import numpy as np
+
+from .cutlogic import Shot, _runs
 from .log import log
 from .probe import MediaInfo
 from .scan import Project
@@ -171,6 +178,35 @@ class Writer:
         _sub(sc, "pixelaspectratio", "square")
         _sub(sc, "fielddominance", "none")
 
+        if ocfg.get("layered"):
+            self._layers(video, shots)
+        else:
+            self._v1_and_cameras(video, shots)
+        self._audio(media)
+        return root
+
+    def _layers(self, video, shots: list[Shot]):
+        tl = self.tl
+        n_on = 0
+        for cam in self.p.cameras:
+            on = np.zeros(tl.n, bool)
+            for s in shots:
+                if s.camera == cam:
+                    on[s.start:s.end] = True
+            tr = _sub(video, "track")
+            for piece in tl.pieces(cam, 0, tl.n):
+                label = f"{'LOW-SYNC ' if piece.low else ''}{cam} | {piece.clip.path.name}"
+                for a, b in _runs(on[piece.start:piece.end]):
+                    sub = Piece(piece.clip, piece.start + a, piece.start + b, piece.src_in + a, piece.low)
+                    enabled = bool(on[sub.start])
+                    k = self._video(tr, sub, label, self.cam_label[cam], enabled)
+                    n_on += k if enabled else 0
+            _sub(tr, "enabled", "TRUE")
+            _sub(tr, "locked", "FALSE")
+        log.info("XML (layered): V1..V%d cameras, %d enabled shot clip(s)", len(self.p.cameras), n_on)
+
+    def _v1_and_cameras(self, video, shots: list[Shot]):
+        tl, ocfg = self.tl, self.cfg["output"]
         # V1 — rough cut
         v1 = _sub(video, "track")
         n_v1 = 0
@@ -192,6 +228,10 @@ class Writer:
                 self._video(tr, piece, label, self.cam_label[cam], cam_on)
             _sub(tr, "enabled", "TRUE" if cam_on else "FALSE")
             _sub(tr, "locked", "TRUE" if ocfg["lock_camera_tracks"] else "FALSE")
+        log.info("XML: V1 %d clip(s), V2..V%d cameras", n_v1, 1 + len(self.p.cameras))
+
+    def _audio(self, media):
+        tl, rate = self.tl, self.rate
 
         # A1..An — clean audio (standard FCP7 layout: stereo output group, mono tracks)
         audio = _sub(media, "audio")
@@ -231,9 +271,7 @@ class Writer:
                 _sub(tr, "locked", "FALSE")
         if not n_audio:
             log.error("NO clean audio could be placed on the audio tracks — check the audio files")
-        log.info("XML: V1 %d clip(s), V2..V%d cameras, A1..A%d clean audio",
-                 n_v1, 1 + len(self.p.cameras), len(audio.findall("track")))
-        return root
+        log.info("XML: A1..A%d clean audio", len(audio.findall("track")))
 
 
 class _OneTake:
