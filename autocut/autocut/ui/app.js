@@ -196,6 +196,13 @@ function renderScan() {
     h("span", { class: "muted" }, nt > 1 ? L(`${nt} تيك متتالية · ${fmtDur(audTotal)}`, `${nt} takes in a row · ${fmtDur(audTotal)}`)
       : L(`${aud.length} ملف · ${fmtDur(audTotal)}`, `${aud.length} file(s) · ${fmtDur(audTotal)}`)),
     h("div", { class: "muted" }, `${st.scan.fps} fps`)));
+  // a promo or an extracted copy among the takes: duplicate / unrelated audio
+  const odd = aud.filter((a) => /promo|extracted|copy|نسخة/i.test(a.name)).map((a) => a.name);
+  if (odd.length && aud.length > 1) {
+    $("scanError").textContent = L(`تنبيه: في مجلد الصوت النظيف ملفات لا تبدو تسجيلات التصوير: ${odd.join("، ")} — انقلها خارج المجلد (اترك ملفات التيكات فقط، مثل _FIXED)، وإلا تطول المزامنة ويتكرر الصوت.`,
+      `Note: the clean audio folder has files that don't look like the shoot's recordings: ${odd.join(", ")} — move them out (keep only the takes, e.g. _FIXED), otherwise sync takes longer and the audio is doubled.`);
+    show($("scanError"), true);
+  }
 }
 
 // ---------------------------------------------------------------- settings
@@ -485,7 +492,28 @@ function jobMessage(kind, text) {
   show($("jobBar"), true);
 }
 
+const DIA_AR = { segmentation: "تقطيع الصوت", "counting speakers": "عدّ المتحدثين",
+  "speaker embeddings": "بصمات الأصوات", clustering: "تجميع المتحدثين" };
+
+// the step a job is on, from its log: "[3/8] CAM 03/..." or "diarization: embeddings 40%"
+function stepOf(line) {
+  let m = line.match(/\[(\d+)\/(\d+)\]\s+(\S+)/);
+  if (m && /samples ->/.test(line)) return L(`مزامنة: ملف ${m[1]} من ${m[2]}`, `Sync: file ${m[1]} of ${m[2]}`);
+  if (m) return L(`قراءة الصوت: ${m[1]} من ${m[2]}`, `Reading audio: ${m[1]} of ${m[2]}`);
+  m = line.match(/diarization: (.+?) (\d+)%/);
+  if (m) return L(`تمييز المتحدثين: ${DIA_AR[m[1]] || m[1]} ${m[2]}%`, `Speakers: ${m[1]} ${m[2]}%`);
+  if (/Loading diarization model/.test(line)) return L("تحميل نموذج المتحدثين…", "Loading the speaker model…");
+  if (/=== .*Sync/.test(line)) return L("مزامنة: قراءة عيّنات الكاميرات…", "Sync: reading camera samples…");
+  if (/=== .*Cut/.test(line)) return L("القطع…", "Cutting…");
+  if (/=== .*Output/.test(line)) return L("كتابة الملفات…", "Writing the files…");
+  return null;
+}
+
 function appendLog(lines) {
+  for (const line of lines) {
+    const st = stepOf(line);
+    if (st) $("jobStep").textContent = "· " + st;
+  }
   const log = $("log");
   const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
   for (const line of lines) {
@@ -504,6 +532,7 @@ async function startJob(body) {
   }
   S.jobKind = body.kind;
   $("log").replaceChildren();
+  $("jobStep").textContent = "";
   show($("jobMsg"), false);
   show($("jobBar"), true);
   show($("btnCancel"), true);
@@ -531,6 +560,7 @@ async function pollJob(since) {
 
 async function finishJob(code) {
   S.running = false;
+  $("jobStep").textContent = "";
   $("jobSpin").classList.add("stop");
   show($("btnCancel"), false);
   try {
