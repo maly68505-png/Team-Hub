@@ -11,6 +11,14 @@ const STATIC = {
   "قطع مبدئي تلقائي متعدد الكاميرات لبريمير": "Automatic multicam rough cut for Premiere",
   "١": "1", "٢": "2", "٣": "3", "٤": "4", "٥": "5",
   "مجلد التصوير": "Shoot folder",
+  "أو عندك تسلسل متزامن جاهز من بريمير؟": "Or do you have a sequence already synced in Premiere?",
+  "افتح ملف XML متزامن…": "Open a synced XML…",
+  "في بريمير: اختر التسلسل ثم File ← Export ← Final Cut Pro XML. كل مسار فيديو = كاميرا.":
+    "In Premiere: select the sequence, then File → Export → Final Cut Pro XML. Each video track = one camera.",
+  "التسلسل متزامن مسبقاً: التحليل هنا لتمييز المتحدثين فقط.": "The sequence is already synced: the analysis only detects the speakers.",
+  "مزامنة فقط (بدون قطع)": "Sync only (no cut)",
+  "كل الكاميرات متزامنة على مسارات + الصوت النظيف، بدون قطع ولا تمييز متحدثين":
+    "All cameras synced on their own tracks + the clean audio — no cut, no speaker detection",
   "اختر المجلد…": "Choose folder…",
   "فتح": "Open",
   "إغلاق المشروع والرجوع للبداية": "Close the project and start over",

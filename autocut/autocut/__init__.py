@@ -1,2 +1,2 @@
 """autocut — multicam rough cut for Premiere Pro from clean audio + diarization."""
-__version__ = "0.3.0"
+__version__ = "0.4.0"

@@ -137,3 +137,40 @@ def test_reset_settings_deletes_config_only(srv, project):
     assert call(base, "/api/config/reset", {"path": str(project)})[0] == 200
     assert not (project / "config.yaml").exists()
     assert (project / "_autocut" / "sync.json").exists()  # analysis kept
+
+
+SEQ_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<xmeml version="4"><sequence id="s1"><name>Ep 3 synced</name><duration>250</duration>
+<rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate><media><video>
+<track><clipitem id="c1"><name>A</name><start>0</start><end>250</end><in>0</in><out>250</out>
+ <file id="f1"><name>A001.MXF</name><pathurl>file://localhost/x/CAM%201/A001.MXF</pathurl>
+ <media><video/><audio/></media></file></clipitem></track>
+<track><clipitem id="c2"><name>B</name><start>50</start><end>200</end><in>0</in><out>150</out>
+ <file id="f2"><name>B001.MXF</name><pathurl>file://localhost/x/CAM%202/B001.MXF</pathurl>
+ <media><video/><audio/></media></file></clipitem></track>
+</video><audio><track><clipitem id="c3"><name>T1</name><start>0</start><end>250</end><in>0</in><out>250</out>
+ <file id="f3"><name>T1.WAV</name><pathurl>file://localhost/x/audio/T1.WAV</pathurl><media><audio/></media></file>
+</clipitem></track></audio></media></sequence></xmeml>
+"""
+
+
+def test_synced_xml_as_project(srv, tmp_path):
+    base, _ = srv
+    x = tmp_path / "Ep3.xml"
+    x.write_text(SEQ_XML)
+    code, st = call(base, "/api/project?path=" + urllib.request.quote(str(x)))
+    assert code == 200 and st["mode"] == "xml"
+    assert st["cameras"] == ["CAM 1", "CAM 2"]
+    assert st["config"]["long_camera"] == "CAM 1" and st["long_camera_guessed"]
+    assert st["xml"]["audio"] == ["T1.WAV"] and st["xml"]["audio_clean"]
+    assert st["xml_missing"]                       # the media is not on this machine
+    cfg = st["config"]
+    cfg["speakers"] = {"SPEAKER_00": ["CAM 1", "CAM 2"]}
+    assert call(base, "/api/config", {"path": str(x), "config": cfg})[0] == 200
+    f = tmp_path / "_autocut" / "xml-Ep3" / "config.yaml"
+    assert load(f)["speakers"]["SPEAKER_00"] == ["CAM 1", "CAM 2"]
+    assert not (tmp_path / "config.yaml").exists()
+    code, st = call(base, "/api/project?path=" + urllib.request.quote(str(x)))
+    assert st["has_config"] and not st.get("long_camera_guessed")
+    assert call(base, "/api/config/reset", {"path": str(x)})[0] == 200
+    assert not f.exists()

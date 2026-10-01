@@ -1,6 +1,7 @@
 """Runs the stages in order, with caching in <project>/_autocut/."""
 from __future__ import annotations
 
+import copy
 import json
 import time
 from pathlib import Path
@@ -16,7 +17,7 @@ from .sync import report_sync, write_sync_csv
 from .takes import build_reference_takes, group_takes, place_takes
 from .timecode import fmt_seconds, parse_time
 from .timeline import TimeMap, Timeline
-from . import xmeml
+from . import xmeml, xmlcut
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -26,11 +27,104 @@ EXIT_LOW_SYNC = 3
 STAGES = ("scan", "sync", "diarize", "run")
 
 
+def _test_suffix(t0: float, t1: float) -> str:
+    return "_" + fmt_seconds(t0).replace(":", "").split(".")[0] + f"_{int(round(t1 - t0))}s"
+
+
+def _test_name(t0: float, t1: float) -> str:
+    return f" TEST {fmt_seconds(t0)[:8]} +{fmt_seconds(t1 - t0)[3:8]}"
+
+
+def write_synced(project, syncs, window, is_test: bool, cfg: dict, out_dir: Path) -> Path:
+    """Sync only: every camera on its own track, synced, nothing cut."""
+    banner("Output: synced timeline (no cut)")
+    t0, t1 = window
+    tl = Timeline(project, syncs, window, use_low=True)
+    suffix = _test_suffix(t0, t1) if is_test else ""
+    xml_p = out_dir / f"synced{suffix}.xml"
+    name = "autocut synced" + (_test_name(t0, t1) if is_test else "") + time.strftime(" %H.%M")
+    xmeml.write(xml_p, project, tl, None, cfg, name)
+    lows = [r.rel for r in syncs.values() if r.low and r.method != "failed"]
+    if lows:
+        log.warning("%d clip(s) with LOW sync confidence are on their tracks with a red label: %s",
+                    len(lows), ", ".join(lows))
+    log.info("Synced XML: %s", xml_p)
+    log.info("In Premiere: File > Import > %s", xml_p.name)
+    return xml_p
+
+
+def check_speakers(segs, cams: list[str], cfg: dict, workdir: Path, wav16k: Path, rate) -> int | None:
+    """speakers.json + samples; an exit code when the speaker mapping is wrong or missing."""
+    dcfg = cfg["diarization"]
+    mapping = cfg["speakers"]
+    speakers_json = workdir / "speakers.json"
+    write_speakers_json(speakers_json, segs, rate, wav16k, cams, mapping,
+                        float(dcfg["min_speaker_seconds"]))
+    stats = speaker_stats(segs)
+    log.info("Speakers (%d):", len(stats))
+    for spk, total in stats.items():
+        log.info("  %-14s %7.1fs  -> %s", spk, total, mapping.get(spk, "(not mapped)"))
+    log.info("speakers.json: %s (samples in %s)", speakers_json, workdir / "speaker_samples")
+
+    bad = {k: v for k, v in mapping.items() if any(x != "long" and x not in cams for x in targets(v))}
+    if bad:
+        log.error("config speakers map to unknown cameras: %s (cameras: %s, or 'long')",
+                  bad, ", ".join(cams))
+        return EXIT_ERROR
+    for k in mapping:
+        if k not in stats:
+            log.warning("config maps '%s' but diarization has no such label — stale mapping?", k)
+    missing = [s for s, t in stats.items()
+               if s not in mapping and t >= float(dcfg["min_speaker_seconds"])]
+    if missing:
+        log.warning("")
+        log.warning("Speaker mapping needed for: %s", ", ".join(missing))
+        log.warning("Listen to the samples listed in %s, then add to config.yaml:", speakers_json)
+        for spk in stats:
+            log.warning("    %s: %s", spk, mapping.get(spk, "<camera folder or long>"))
+        log.warning("and run again. Stopping here.")
+        return EXIT_NEED_MAPPING
+    return None
+
+
+def targets(v) -> list[str]:
+    return v if isinstance(v, list) else [v]
+
+
+def speaker_cameras(mapping: dict, long_camera: str) -> dict:
+    def resolve(v):
+        out = [long_camera if x == "long" else x for x in targets(v)]
+        return out if len(out) > 1 else out[0]
+    return {spk: resolve(v) for spk, v in mapping.items()}
+
+
+def silence_map(n: int, segs, window, rate, quiet, cc: dict) -> TimeMap:
+    """Identity, or the kept frames when cut.remove_silence is on."""
+    if not cc["remove_silence"]:
+        return TimeMap(n)
+    t0, t1 = window
+    sound = speech_mask(clip_segments(segs, t0, t1), window, rate) | ~quiet
+    max_pause = max(float(cc["silence_max"]), 2 * float(cc["silence_pad"]) + 1 / rate.float)
+    tm = TimeMap(n, keep_ranges(sound, rate, max_pause, float(cc["silence_pad"])))
+    log.info("Silence removal: pauses over %.2fs shortened — %s removed, %s -> %s",
+             max_pause, fmt_seconds(tm.removed / rate.float),
+             fmt_seconds(n / rate.float), fmt_seconds(tm.total / rate.float))
+    return tm
+
+
 def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
         start: str | None = None, duration: str | None = None, rttm: Path | None = None,
         diarize_full: bool = False, allow_low_confidence: bool = False,
         verbose: bool = False) -> int:
     project_dir = Path(project_dir).resolve()
+    if xmlcut.is_xml(project_dir):  # a sequence already synced in Premiere
+        workdir = xmlcut.workdir_for(project_dir)
+        setup(workdir / "autocut.log", verbose)
+        log.info("autocut — synced sequence %s", project_dir)
+        cfg_p = Path(config_path or workdir / "config.yaml")
+        cfg = config_mod.load(cfg_p, require_long=False) if cfg_p.exists() else copy.deepcopy(config_mod.DEFAULTS)
+        require_tools()
+        return xmlcut.run_xml(project_dir, cfg, until, start, duration, rttm, diarize_full)
     workdir = project_dir / WORK_DIR
     setup(workdir / "autocut.log", verbose)
     log.info("autocut — project %s", project_dir)
@@ -69,45 +163,18 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
     log.info("Sync report: %s", out_dir / "sync_report.csv")
     lows = [r for r in syncs.values() if r.low]
     if until == "sync":
+        write_synced(project, syncs, window, is_test, cfg, out_dir)
         return EXIT_LOW_SYNC if lows else EXIT_OK
 
     banner("4. Diarization")
     dcfg = cfg["diarization"]
     segs = diarize(ref.wav16k, ref.fp, ref.duration, window, dcfg, workdir, rttm, diarize_full)
     cams = list(project.cameras)
-    mapping = cfg["speakers"]
-    speakers_json = workdir / "speakers.json"
-    write_speakers_json(speakers_json, segs, project.rate, ref.wav16k, cams, mapping,
-                        float(dcfg["min_speaker_seconds"]))
-    stats = speaker_stats(segs)
-    log.info("Speakers (%d):", len(stats))
-    for spk, total in stats.items():
-        log.info("  %-14s %7.1fs  -> %s", spk, total, mapping.get(spk, "(not mapped)"))
-    log.info("speakers.json: %s (samples in %s)", speakers_json, workdir / "speaker_samples")
-
-    def targets(v):
-        return v if isinstance(v, list) else [v]
-
-    bad = {k: v for k, v in mapping.items() if any(x != "long" and x not in cams for x in targets(v))}
-    if bad:
-        log.error("config speakers map to unknown cameras: %s (cameras: %s, or 'long')",
-                  bad, ", ".join(cams))
-        return EXIT_ERROR
-    for k in mapping:
-        if k not in stats:
-            log.warning("config maps '%s' but diarization has no such label — stale mapping?", k)
-    missing = [s for s, t in stats.items()
-               if s not in mapping and t >= float(dcfg["min_speaker_seconds"])]
-    if missing:
-        log.warning("")
-        log.warning("Speaker mapping needed for: %s", ", ".join(missing))
-        log.warning("Listen to the samples listed in %s, then add to config.yaml:", speakers_json)
-        for spk in stats:
-            log.warning("    %s: %s", spk, mapping.get(spk, "<camera folder or long>"))
-        log.warning("and run again. Stopping here.")
-        if lows:
-            log.warning("(Also: %d clip(s) have LOW sync confidence — see above.)", len(lows))
-        return EXIT_NEED_MAPPING
+    code = check_speakers(segs, cams, cfg, workdir, ref.wav16k, project.rate)
+    if code == EXIT_NEED_MAPPING and lows:
+        log.warning("(Also: %d clip(s) have LOW sync confidence — see above.)", len(lows))
+    if code is not None:
+        return code
     if until == "diarize":
         return EXIT_OK
 
@@ -136,30 +203,19 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
 
     banner("5. Cut")
     tl = Timeline(project, syncs, window, use_low=allow_low_confidence)
-    def resolve(v):
-        out = [project.long_camera if x == "long" else x for x in targets(v)]
-        return out if len(out) > 1 else out[0]
-
-    speaker_cam = {spk: resolve(v) for spk, v in mapping.items()}
+    speaker_cam = speaker_cameras(cfg["speakers"], project.long_camera)
     quiet = silence_frames(ref.x, ref.rate, window, project.rate)
     shots = plan_cuts(clip_segments(segs, t0, t1), window, project.rate, speaker_cam, cams,
                       project.long_camera, tl.coverage, cfg["cut"], quiet)
     summarize(shots, project.rate)
 
     cc = cfg["cut"]
-    tm = TimeMap(tl.n)
-    if cc["remove_silence"]:
-        sound = speech_mask(clip_segments(segs, t0, t1), window, project.rate) | ~quiet
-        max_pause = max(float(cc["silence_max"]), 2 * float(cc["silence_pad"]) + 1 / project.rate.float)
-        tm = TimeMap(tl.n, keep_ranges(sound, project.rate, max_pause, float(cc["silence_pad"])))
-        log.info("Silence removal: pauses over %.2fs shortened — %s removed, %s -> %s",
-                 max_pause, fmt_seconds(tm.removed / project.rate.float),
-                 fmt_seconds(tl.n / project.rate.float), fmt_seconds(tm.total / project.rate.float))
+    tm = silence_map(tl.n, segs, window, project.rate, quiet, cc)
 
     banner("6. Output")
     suffix = ""
     if is_test:
-        suffix = "_" + fmt_seconds(t0).replace(":", "").split(".")[0] + f"_{int(round(t1 - t0))}s"
+        suffix = _test_suffix(t0, t1)
     if cc["remove_silence"]:
         suffix += "_tight"
     layered = bool(cfg["output"]["layered"])
@@ -168,7 +224,7 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
     xml_p = out_dir / f"roughcut{suffix}.xml"
     csv_p = out_dir / f"cuts{suffix}.csv"
     name = cfg["output"]["sequence_name"] + (
-        f" TEST {fmt_seconds(t0)[:8]} +{fmt_seconds(t1 - t0)[3:8]}" if is_test else " FULL") + (
+        _test_name(t0, t1) if is_test else " FULL") + (
         " no-silence" if cc["remove_silence"] else "") + (" layers" if layered else "") + time.strftime(" %H.%M")  # tells re-imports apart
     xmeml.write(xml_p, project, tl, shots, cfg, name, tm)
     write_cuts_csv(csv_p, shots, tl, project.rate, tm)

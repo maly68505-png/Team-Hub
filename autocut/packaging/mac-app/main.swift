@@ -146,13 +146,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                                didReceive message: WKScriptMessage) {
         guard let m = message.body as? [String: Any], (m["type"] as? String) == "choose" else { return }
         let id = (m["id"] as? NSNumber)?.intValue ?? 0
-        let folder = (m["kind"] as? String ?? "folder") == "folder"
+        let kind = m["kind"] as? String ?? "folder"
+        let folder = kind == "folder"
         let panel = NSOpenPanel()
         panel.canChooseDirectories = folder
         panel.canChooseFiles = !folder
         panel.allowsMultipleSelection = false
         panel.message = m["prompt"] as? String ?? ""
-        if !folder { panel.allowedFileTypes = ["zip"] }
+        if !folder { panel.allowedFileTypes = kind == "xml" ? ["xml"] : ["zip"] }
         panel.beginSheetModal(for: window) { resp in
             var payload: [String: Any] = ["type": "autocut-choose-result", "id": id, "path": NSNull()]
             if resp == .OK, let u = panel.url { payload["path"] = u.path }

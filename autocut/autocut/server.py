@@ -26,7 +26,7 @@ from urllib.parse import parse_qs, urlparse
 
 import yaml
 
-from . import __version__, models
+from . import __version__, models, xmlcut
 from .config import DEFAULTS, ConfigError, load
 from .takes import group_takes
 from .scan import AUDIO_NAME, WORK_DIR, ScanError, clean_audio_files, discover_cameras, find_audio_dir, scan
@@ -93,8 +93,79 @@ def config_text(cfg: dict) -> str:
     return head + yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False, default_flow_style=False)
 
 
+def workdir_of(path: Path) -> Path:
+    path = Path(path).expanduser().resolve()
+    return xmlcut.workdir_for(path) if xmlcut.is_xml(path) else path / WORK_DIR
+
+
+def config_file(path: Path) -> Path:
+    path = Path(path).expanduser().resolve()
+    return workdir_of(path) / "config.yaml" if xmlcut.is_xml(path) else path / "config.yaml"
+
+
+def _results(out: dict, work: Path) -> None:
+    """speakers / sync table / last summary / output files from a work folder."""
+    sp = work / "speakers.json"
+    if sp.exists():
+        out["speakers"] = json.loads(sp.read_text(encoding="utf-8"))
+    rep = work / "output" / "sync_report.csv"
+    if rep.exists():
+        import csv
+        with open(rep, encoding="utf-8") as fh:
+            out["sync"] = list(csv.DictReader(fh))
+    outdir = work / "output"
+    sm = outdir / "summary.json"
+    if sm.exists():
+        try:
+            out["summary"] = json.loads(sm.read_text(encoding="utf-8"))
+        except ValueError:
+            pass
+    if outdir.exists():
+        out["outputs"] = [{"name": f.name, "path": str(f), "mtime": f.stat().st_mtime}
+                          for f in sorted(outdir.iterdir(), key=lambda f: -f.stat().st_mtime)
+                          if f.suffix in (".xml", ".csv")]
+
+
+def xml_state(path: Path) -> dict:
+    """A sequence already synced in Premiere: cameras = its video tracks."""
+    out: dict = {"path": str(path), "exists": True, "mode": "xml"}
+    cfg_p = config_file(path)
+    out["has_config"] = cfg_p.exists()
+    cfg = None
+    if cfg_p.exists():
+        try:
+            cfg = load(cfg_p, require_long=False)
+        except ConfigError as e:
+            out["config_error"] = str(e)
+    if cfg is None:
+        cfg = json.loads(json.dumps(DEFAULTS))
+    out["config"] = cfg
+    try:
+        sq = xmlcut.SyncedSequence(path)
+        d = sq.describe()
+        out["xml"] = d
+        cams = [c["name"] for c in d["cameras"]]
+        out["cameras"] = cams
+        if cfg.get("long_camera") not in cams:
+            if cfg.get("long_camera"):
+                out["long_camera_reset"] = cfg["long_camera"]
+            cfg["long_camera"] = max(d["cameras"], key=lambda c: c["covered"])["name"]
+            out["long_camera_guessed"] = True
+        if d["missing"]:
+            out["xml_missing"] = d["missing"]
+    except ScanError as e:
+        out["xml_error"] = str(e)
+        out["xml_error_ar"] = e.ar or str(e)
+    except Exception as e:  # noqa: BLE001 — report any parse problem to the UI
+        out["xml_error"] = out["xml_error_ar"] = str(e)
+    _results(out, workdir_of(path))
+    return out
+
+
 def project_state(path: Path) -> dict:
     path = Path(path).expanduser().resolve()
+    if xmlcut.is_xml(path):
+        return xml_state(path)
     out: dict = {"path": str(path), "exists": path.is_dir()}
     if not path.is_dir():
         return out
@@ -156,26 +227,7 @@ def project_state(path: Path) -> dict:
             }
         except (ScanError, Exception) as e:  # noqa: BLE001 — report any scan problem to the UI
             out["scan_error"] = str(e)
-    work = path / WORK_DIR
-    sp = work / "speakers.json"
-    if sp.exists():
-        out["speakers"] = json.loads(sp.read_text(encoding="utf-8"))
-    rep = work / "output" / "sync_report.csv"
-    if rep.exists():
-        import csv
-        with open(rep, encoding="utf-8") as fh:
-            out["sync"] = list(csv.DictReader(fh))
-    outdir = work / "output"
-    sm = outdir / "summary.json"
-    if sm.exists():
-        try:
-            out["summary"] = json.loads(sm.read_text(encoding="utf-8"))
-        except ValueError:
-            pass
-    if outdir.exists():
-        out["outputs"] = [{"name": f.name, "path": str(f), "mtime": f.stat().st_mtime}
-                          for f in sorted(outdir.iterdir(), key=lambda f: -f.stat().st_mtime)
-                          if f.suffix in (".xml", ".csv")]
+    _results(out, path / WORK_DIR)
     return out
 
 
@@ -183,6 +235,8 @@ def choose(kind: str, prompt: str) -> str | None:
     if sys.platform != "darwin":
         raise RuntimeError("native dialogs are macOS only — type the path instead")
     what = "choose folder" if kind == "folder" else "choose file"
+    if kind == "xml":
+        what += ' of type {"public.xml", "xml"}'
     prompt = prompt.replace("\\", "").replace('"', "")
     r = subprocess.run(["osascript", "-e", "activate",
                         "-e", f'POSIX path of ({what} with prompt "{prompt}")'],
@@ -275,9 +329,8 @@ def make_handler(state: State):
                 job = state.job
                 return self._json(job.to_dict(int(q.get("since", 0))) if job else {"running": False})
             if path == "/api/sample":
-                proj = Path(q["path"]).expanduser().resolve()
                 name = Path(q["file"]).name  # no directories
-                f = proj / WORK_DIR / "speaker_samples" / name
+                f = workdir_of(Path(q["path"])) / "speaker_samples" / name
                 if not name.endswith(".wav") or not f.is_file():
                     return self._send(404, b"not found", "text/plain")
                 return self._send(200, f.read_bytes(), "audio/wav")
@@ -292,14 +345,18 @@ def make_handler(state: State):
             if path == "/api/config":
                 proj = Path(b["path"]).expanduser().resolve()
                 cfg = b["config"]
-                audio = str(cfg.get("audio_folder") or "audio")
-                if os.path.isabs(audio):  # store it relative: survives moving the whole shoot
-                    cfg["audio_folder"] = os.path.relpath(audio, proj)
-                (proj / "config.yaml").write_text(config_text(cfg), encoding="utf-8")
-                load(proj / "config.yaml")  # validate what we wrote
+                f = config_file(proj)
+                if xmlcut.is_xml(proj):
+                    f.parent.mkdir(parents=True, exist_ok=True)
+                else:
+                    audio = str(cfg.get("audio_folder") or "audio")
+                    if os.path.isabs(audio):  # store it relative: survives moving the whole shoot
+                        cfg["audio_folder"] = os.path.relpath(audio, proj)
+                f.write_text(config_text(cfg), encoding="utf-8")
+                load(f)  # validate what we wrote
                 return self._json({"ok": True})
             if path == "/api/config/reset":
-                f = Path(b["path"]).expanduser().resolve() / "config.yaml"
+                f = config_file(Path(b["path"]))
                 if f.is_file():
                     f.unlink()
                 return self._json({"ok": True})

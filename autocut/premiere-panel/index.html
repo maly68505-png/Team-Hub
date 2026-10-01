@@ -64,7 +64,8 @@ function evalScript(script) {
 }
 
 function nativeChoose(kind, prompt) {
-  const r = window.cep.fs.showOpenDialogEx(false, kind === "folder", prompt, "", kind === "folder" ? [] : ["zip"]);
+  const types = kind === "folder" ? [] : kind === "xml" ? ["xml"] : ["zip"];
+  const r = window.cep.fs.showOpenDialogEx(false, kind === "folder", prompt, "", types);
   return r && !r.err && r.data && r.data.length ? r.data[0] : null;
 }
 

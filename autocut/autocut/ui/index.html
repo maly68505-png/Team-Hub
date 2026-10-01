@@ -31,6 +31,11 @@
       <button id="btnLoad" type="button">فتح</button>
       <button id="btnClose" type="button" class="hidden" title="إغلاق المشروع والرجوع للبداية">✕</button>
     </div>
+    <div class="row">
+      <span class="muted">أو عندك تسلسل متزامن جاهز من بريمير؟</span>
+      <button id="btnChooseXml" type="button">افتح ملف XML متزامن…</button>
+    </div>
+    <small class="muted">في بريمير: اختر التسلسل ثم File ← Export ← Final Cut Pro XML. كل مسار فيديو = كاميرا.</small>
     <div id="recent" class="recent"></div>
     <div id="scanBox" class="hidden">
       <div id="scanSummary" class="summary"></div>
@@ -41,13 +46,15 @@
   <!-- 2. settings -->
   <section class="card hidden" id="secSettings">
     <h2><span class="num">٢</span> الإعدادات</h2>
-    <label>مجلد الصوت النظيف</label>
-    <div class="row">
-      <input id="cfgAudio" class="grow ltr" readonly placeholder="—">
-      <button id="btnAudio" type="button">اختر…</button>
+    <div id="audioBlock">
+      <label>مجلد الصوت النظيف</label>
+      <div class="row">
+        <input id="cfgAudio" class="grow ltr" readonly placeholder="—">
+        <button id="btnAudio" type="button">اختر…</button>
+      </div>
+      <div id="audioError" class="alert error hidden"></div>
+      <small id="audioInfo" class="muted"></small>
     </div>
-    <div id="audioError" class="alert error hidden"></div>
-    <small id="audioInfo" class="muted"></small>
     <div class="grid">
       <label>الكاميرا الواسعة
         <select id="cfgLong"></select>
@@ -79,9 +86,12 @@
   <section class="card hidden" id="secAnalyze">
     <h2><span class="num">٣</span> التحليل: مزامنة + تمييز المتحدثين</h2>
     <p class="muted">يُجرى مرة واحدة لكل مشروع وتُحفظ نتيجته. على جهاز ماك M قد يأخذ عدة دقائق لتسجيل ساعتين.</p>
+    <p id="xmlNote" class="muted hidden">التسلسل متزامن مسبقاً: التحليل هنا لتمييز المتحدثين فقط.</p>
     <div class="row">
       <button id="btnAnalyze" class="primary" type="button">ابدأ التحليل</button>
+      <button id="btnSyncOnly" type="button" title="كل الكاميرات متزامنة على مسارات + الصوت النظيف، بدون قطع ولا تمييز متحدثين">مزامنة فقط (بدون قطع)</button>
     </div>
+    <div id="syncOutputs"></div>
     <div id="syncBox" class="hidden">
       <h3>المزامنة</h3>
       <div class="tablewrap"><table id="syncTable"></table></div>

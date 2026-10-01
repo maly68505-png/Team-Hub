@@ -110,7 +110,7 @@ async function loadProject(path) {
   } catch (e) {
     return showScanError(e.message);
   }
-  if (!st.exists) return showScanError(L("المجلد غير موجود", "Folder not found"));
+  if (!st.exists) return showScanError(L("المجلد أو الملف غير موجود", "Folder or file not found"));
   S.project = st;
   show($("btnClose"), true);
   store("autocut-last-closed", false);
@@ -131,9 +131,42 @@ function showScanError(msg) {
   show($("scanError"), true);
 }
 
+const isXml = () => !!(S.project && S.project.mode === "xml");
+
+function renderXmlScan() {
+  const st = S.project, x = st.xml;
+  const err = st.xml_error ? (EN() ? st.xml_error : st.xml_error_ar || st.xml_error)
+    : st.config_error || (st.xml_missing ? L("ملفات الصوت غير موجودة (الهارد غير موصّل؟): ", "Audio files not found (drive not connected?): ")
+      + st.xml_missing.join(", ") : null);
+  $("scanError").textContent = err ? L("تنبيه: ", "Note: ") + err : "";
+  show($("scanError"), !!err);
+  const box = $("scanSummary");
+  box.replaceChildren();
+  ["secSettings", "secAnalyze", "secSpeakers", "secCut"].forEach((id) => show($(id), false));
+  if (!x) return;
+  show($("secSettings"), true);
+  show($("secAnalyze"), true);
+  box.append(h("div", { class: "cam" }, h("b", { class: "ltr" }, x.name),
+    h("span", { class: "muted" }, L(`تسلسل متزامن · ${fmtDur(x.duration)}`, `Synced sequence · ${fmtDur(x.duration)}`)),
+    h("div", { class: "muted" }, `${x.fps} fps`)));
+  for (const c of x.cameras) {
+    box.append(h("div", { class: "cam" + (c.name === st.config.long_camera ? " long" : "") },
+      h("b", {}, c.name),
+      h("span", { class: "muted" }, L(`V${c.track} · ${c.clips} مقطع · ${fmtDur(c.covered)}`, `V${c.track} · ${c.clips} clip(s) · ${fmtDur(c.covered)}`))));
+  }
+  box.append(h("div", { class: "cam" },
+    h("b", {}, L("الصوت لتمييز المتحدثين", "Audio for speaker detection")),
+    h("span", { class: "muted ltr" }, x.audio.slice(0, 3).join(", ") + (x.audio.length > 3 ? "…" : "")),
+    x.audio_clean ? null : h("div", { class: "warn" }, L("⚠ صوت الكاميرات (لا يوجد صوت نظيف منفصل)", "⚠ camera audio (no separate clean audio)"))));
+}
+
 function renderScan() {
   const st = S.project;
   show($("scanBox"), true);
+  show($("audioBlock"), !isXml());
+  show($("xmlNote"), isXml());
+  show($("btnSyncOnly"), !isXml());
+  if (isXml()) return renderXmlScan();
   const err = st.audio_error ? null : (st.scan_error || st.config_error);
   $("scanError").textContent = err ? L("تنبيه: ", "Note: ") + err : "";
   show($("scanError"), !!err);
@@ -372,6 +405,7 @@ function renderSummary() {
 
 function outputTag(name) {
   const tags = [/_\d{6}_\d+s/.test(name) ? L("تجربة", "test") : L("كامل", "full")];
+  if (name.startsWith("synced")) tags.unshift(L("مزامنة فقط", "sync only"));
   if (name.includes("_tight")) tags.push(L("بدون سكتات", "no silences"));
   if (name.includes("_layers")) tags.push(L("طبقات", "layered"));
   return tags.join(" · ");
@@ -379,11 +413,15 @@ function outputTag(name) {
 
 function renderOutputs() {
   renderSummary();
-  const box = $("outputs");
+  const all = (S.project.outputs || []).filter((o) => o.name.endsWith(".xml") || o.name.startsWith("cuts"));
+  fileList($("syncOutputs"), all.filter((o) => o.name.startsWith("synced")), L("ملفات المزامنة", "Synced timelines"));
+  fileList($("outputs"), all.filter((o) => !o.name.startsWith("synced")), L("الملفات الناتجة", "Output files"));
+}
+
+function fileList(box, outs, title) {
   box.replaceChildren();
-  const outs = (S.project.outputs || []).filter((o) => o.name.endsWith(".xml") || o.name.startsWith("cuts"));
   if (!outs.length) return;
-  box.append(h("h3", {}, L("الملفات الناتجة", "Output files")));
+  box.append(h("h3", {}, title));
   for (const o of outs) {
     const isXml = o.name.endsWith(".xml");
     box.append(h("div", { class: "outfile" },
@@ -426,11 +464,11 @@ window.addEventListener("message", (ev) => {
 
 // ---------------------------------------------------------------- jobs
 const TITLES_AR = {
-  diarize: "التحليل (مزامنة + متحدثين)", run: "القطع", "models-download": "تحميل النموذج",
+  diarize: "التحليل (مزامنة + متحدثين)", run: "القطع", sync: "المزامنة فقط", "models-download": "تحميل النموذج",
   "models-import": "استيراد النموذج", "models-export": "تصدير النموذج",
 };
 const TITLES_EN = {
-  diarize: "Analysis (sync + speakers)", run: "Cut", "models-download": "Downloading the model",
+  diarize: "Analysis (sync + speakers)", run: "Cut", sync: "Sync only", "models-download": "Downloading the model",
   "models-import": "Importing the model", "models-export": "Exporting the model",
 };
 const jobTitle = (kind) => (EN() ? TITLES_EN : TITLES_AR)[kind] || kind;
@@ -512,6 +550,15 @@ async function reportJob(code) {
     return;
   }
   if (S.path) await loadProject(S.path);
+  if (kind === "sync" && (code === 0 || code === 3)) {
+    jobMessage(code === 0 ? "ok" : "warn", code === 0
+      ? L("تمت المزامنة ✓ — ملف «synced» جاهز في الخطوة ٣: كل كاميرا على مسار، والصوت النظيف تحتها.",
+          "Synced ✓ — the \"synced\" file is ready in step 3: each camera on its own track, the clean audio below.")
+      : L("تمت المزامنة، لكن بعض الملفات مزامنتها ضعيفة: موجودة في الملف بعلامة حمراء — راجعها في جدول المزامنة.",
+          "Synced, but some files synced weakly: they are in the file with a red label — check them in the sync table."));
+    $("syncOutputs").scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
   const msgs = {
     0: ["ok", kind === "run" ? L("تم! الملفات جاهزة في الخطوة ٥.", "Done! The files are ready in step 5.")
       : L("تم التحليل ✓ — راجع المزامنة واختر كاميرا كل متحدث.", "Analysis done ✓ — check the sync and pick each speaker's camera.")],
@@ -538,7 +585,7 @@ async function reportJob(code) {
 }
 
 function setBusy(on) {
-  ["btnAnalyze", "btnTest", "btnFull", "btnImport", "btnDownload", "btnExport", "btnSaveCfg", "btnSaveSpk"]
+  ["btnAnalyze", "btnSyncOnly", "btnTest", "btnFull", "btnImport", "btnDownload", "btnExport", "btnSaveCfg", "btnSaveSpk"]
     .forEach((id) => ($(id).disabled = on));
 }
 
@@ -553,7 +600,7 @@ async function runStage(kind, extra, before) {
     return jobMessage("error", L("الإعدادات: ", "Settings: ") + e.message);
   }
   // diarization needs the model unless this project was already analysed
-  if (!(await refreshModels()) && !S.project.speakers) {
+  if (kind !== "sync" && !(await refreshModels()) && !S.project.speakers) {
     setBusy(false);
     $("modelsDlg").showModal();
     return;
@@ -572,6 +619,14 @@ $("btnChoose").onclick = async () => {
   }
 };
 $("btnLoad").onclick = () => loadProject($("projPath").value);
+$("btnChooseXml").onclick = async () => {
+  try {
+    const p = await choose("xml", L("اختر ملف XML للتسلسل المتزامن", "Choose the synced sequence XML"));
+    if (p) loadProject(p);
+  } catch (e) {
+    showScanError(e.message);
+  }
+};
 
 function closeProject() {
   S.project = null;
@@ -612,6 +667,7 @@ $("btnAudio").onclick = async () => {
 };
 $("btnSaveSpk").onclick = () => saveSpeakers().catch((e) => flash($("spkSaved"), L("خطأ: ", "Error: ") + e.message));
 $("btnAnalyze").onclick = () => runStage("diarize", { diarize_full: true });
+$("btnSyncOnly").onclick = () => runStage("sync", {});
 $("btnTest").onclick = () => runStage("run", {
   start: $("testStart").value.trim(), duration: $("testDur").value.trim(), allow_low: $("allowLow").checked }, saveSpeakers);
 $("btnFull").onclick = () => runStage("run", { allow_low: $("allowLow").checked }, saveSpeakers);

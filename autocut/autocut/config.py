@@ -77,7 +77,7 @@ def _merge(base: dict, override: dict, where: str = "") -> dict:
     return out
 
 
-def load(path: Path) -> dict:
+def load(path: Path, require_long: bool = True) -> dict:
     path = Path(path)
     if not path.exists():
         raise ConfigError(
@@ -92,7 +92,7 @@ def load(path: Path) -> dict:
                        for k, v in (cfg["speakers"] or {}).items()}
     cfg["sync"]["overrides"] = {
         str(k).replace("\\", "/"): float(v) for k, v in (cfg["sync"]["overrides"] or {}).items()}
-    if not cfg["long_camera"]:
+    if require_long and not cfg["long_camera"]:
         raise ConfigError("config: 'long_camera' is required (folder name of the wide shot)")
     c = cfg["cut"]
     for key in ("min_segment", "overlap_min", "min_shot", "cut_lead", "rotate_min_shot",

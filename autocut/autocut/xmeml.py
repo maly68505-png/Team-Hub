@@ -4,6 +4,9 @@
   V2..Vn    each camera, fully synced, one track per camera (locked, disabled)
   A1..An    the clean audio, one track per channel of each file
 
+Synced only (no shots): V1..Vn the cameras, all enabled, nothing cut; A1..An the
+clean audio, then one muted track per camera with its own audio (to check sync).
+
 Layered (output.layered): no V1. V1..Vn are the cameras, each fully synced and
 split wherever that camera goes on or off the cut: its shots enabled, the rest
 disabled — one camera shows at a time. A cut moves with a rolling edit on the
@@ -136,25 +139,27 @@ class Writer:
         labels = _sub(ci, "labels")
         _sub(labels, "label2", LOW_LABEL if piece.low else label)
 
-    def _audio_item(self, track, info: MediaInfo, channel: int, start: int, end: int, src_in: int):
+    def _audio_item(self, track, info: MediaInfo, channel: int, start: int, end: int, src_in: int,
+                    enabled: bool = True, total: int | None = None):
         self.clip_n += 1
         ci = _sub(track, "clipitem", id=f"clipitem-{self.clip_n}")
         _sub(ci, "name", info.path.name if info.audio_channels == 1 else f"{info.path.name} ch{channel}")
-        _sub(ci, "enabled", "TRUE")
-        total = int(info.duration * self.rate.float)
+        _sub(ci, "enabled", "TRUE" if enabled else "FALSE")
+        if total is None:
+            total = int(info.duration * self.rate.float)
         _sub(ci, "duration", total)
         _rate(ci, self.rate)
         _sub(ci, "start", start)
         _sub(ci, "end", end)
         _sub(ci, "in", src_in)
         _sub(ci, "out", src_in + end - start)
-        self._file(ci, info, total, audio_only=True)
+        self._file(ci, info, total, audio_only=not info.has_video)
         st = _sub(ci, "sourcetrack")
         _sub(st, "mediatype", "audio")
         _sub(st, "trackindex", channel)
 
     # --- document --------------------------------------------------------
-    def build(self, shots: list[Shot], name: str) -> ET.Element:
+    def build(self, shots: list[Shot] | None, name: str) -> ET.Element:
         tl, rate = self.tl, self.rate
         ocfg = self.cfg["output"]
         root = ET.Element("xmeml", version="4")
@@ -178,12 +183,43 @@ class Writer:
         _sub(sc, "pixelaspectratio", "square")
         _sub(sc, "fielddominance", "none")
 
-        if ocfg.get("layered"):
+        if shots is None:
+            self._cameras_only(video)
+        elif ocfg.get("layered"):
             self._layers(video, shots)
         else:
             self._v1_and_cameras(video, shots)
-        self._audio(media)
+        audio = self._audio(media)
+        if shots is None:
+            self._camera_audio(audio)
         return root
+
+    def _cameras_only(self, video):
+        tl = self.tl
+        for cam in self.p.cameras:
+            tr = _sub(video, "track")
+            for piece in tl.pieces(cam, 0, tl.n):
+                label = f"{'LOW-SYNC ' if piece.low else ''}{cam} | {piece.clip.path.name}"
+                self._video(tr, piece, label, self.cam_label[cam], True)
+            _sub(tr, "enabled", "TRUE")
+            _sub(tr, "locked", "FALSE")
+        log.info("XML (synced, no cut): V1..V%d cameras", len(self.p.cameras))
+
+    def _camera_audio(self, audio):
+        """One track per camera with its first audio channel, clips disabled:
+        switch one on in Premiere to hear the camera mic against the clean audio."""
+        tl = self.tl
+        for cam in self.p.cameras:
+            tr = _sub(audio, "track")
+            for piece in tl.pieces(cam, 0, tl.n):
+                info = piece.clip.info
+                if not info.has_audio:
+                    continue
+                for s, e, skip in self.tm.split(piece.start, piece.end):
+                    self._audio_item(tr, info, 1, s, e, piece.src_in + skip, enabled=False,
+                                     total=tl.total_src_frames(piece.clip))
+            _sub(tr, "enabled", "TRUE")
+            _sub(tr, "locked", "FALSE")
 
     def _layers(self, video, shots: list[Shot]):
         tl = self.tl
@@ -272,6 +308,7 @@ class Writer:
         if not n_audio:
             log.error("NO clean audio could be placed on the audio tracks — check the audio files")
         log.info("XML: A1..A%d clean audio", len(audio.findall("track")))
+        return audio
 
 
 class _OneTake:
@@ -281,7 +318,7 @@ class _OneTake:
         self.files, self.position = list(files), 0.0
 
 
-def write(path: Path, project: Project, tl: Timeline, shots: list[Shot], cfg: dict, name: str,
+def write(path: Path, project: Project, tl: Timeline, shots: list[Shot] | None, cfg: dict, name: str,
           tm: TimeMap | None = None) -> None:
     root = Writer(project, tl, cfg, tm).build(shots, name)
     ET.indent(root, space="  ")

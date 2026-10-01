@@ -69,6 +69,17 @@ Offline Mac (Apple Silicon) tool that makes a multicam rough cut for Premiere Pr
 - Each new Mac needs the model once: export `autocut-models.zip` on a Mac that has it, import
   on the new one (or put it on the shared drive next to the installer).
 
+### Sync only / cut from a synced XML (v0.4.0)
+- `autocut sync PROJECT` (UI step 3 "مزامنة فقط") now also writes `output/synced.xml`: cameras on
+  V1..Vn all enabled, clean audio, then one disabled camera-audio track per camera. No model needed.
+- `autocut run|diarize SEQ.xml` (UI step 1 "افتح ملف XML متزامن…"): `xmlcut.py` reads a Premiere FCP7
+  export; video track = camera (named by the clips' folder); audio-only clips (else all audio) mixed
+  for diarization. Output = a copy of the sequence: layered → camera tracks split/enabled in place;
+  else a new TOP track with the cut, camera tracks disabled. Window + silence removal re-time every
+  track; pproTicksIn/Out updated; transitions dropped; dangling links removed; each <file> defined
+  once. Work folder `<xml dir>/_autocut/xml-<stem>/` (config.yaml, speakers, output).
+- Not tested yet on a real Premiere export (only on synthetic XML that mimics one).
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.
