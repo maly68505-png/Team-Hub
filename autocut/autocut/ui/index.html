@@ -56,6 +56,27 @@
       <small id="audioInfo" class="muted"></small>
     </div>
     <div class="grid">
+      <label id="channelBox">قناة الصوت النظيف المستخدمة
+        <select id="cfgChannel"></select>
+        <small class="muted">لجهاز تسجيل متعدد القنوات: اختر قناة الميكس — هي التي توضع في بريمير وتُستخدم للمزامنة</small>
+      </label>
+      <label id="syncMethodBox">طريقة المزامنة
+        <select id="cfgSyncMethod">
+          <option value="audio">بالصوت</option>
+          <option value="timecode">بالتايم كود فقط (الأسرع)</option>
+          <option value="timecode+audio">تايم كود + تأكيد بالصوت</option>
+        </select>
+        <small id="tcInfo" class="muted"></small>
+      </label>
+      <label>تمييز المتحدثين
+        <select id="cfgSpkMethod">
+          <option value="ai">بالذكاء الاصطناعي (من الصوت)</option>
+          <option value="mics">من المايكات (كل قناة = شخص)</option>
+        </select>
+        <small id="spkMethodInfo" class="muted"></small>
+      </label>
+    </div>
+    <div class="grid">
       <label>الكاميرا الواسعة
         <select id="cfgLong"></select>
         <small id="longHint" class="warn-text"></small>

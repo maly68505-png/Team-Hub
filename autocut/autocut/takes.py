@@ -33,7 +33,7 @@ from scipy.signal import fftconvolve, resample_poly
 from .audio import DIARIZE_RATE, Reference, decode_mono, decode_windows, fingerprint
 from .log import log
 from .probe import MediaInfo
-from .scan import Project
+from .scan import Project, ScanError
 from .sync import SyncResult, Measurement, _parabolic, bandpass, ncc
 from .timecode import fmt_seconds
 
@@ -108,10 +108,10 @@ def group_takes(audio: list[MediaInfo], mode: str = "auto", similar=None) -> lis
     return takes
 
 
-def _mix(take: Take, rate: int) -> np.ndarray:
+def _mix(take: Take, rate: int, channel: int | None = None) -> np.ndarray:
     x = np.zeros(0, np.float32)
     for f in take.files:
-        y = decode_mono(f, rate)
+        y = decode_mono(f, rate, channel)
         if len(y) > len(x):
             x = np.concatenate([x, np.zeros(len(y) - len(x), np.float32)])
         x[:len(y)] += y
@@ -349,7 +349,8 @@ def place_takes(project: Project, takes: list[Take], cfg: dict) -> dict[str, Syn
     key = hashlib.sha1(json.dumps({
         "v": TAKES_VERSION, "audio": fingerprint([f.path for t in takes for f in t.files]),
         "clips": fingerprint([c.path for c in clips]), "groups": [[f.path.name for f in t.files] for t in takes],
-        "cfg": {k: v for k, v in scfg.items() if k != "overrides"}}, sort_keys=True).encode()).hexdigest()[:16]
+        "cfg": {k: v for k, v in scfg.items() if k not in ("overrides", "method")},
+        "channel": cfg.get("audio_channel")}, sort_keys=True).encode()).hexdigest()[:16]
     cache_p = project.workdir / "takes.json"
     frame_s = 1.0 / project.rate.float
     if cache_p.exists():
@@ -365,7 +366,7 @@ def place_takes(project: Project, takes: list[Take], cfg: dict) -> dict[str, Syn
     prep_t = []
     for t in takes:
         log.info("  take %-28s %s", t.name, fmt_seconds(t.duration))
-        prep_t.append(_Prepared(_mix(t, rate), rate, crate))
+        prep_t.append(_Prepared(_mix(t, rate, cfg.get("audio_channel")), rate, crate))
     bank = _Bank(prep_t, crate)
     win = float(scfg["window_seconds"])
     every = float(scfg["sample_every"])
@@ -472,6 +473,114 @@ def place_takes(project: Project, takes: list[Take], cfg: dict) -> dict[str, Syn
     return _apply_overrides(results, clips, scfg)
 
 
+def place(project: Project, takes: list[Take], cfg: dict) -> dict[str, SyncResult]:
+    """sync.method: audio (camera samples against the clean audio), timecode
+    (embedded timecode only: nothing is read), or timecode+audio (audio
+    placement, checked against timecode; timecode fills in where audio is weak)."""
+    method = cfg["sync"]["method"]
+    if method == "timecode":
+        return place_by_timecode(project, takes, cfg)
+    results = place_takes(project, takes, cfg)
+    if method == "timecode+audio":
+        check_timecode(project, takes, results, cfg)
+    return results
+
+
+def _tc_values(project: Project, takes: list[Take]):
+    """Timecodes in seconds; a shoot over midnight is unwrapped."""
+    tt = [t.files[0].tc_seconds for t in takes]
+    ct = {c.rel: c.info.tc_seconds for c in project.all_clips()}
+    vals = [v for v in tt + list(ct.values()) if v is not None]
+    if vals and max(vals) - min(vals) > 12 * 3600:
+        def un(v):
+            return None if v is None else (v + 86400 if v < 12 * 3600 else v)
+        tt = [un(v) for v in tt]
+        ct = {k: un(v) for k, v in ct.items()}
+    return tt, ct
+
+
+def _tc_take(takes: list[Take], tt: list, start: float, dur: float) -> int | None:
+    """The take whose timecode range overlaps [start, start+dur) most."""
+    best, k = 0.0, None
+    for i, (t, t0) in enumerate(zip(takes, tt)):
+        if t0 is None:
+            continue
+        ov = min(start + dur, t0 + t.duration) - max(start, t0)
+        if ov > best:
+            best, k = ov, i
+    return k
+
+
+def place_by_timecode(project: Project, takes: list[Take], cfg: dict) -> dict[str, SyncResult]:
+    tt, ct = _tc_values(project, takes)
+    missing = [t.name for t, v in zip(takes, tt) if v is None]
+    if missing:
+        raise ScanError(f"the clean audio has no timecode ({', '.join(missing)}) — "
+                        f"sync by audio instead (sync.method: audio)",
+                        "الصوت النظيف لا يحتوي على تايم كود (" + "، ".join(missing)
+                        + ") — اختر المزامنة «بالصوت» في الإعدادات")
+    t0 = min(tt)
+    for t, v in zip(takes, tt):
+        t.position, t.linked = v - t0, True
+    results: dict[str, SyncResult] = {}
+    outside = 0
+    for clip in project.all_clips():
+        r = SyncResult(clip.rel, clip.info.duration, method="timecode")
+        v = ct[clip.rel]
+        if v is None:
+            r.method = "failed"
+            r.notes.append("no timecode in this file")
+        else:
+            r.offset = v - t0
+            k = _tc_take(takes, tt, v, clip.info.duration)
+            if k is None:
+                outside += 1
+                r.notes.append("its timecode is outside every take of the clean audio — "
+                               "cameras and recorder not on the same timecode?")
+            else:
+                r.confidence, r.low = 1.0, False
+                r.notes.append(f"placed by timecode ({clip.info.start_tc}) in {takes[k].name}")
+        results[clip.rel] = r
+    log.info("Sync by timecode: %d clip(s), clean audio %s", len(results),
+             ", ".join(f"{t.name} @ {fmt_seconds(v)}" for t, v in zip(takes, tt)))
+    if outside:
+        log.warning("%d clip(s) have timecode outside the clean audio — if the cameras and the "
+                    "recorder were not jammed, sync by audio instead", outside)
+    return _apply_overrides(results, project.all_clips(), cfg["sync"])
+
+
+def check_timecode(project: Project, takes: list[Take], results: dict[str, SyncResult], cfg: dict) -> None:
+    """Audio placement checked against timecode: agreeing clips are noted, weak
+    or unmatched ones are placed by timecode relative to a take audio placed."""
+    tt, ct = _tc_values(project, takes)
+    if all(v is None for v in tt):
+        log.warning("timecode check: the clean audio has no timecode — audio sync only")
+        return
+    agree = differ = filled = 0
+    for clip in project.all_clips():
+        r, v = results[clip.rel], ct[clip.rel]
+        if v is None or r.method == "override":
+            continue
+        k = _tc_take(takes, tt, v, clip.info.duration)
+        if k is None:
+            continue
+        predicted = takes[k].position + (v - tt[k])
+        if r.method == "audio" and not r.low:
+            d = r.offset - predicted
+            if abs(d) <= 1.0:
+                agree += 1
+                r.notes.append(f"timecode agrees ({d * 1000:+.0f} ms)")
+            else:
+                differ += 1
+                r.notes.append(f"timecode differs by {d:+.2f}s — audio placement kept")
+        elif takes[k].linked:
+            r.offset, r.drift, r.method = predicted, 0.0, "timecode"
+            r.confidence, r.low = 0.9, False
+            r.notes.append(f"weak audio match — placed by timecode ({clip.info.start_tc})")
+            filled += 1
+    log.info("Timecode check: %d agree, %d differ (audio kept), %d placed by timecode", agree, differ, filled)
+
+
 def _apply_overrides(results: dict[str, SyncResult], clips: list, scfg: dict) -> dict[str, SyncResult]:
     """Manual offsets from config.yaml win over the analysis (cached or not)."""
     for clip in clips:
@@ -482,10 +591,12 @@ def _apply_overrides(results: dict[str, SyncResult], clips: list, scfg: dict) ->
     return results
 
 
-def build_reference_takes(takes: list[Take], workdir: Path, rate: int) -> Reference:
+def build_reference_takes(takes: list[Take], workdir: Path, rate: int,
+                          channel: int | None = None) -> Reference:
     """The takes placed at their positions (silence between) as one reference."""
     workdir.mkdir(parents=True, exist_ok=True)
-    fp = hashlib.sha1((fingerprint([f.path for t in takes for f in t.files], f"takes-v{TAKES_VERSION}-{rate}")
+    fp = hashlib.sha1((fingerprint([f.path for t in takes for f in t.files],
+                                   f"takes-v{TAKES_VERSION}-{rate}-ch{channel or 'all'}")
                        + json.dumps([round(t.position, 4) for t in takes])).encode()).hexdigest()[:16]
     meta_p, wav16, npy = workdir / "reference.json", workdir / "reference_16k.wav", workdir / f"reference_{rate}.npy"
     if meta_p.exists() and wav16.exists() and npy.exists() and json.loads(meta_p.read_text()).get("fp") == fp:
@@ -495,7 +606,7 @@ def build_reference_takes(takes: list[Take], workdir: Path, rate: int) -> Refere
     total = max(t.position + t.duration for t in takes)
     x = np.zeros(int(np.ceil(total * DIARIZE_RATE)), np.float32)
     for t in takes:
-        y = _mix(t, DIARIZE_RATE)
+        y = _mix(t, DIARIZE_RATE, channel)
         a = int(round(t.position * DIARIZE_RATE))
         x[a:a + len(y)] += y[:max(0, len(x) - a)]
     peak = float(np.max(np.abs(x))) or 1.0

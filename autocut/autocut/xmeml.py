@@ -287,9 +287,10 @@ class Writer:
         takes = self.p.takes or [_OneTake(self.p.audio)]
         slots = max(len(t.files) for t in takes)
         n_audio = 0
+        only = self.cfg.get("audio_channel")  # e.g. the recorder's mix: one track, not one per channel
         for j in range(slots):
             chans = max(t.files[j].audio_channels for t in takes if j < len(t.files))
-            for ch in range(1, max(1, chans) + 1):
+            for ch in ([only] if only and chans >= only else range(1, max(1, chans) + 1)):
                 tr = _sub(audio, "track")
                 for t in takes:
                     if j >= len(t.files) or ch > max(1, t.files[j].audio_channels):

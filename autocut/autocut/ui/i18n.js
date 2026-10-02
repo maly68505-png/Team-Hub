@@ -11,6 +11,16 @@ const STATIC = {
   "قطع مبدئي تلقائي متعدد الكاميرات لبريمير": "Automatic multicam rough cut for Premiere",
   "١": "1", "٢": "2", "٣": "3", "٤": "4", "٥": "5",
   "مجلد التصوير": "Shoot folder",
+  "قناة الصوت النظيف المستخدمة": "Clean audio channel to use",
+  "لجهاز تسجيل متعدد القنوات: اختر قناة الميكس — هي التي توضع في بريمير وتُستخدم للمزامنة":
+    "For a multitrack recorder: pick the mix channel — it goes into Premiere and is used for sync",
+  "طريقة المزامنة": "Sync method",
+  "بالصوت": "By audio",
+  "بالتايم كود فقط (الأسرع)": "Timecode only (fastest)",
+  "تايم كود + تأكيد بالصوت": "Timecode + audio check",
+  "تمييز المتحدثين": "Speaker detection",
+  "بالذكاء الاصطناعي (من الصوت)": "AI (from the audio)",
+  "من المايكات (كل قناة = شخص)": "From the mics (one channel = one person)",
   "أو عندك تسلسل متزامن جاهز من بريمير؟": "Or do you have a sequence already synced in Premiere?",
   "افتح ملف XML متزامن…": "Open a synced XML…",
   "في بريمير: اختر التسلسل ثم File ← Export ← Final Cut Pro XML. كل مسار فيديو = كاميرا.":

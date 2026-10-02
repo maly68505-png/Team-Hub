@@ -143,6 +143,7 @@ def xml_state(path: Path) -> dict:
     try:
         sq = xmlcut.SyncedSequence(path)
         d = sq.describe()
+        d["channels"] = sq.speech_channels()
         out["xml"] = d
         cams = [c["name"] for c in d["cameras"]]
         out["cameras"] = cams
@@ -217,10 +218,12 @@ def project_state(path: Path) -> dict:
                 "cameras": [{"name": c.name, "clips": [
                     {"name": k.path.name, "duration": round(k.info.duration, 2),
                      "fps": float(k.info.fps) if k.info.fps else None, "tc": k.info.start_tc,
+                     "has_tc": k.info.tc_seconds is not None,
                      "audio": k.info.has_audio, "width": k.info.width, "height": k.info.height}
                     for k in c.clips]} for c in p.cameras.values()],
                 "audio": [{"name": a.path.name, "duration": round(a.duration, 2),
-                           "channels": a.audio_channels} for a in p.audio],
+                           "channels": a.audio_channels, "has_tc": a.tc_seconds is not None}
+                          for a in p.audio],
                 # display only: no audio decoding here (same-length files count as tracks)
                 "takes": len(group_takes(p.audio, str(cfg.get("audio_mode") or "auto"),
                                          similar=lambda a, b: True)),

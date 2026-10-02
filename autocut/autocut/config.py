@@ -11,9 +11,11 @@ DEFAULTS = {
     "long_camera": None,
     "audio_folder": "audio",
     "audio_mode": "auto",  # auto | tracks (simultaneous, mixed) | takes (one after another)
+    "audio_channel": None,  # clean audio: use only this channel (1-based, e.g. the recorder's mix); None = all
     "cameras": None,
     "speakers": {},
     "sync": {
+        "method": "audio",        # audio | timecode | timecode+audio (timecode placement checked by audio)
         "analysis_rate": 8000,
         "window_seconds": 8,      # camera audio read in windows of this length ...
         "sample_every": 90,       # ... one every this many seconds (seeking: no full-file reads)
@@ -28,6 +30,9 @@ DEFAULTS = {
         "overrides": {},
     },
     "diarization": {
+        "method": "ai",           # ai (pyannote) | mics (each recorder channel is one person's mic)
+        "mic_channels": None,     # mics: only these channels (default: all but audio_channel)
+        "mic_margin_db": 10,      # mics: a mic counts as talking within this many dB of the loudest
         "model": "community-1",
         "hf_token_env": "HF_TOKEN",
         "num_speakers": None,
@@ -94,6 +99,23 @@ def load(path: Path, require_long: bool = True) -> dict:
         str(k).replace("\\", "/"): float(v) for k, v in (cfg["sync"]["overrides"] or {}).items()}
     if require_long and not cfg["long_camera"]:
         raise ConfigError("config: 'long_camera' is required (folder name of the wide shot)")
+    if cfg["sync"]["method"] not in ("audio", "timecode", "timecode+audio"):
+        raise ConfigError("config: sync.method must be audio, timecode or timecode+audio")
+    if cfg["diarization"]["method"] not in ("ai", "mics"):
+        raise ConfigError("config: diarization.method must be ai or mics")
+    ch = cfg["audio_channel"]
+    if ch in ("", 0):
+        cfg["audio_channel"] = None
+    elif ch is not None:
+        try:
+            cfg["audio_channel"] = int(ch)
+        except (TypeError, ValueError):
+            raise ConfigError("config: audio_channel must be a channel number (1, 2, ...)") from None
+        if cfg["audio_channel"] < 1:
+            raise ConfigError("config: audio_channel must be 1 or more")
+    mc = cfg["diarization"]["mic_channels"]
+    if mc is not None:
+        cfg["diarization"]["mic_channels"] = [int(x) for x in (mc if isinstance(mc, list) else [mc])]
     c = cfg["cut"]
     for key in ("min_segment", "overlap_min", "min_shot", "cut_lead", "rotate_min_shot",
                 "rotate_max_shot", "pause_min", "silence_max", "silence_pad"):

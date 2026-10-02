@@ -141,3 +141,52 @@ def make_project(root: Path, extra_noise_camera: bool = False) -> Path:
         "output:\n"
         "  layered: false\n")
     return root
+
+
+REC_TC = 36005.0  # recorder timecode 10:00:05:00 — consistent with the camera timecodes above
+
+
+def write_multichannel_wav(path: Path, channels: list[np.ndarray], tc_seconds: float | None = None) -> None:
+    """A recorder file: several channels, optionally a BWF timecode (time_reference)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = []
+    for i, ch in enumerate(channels):
+        p = path.with_name(f".{path.stem}.ch{i}.wav")
+        write_wav(p, ch)
+        tmp.append(p)
+    cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y"]
+    for p in tmp:
+        cmd += ["-i", str(p)]
+    cmd += ["-filter_complex", f"amerge=inputs={len(tmp)}", "-c:a", "pcm_s16le"]
+    if tc_seconds is not None:
+        cmd += ["-write_bext", "1", "-metadata", f"time_reference={int(round(tc_seconds * SR))}"]
+    cmd.append(str(path))
+    subprocess.run(cmd, check=True)
+    for p in tmp:
+        p.unlink()
+
+
+def make_multitrack_project(root: Path) -> Path:
+    """Like make_project, but the clean audio is ONE 4-channel recorder file:
+    ch1 the mix, ch2..4 the lavs of A, B, C (each hears the others ~22 dB down),
+    with timecode matching the cameras'."""
+    root = Path(root)
+    spk = speech(REF_SECONDS, SCRIPT)
+    rng = np.random.default_rng(5)
+    lav = {k: spk[k] + sum(0.08 * spk[o] for o in spk if o != k)
+           + rng.normal(0, 0.003, len(spk[k])).astype(np.float32) for k in spk}
+    mix = 0.5 * (spk["A"] + spk["B"] + spk["C"])
+    write_multichannel_wav(root / "audio" / "REC_001.WAV",
+                           [mix * 0.8, lav["A"] * 0.8, lav["B"] * 0.8, lav["C"] * 0.8], REC_TC)
+    room = spk["A"] + spk["B"] + spk["C"]
+    for i, (cam, clips) in enumerate(CAMERAS.items()):
+        for j, (name, off, drift, length, tc) in enumerate(clips):
+            a = scratch(timewarp(room, off, drift, length), seed=10 * i + j)
+            write_video(root / cam / name, a, tc=tc)
+    with open(root / "truth.rttm", "w") as fh:
+        for s, e, who in SCRIPT:
+            fh.write(f"SPEAKER ref 1 {s:.3f} {e - s:.3f} <NA> <NA> SPEAKER_{who} <NA> <NA>\n")
+    (root / "config.yaml").write_text(
+        "fps: 25\nlong_camera: CAM_WIDE\naudio_channel: 1\nspeakers:\n"
+        "diarization:\n  min_speaker_seconds: 5\noutput:\n  layered: false\n")
+    return root

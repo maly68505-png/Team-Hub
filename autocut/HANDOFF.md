@@ -80,6 +80,18 @@ Offline Mac (Apple Silicon) tool that makes a multicam rough cut for Premiere Pr
   once. Work folder `<xml dir>/_autocut/xml-<stem>/` (config.yaml, speakers, output).
 - Not tested yet on a real Premiere export (only on synthetic XML that mimics one).
 
+### Multitrack recorder, timecode sync, speakers from mics (v0.5.0)
+- User's recorder files are 4-channel: ch1 = mix, ch2..4 = lavs. `audio_channel: 1` → reference,
+  sync and the XML use ch1 only (one A track, sourcetrack trackindex 1). They heard "one channel only"
+  before (we wrote one track per channel).
+- `sync.method`: audio | timecode (no camera audio read; BWF `time_reference` / camera TC via
+  `MediaInfo.tc_seconds`) | timecode+audio (audio placement, checked/filled by TC: `takes.check_timecode`).
+  User's shoots are "not always" jammed → default stays audio.
+- `diarization.method: mics` (`mics.py`): per-channel 20 ms levels (cached in `_autocut/mics/`), a mic
+  talks when above its floor and within `mic_margin_db` (10) of the loudest, levels relative to each
+  mic's speech level. Labels "MIC 2".. mapped in step 4. Also in XML mode. No model needed.
+- The user asked to be consulted BEFORE changes are made — ask first, then build.
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.

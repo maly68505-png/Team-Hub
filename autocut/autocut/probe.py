@@ -8,6 +8,8 @@ from pathlib import Path
 
 import av
 
+from .timecode import tc_seconds
+
 
 class ToolError(Exception):
     pass
@@ -35,6 +37,7 @@ class MediaInfo:
     sample_rate: int = 0
     av_offset: float = 0.0  # audio stream start - video stream start (s)
     nb_frames: int | None = None
+    tc_seconds: float | None = None  # timecode of the first frame / sample, seconds since midnight
 
 
 def _seconds(value, time_base) -> float | None:
@@ -81,6 +84,14 @@ def probe(path: Path) -> MediaInfo:
                 a0 = _seconds(audio.start_time, audio.time_base) or 0.0
                 v0 = _seconds(video.start_time, video.time_base) or 0.0
                 info.av_offset = a0 - v0
+        tr = c.metadata.get("time_reference")  # BWF: samples since midnight
+        if tr and info.sample_rate and not info.has_video:
+            try:
+                info.tc_seconds = int(tr) / info.sample_rate
+            except ValueError:
+                pass
+        if info.tc_seconds is None and info.start_tc and info.fps:
+            info.tc_seconds = tc_seconds(info.start_tc, info.fps)
         if info.duration <= 0:
             # some recorder WAVs (long BWF / RF64) carry no duration in the header:
             # measure it from the packets instead of treating the file as empty

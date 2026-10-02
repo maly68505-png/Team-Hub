@@ -233,6 +233,41 @@ function renderSettings() {
   $("cfgSilenceMax").value = cfg.cut.silence_max;
   show($("silenceOpts"), !!cfg.cut.remove_silence);
   $("cfgRotMax").value = cfg.cut.rotate_max_shot;
+  renderAudioChoices();
+}
+
+function renderAudioChoices() {
+  const st = S.project, cfg = st.config;
+  const nch = isXml() ? (st.xml && st.xml.channels) || 0
+    : Math.max(0, ...((st.scan && st.scan.audio) || []).map((a) => a.channels || 0));
+  const chan = $("cfgChannel");
+  const opts = [h("option", { value: "", selected: !cfg.audio_channel }, L("كل القنوات (دمج)", "All channels (mixed)"))];
+  for (let c = 1; c <= Math.max(nch, cfg.audio_channel || 0); c++)
+    opts.push(h("option", { value: String(c), selected: cfg.audio_channel === c }, L(`القناة ${c} فقط`, `Channel ${c} only`)));
+  chan.replaceChildren(...opts);
+  show($("channelBox"), nch > 1 || !!cfg.audio_channel);
+  show($("syncMethodBox"), !isXml());
+  $("cfgSyncMethod").value = cfg.sync.method || "audio";
+  $("cfgSpkMethod").value = cfg.diarization.method || "ai";
+  if (st.scan && !isXml()) {
+    const clips = st.scan.cameras.flatMap((c) => c.clips);
+    const ctc = clips.filter((c) => c.has_tc).length, atc = st.scan.audio.filter((a) => a.has_tc).length;
+    $("tcInfo").textContent = L(`تايم كود: الكاميرات ${ctc}/${clips.length} · الصوت ${atc}/${st.scan.audio.length}`,
+      `Timecode: cameras ${ctc}/${clips.length} · audio ${atc}/${st.scan.audio.length}`);
+  } else $("tcInfo").textContent = "";
+  audioInfo();
+}
+
+function audioInfo() {
+  const st = S.project;
+  const nch = isXml() ? (st.xml && st.xml.channels) || 0
+    : Math.max(0, ...((st.scan && st.scan.audio) || []).map((a) => a.channels || 0));
+  const ch = parseInt($("cfgChannel").value, 10);
+  $("spkMethodInfo").textContent = $("cfgSpkMethod").value === "mics"
+    ? (nch > 1 ? L(`المايكات: القنوات ${[...Array(nch).keys()].map((i) => i + 1).filter((c) => c !== ch).join("، ")} — بلا نموذج وأسرع`,
+        `Mics: channels ${[...Array(nch).keys()].map((i) => i + 1).filter((c) => c !== ch).join(", ")} — no model, faster`)
+      : L("⚠ الصوت النظيف قناة واحدة — هذا الخيار يحتاج قناة لكل مايك", "⚠ the clean audio has one channel — this needs one channel per mic"))
+    : "";
 }
 
 function readSettings(cfg) {
@@ -249,6 +284,10 @@ function readSettings(cfg) {
   cfg.output.layered = $("cfgLayered").checked;
   cfg.cut.silence_max = Math.max(0.2, num("cfgSilenceMax", cfg.cut.silence_max));
   cfg.cut.rotate_max_shot = Math.max(num("cfgRotMax", cfg.cut.rotate_max_shot), cfg.cut.rotate_min_shot + 1);
+  const ch = parseInt($("cfgChannel").value, 10);
+  cfg.audio_channel = Number.isFinite(ch) && ch > 0 ? ch : null;
+  if (!isXml()) cfg.sync.method = $("cfgSyncMethod").value || "audio";
+  cfg.diarization.method = $("cfgSpkMethod").value || "ai";
   return cfg;
 }
 
@@ -284,6 +323,7 @@ function renderSync() {
       h("td", { class: "num-cell" }, drift),
       h("td", {}, h("span", { class: "conf" }, h("i", { style: `width:${Math.round(conf * 100)}%;background:${color}` }))),
       h("td", {}, r.method === "override" ? h("span", { class: "pill ok" }, L("يدوي", "manual"))
+        : r.method === "timecode" && !low ? h("span", { class: "pill ok" }, L("تايم كود", "timecode"))
         : low ? h("span", { class: "pill bad" }, L("ضعيفة", "weak")) : h("span", { class: "pill ok" }, L("ممتازة", "good"))),
       h("td", {}, ov)));
   }
@@ -630,7 +670,8 @@ async function runStage(kind, extra, before) {
     return jobMessage("error", L("الإعدادات: ", "Settings: ") + e.message);
   }
   // diarization needs the model unless this project was already analysed
-  if (kind !== "sync" && !(await refreshModels()) && !S.project.speakers) {
+  const needsModel = kind !== "sync" && S.project.config.diarization.method !== "mics";
+  if (needsModel && !(await refreshModels()) && !S.project.speakers) {
     setBusy(false);
     $("modelsDlg").showModal();
     return;
@@ -689,6 +730,8 @@ $("btnSaveCfg").onclick = async () => {
   catch (e) { flash($("cfgSaved"), L("خطأ: ", "Error: ") + e.message); }
 };
 $("cfgNoSilence").onchange = () => show($("silenceOpts"), $("cfgNoSilence").checked);
+$("cfgSpkMethod").onchange = audioInfo;
+$("cfgChannel").onchange = audioInfo;
 $("btnAudio").onclick = async () => {
   const p = await choose("folder", L("اختر مجلد الصوت النظيف", "Choose the clean audio folder"));
   if (!p) return;

@@ -74,6 +74,28 @@ def tc_to_frames(tc: str, rate: Rate) -> int:
     return ((hh * 60 + mm) * 60 + ss) * rate.timebase + ff
 
 
+def tc_seconds(tc: str, fps) -> float | None:
+    """Timecode label -> seconds since midnight (None if unreadable).
+    Drop-frame (';' at 29.97/59.94) counts real time; non-drop counts labels."""
+    try:
+        drop = ";" in tc
+        parts = [int(p) for p in tc.replace(";", ":").replace(".", ":").split(":")]
+        if len(parts) != 4:
+            return None
+        hh, mm, ss, ff = parts
+        nominal = int(round(float(fps)))
+        if nominal <= 0:
+            return None
+        if drop and nominal in (30, 60):
+            d = 2 * nominal // 30
+            total_min = hh * 60 + mm
+            frames = ((hh * 3600 + mm * 60 + ss) * nominal + ff) - d * (total_min - total_min // 10)
+            return frames / float(fps)
+        return (hh * 3600 + mm * 60 + ss) + ff / nominal
+    except (ValueError, TypeError, ZeroDivisionError):
+        return None
+
+
 def parse_time(value, rate: Rate | None = None) -> float:
     """'01:02:03', '02:03', '123.5', 'HH:MM:SS:FF' (needs rate) -> seconds."""
     if value is None:

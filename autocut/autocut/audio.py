@@ -13,8 +13,16 @@ from .probe import MediaInfo, ToolError
 DIARIZE_RATE = 16000
 
 
-def decode_mono(info: MediaInfo, rate: int) -> np.ndarray:
-    """First audio stream, all channels summed to mono, float32 at `rate` Hz."""
+def _pick(a: np.ndarray, channel: int | None) -> np.ndarray:
+    """(channels, n) -> mono: one channel (1-based) or all of them summed."""
+    if channel and 1 <= channel <= a.shape[0]:
+        return a[channel - 1]
+    return a.sum(axis=0)
+
+
+def decode_mono(info: MediaInfo, rate: int, channel: int | None = None) -> np.ndarray:
+    """First audio stream to mono float32 at `rate` Hz: all channels summed, or
+    only `channel` (1-based; e.g. the mix channel of a multitrack recorder)."""
     chunks = []
     try:
         with av.open(str(info.path)) as c:
@@ -22,9 +30,9 @@ def decode_mono(info: MediaInfo, rate: int) -> np.ndarray:
             resampler = av.AudioResampler(format="fltp", rate=rate)
             for frame in c.decode(stream):
                 for out in resampler.resample(frame):
-                    chunks.append(out.to_ndarray().sum(axis=0))
+                    chunks.append(_pick(out.to_ndarray(), channel))
             for out in resampler.resample(None):
-                chunks.append(out.to_ndarray().sum(axis=0))
+                chunks.append(_pick(out.to_ndarray(), channel))
     except (av.error.FFmpegError, IndexError) as e:
         raise ToolError(f"could not decode audio of {info.path}: {e}") from e
     if not chunks:
@@ -32,7 +40,8 @@ def decode_mono(info: MediaInfo, rate: int) -> np.ndarray:
     return np.concatenate(chunks).astype(np.float32)
 
 
-def decode_windows(info: MediaInfo, rate: int, starts: list[float], length: float) -> list[np.ndarray]:
+def decode_windows(info: MediaInfo, rate: int, starts: list[float], length: float,
+                   channel: int | None = None) -> list[np.ndarray]:
     """Mono float32 windows of `length` s at `rate` Hz, starting at the given
     audio times, read by SEEKING — only those parts of the file are read.
 
@@ -58,7 +67,7 @@ def decode_windows(info: MediaInfo, rate: int, starts: list[float], length: floa
                     for f in conv.resample(frame):
                         if t_first is None:
                             t_first = float(frame.pts * tb) - s0
-                        a = f.to_ndarray().sum(axis=0)
+                        a = _pick(f.to_ndarray(), channel)
                         buf.append(a)
                         have += len(a)
                     if t_first is not None and int(t_first * sr) + have >= need:

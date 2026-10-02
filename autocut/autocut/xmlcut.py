@@ -212,8 +212,53 @@ class SyncedSequence:
             "missing": sorted({str(p) for p in (self.file_path(it.file_id) for it in sp) if not p.exists()})[:10],
         }
 
-    def reference(self, workdir: Path) -> Reference:
-        """The sequence's audio mixed to mono at 16 kHz (diarization + silences)."""
+    def speech_channels(self) -> int:
+        """Most channels among the (reachable) speech files: >2 = a multitrack recorder."""
+        n = 0
+        for p in {self.file_path(it.file_id) for it in self.speech_items()}:
+            if p.exists():
+                try:
+                    n = max(n, probe(p).audio_channels)
+                except ToolError:
+                    pass
+        return n
+
+    def mic_segments(self, workdir: Path, dcfg: dict, mix_channel: int | None):
+        """diarization.method mics: each speech file's mic channels, where the clip sits."""
+        from . import mics
+        fps = self.rate.float
+        tl = mics.Timeline(self.n / fps)
+        infos: dict[Path, MediaInfo] = {}
+        levels: dict[Path, np.ndarray] = {}
+        seen = set()
+        clean = {id(it.el) for it in self.speech_items()}
+        for ti, tr in enumerate(self.audio_tracks):
+            for it in _items(tr):
+                p = self.file_path(it.file_id)
+                key = (it.file_id, it.start, it.end, it.src_in)
+                if id(it.el) not in clean or key in seen or not p or not p.exists():
+                    continue
+                seen.add(key)
+                info = infos.get(p) or infos.setdefault(p, probe(p))
+                if not info.has_audio:
+                    continue
+                chans = mics.mic_channels(info, dcfg, mix_channel)
+                if not chans:
+                    continue
+                if p not in levels:
+                    log.info("Mic levels: %s (channels %s)", p.name, ", ".join(map(str, chans)))
+                    levels[p] = mics.channel_levels(info, workdir)
+                irate = _rate_of(it.el) or self.rate
+                src = max(0.0, it.src_in / irate.float - info.av_offset)
+                for ch in chans:
+                    if ch <= levels[p].shape[0]:
+                        label = f"MIC {ch}" if info.audio_channels > 1 else f"MIC A{ti + 1}"
+                        tl.place(label, levels[p][ch - 1], it.start / fps, src, (it.end - it.start) / fps)
+        return mics._finish(tl, dcfg)
+
+    def reference(self, workdir: Path, channel: int | None = None) -> Reference:
+        """The sequence's audio mixed to mono at 16 kHz (diarization + silences);
+        `channel`: only that channel of each file (a recorder's mix)."""
         sp = self.speech_items()
         if not sp:
             raise ScanError("no audio clips on the sequence", "لا يوجد صوت على مسارات التسلسل")
@@ -232,7 +277,7 @@ class SyncedSequence:
                             "ملفات الصوت في التسلسل غير موجودة (الهارد غير موصّل؟): "
                             + "، ".join(str(p) for p in missing[:5]))
         layout = json.dumps([(str(self.file_path(it.file_id)), it.start, it.end, it.src_in) for it in todo])
-        fp = fingerprint(paths, "xml|" + layout)
+        fp = fingerprint(paths, f"xml|ch{channel or 'all'}|" + layout)
         wav = workdir / "reference_16k.wav"
         npy = workdir / f"reference_{fp}.npy"
         if npy.exists() and wav.exists():
@@ -253,7 +298,7 @@ class SyncedSequence:
             src = max(0.0, it.src_in / irate.float - info.av_offset)
             length = (it.end - it.start) / fps
             try:
-                y = decode_windows(info, sr, [src], length)[0]
+                y = decode_windows(info, sr, [src], length, channel)[0]
             except ToolError as e:
                 log.warning("skipped %s: %s", p.name, e)
                 continue
@@ -485,7 +530,7 @@ def run_xml(xml_path: Path, cfg: dict, until: str, start: str | None, duration: 
     if until in ("scan", "sync"):
         return EXIT_OK
 
-    ref = sq.reference(workdir)
+    ref = sq.reference(workdir, cfg.get("audio_channel"))
     total = sq.n / rate.float
     t0 = parse_time(start, rate) if start else 0.0
     if t0 >= total:
@@ -498,8 +543,12 @@ def run_xml(xml_path: Path, cfg: dict, until: str, start: str | None, duration: 
     log.info("Working range: %s -> %s%s", fmt_seconds(t0), fmt_seconds(t1),
              "  [TEST SEGMENT]" if is_test else "  [FULL]")
 
-    banner("2. Diarization")
-    segs = diarize(ref.wav16k, ref.fp, ref.duration, window, cfg["diarization"], workdir, rttm, diarize_full)
+    if cfg["diarization"]["method"] == "mics" and not rttm:
+        banner("2. Speakers from the recorder's mic channels")
+        segs = sq.mic_segments(workdir, cfg["diarization"], cfg.get("audio_channel"))
+    else:
+        banner("2. Diarization")
+        segs = diarize(ref.wav16k, ref.fp, ref.duration, window, cfg["diarization"], workdir, rttm, diarize_full)
     code = check_speakers(segs, cams, cfg, workdir, ref.wav16k, rate)
     if code is not None:
         return code

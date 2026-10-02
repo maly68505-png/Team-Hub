@@ -14,10 +14,10 @@ from .probe import require_tools
 from .report import write_cuts_csv
 from .scan import WORK_DIR, scan
 from .sync import report_sync, write_sync_csv
-from .takes import build_reference_takes, group_takes, place_takes
+from .takes import build_reference_takes, group_takes, place
 from .timecode import fmt_seconds, parse_time
 from .timeline import TimeMap, Timeline
-from . import xmeml, xmlcut
+from . import mics, xmeml, xmlcut
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -141,9 +141,11 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
         return EXIT_OK
 
     rate = int(cfg["sync"]["analysis_rate"])
-    banner("2-3. Sync: camera samples against the clean audio")
-    syncs = place_takes(project, takes, cfg)
-    ref = build_reference_takes(takes, workdir, rate)
+    banner("2-3. Sync: " + {"audio": "camera samples against the clean audio",
+                             "timecode": "by timecode",
+                             "timecode+audio": "camera samples, checked against timecode"}[cfg["sync"]["method"]])
+    syncs = place(project, takes, cfg)
+    ref = build_reference_takes(takes, workdir, rate, cfg.get("audio_channel"))
     report_sync(project, syncs, ref.duration)
 
     t0 = parse_time(start, project.rate) if start else 0.0
@@ -166,9 +168,13 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
         write_synced(project, syncs, window, is_test, cfg, out_dir)
         return EXIT_LOW_SYNC if lows else EXIT_OK
 
-    banner("4. Diarization")
     dcfg = cfg["diarization"]
-    segs = diarize(ref.wav16k, ref.fp, ref.duration, window, dcfg, workdir, rttm, diarize_full)
+    if dcfg["method"] == "mics" and not rttm:
+        banner("4. Speakers from the recorder's mic channels")
+        segs = mics.from_takes(takes, ref.duration, dcfg, cfg.get("audio_channel"), workdir)
+    else:
+        banner("4. Diarization")
+        segs = diarize(ref.wav16k, ref.fp, ref.duration, window, dcfg, workdir, rttm, diarize_full)
     cams = list(project.cameras)
     code = check_speakers(segs, cams, cfg, workdir, ref.wav16k, project.rate)
     if code == EXIT_NEED_MAPPING and lows:
