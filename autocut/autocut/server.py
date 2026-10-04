@@ -114,6 +114,12 @@ def _results(out: dict, work: Path) -> None:
         with open(rep, encoding="utf-8") as fh:
             out["sync"] = list(csv.DictReader(fh))
     outdir = work / "output"
+    ac = outdir / "audio_check.json"
+    if ac.exists():
+        try:
+            out["audio_check"] = json.loads(ac.read_text(encoding="utf-8"))
+        except ValueError:
+            pass
     sm = outdir / "summary.json"
     if sm.exists():
         try:
@@ -385,9 +391,9 @@ def make_handler(state: State):
                 kind = b["kind"]
                 proj = b.get("path")
                 env = None
-                if kind in ("scan", "sync", "diarize", "run"):
+                if kind in ("scan", "check", "sync", "diarize", "run"):
                     args = [kind, str(Path(proj).expanduser().resolve())]
-                    if kind != "scan":
+                    if kind not in ("scan", "check"):
                         if b.get("start"):
                             args += ["--start", str(b["start"])]
                         if b.get("duration"):

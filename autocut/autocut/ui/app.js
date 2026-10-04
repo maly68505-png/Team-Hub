@@ -234,6 +234,37 @@ function renderSettings() {
   show($("silenceOpts"), !!cfg.cut.remove_silence);
   $("cfgRotMax").value = cfg.cut.rotate_max_shot;
   renderAudioChoices();
+  renderCheck();
+}
+
+function renderCheck() {
+  const box = $("checkBox");
+  box.replaceChildren();
+  const ac = S.project.audio_check;
+  if (!ac) return;
+  const blk = ac.block || 300;
+  const STATE = { talk: L("كلام", "talking"), quiet: L("هادئ", "quiet"), silent: L("بلا صوت", "no signal"),
+    missing: L("لا يُقرأ", "not readable") };
+  const hhmm = (s) => { const m = Math.round(s / 60); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`; };
+  for (const f of ac.files) {
+    const el = h("div", { class: "chk" },
+      h("b", { class: "ltr" }, f.name),
+      h("span", { class: "meta" }, f.duration != null ? ` · ${fmtDur(f.duration)} · ${f.size_gb} GB` : ""));
+    for (const n of f.notes || [])
+      el.append(h("div", { class: "alert " + (n.level === "error" ? "error" : "warn") }, EN() ? n.en : n.ar));
+    for (const c of f.channels) {
+      el.append(h("div", { class: "chk-row" },
+        h("span", { class: "lab" }, `ch${c.channel}`),
+        h("span", { class: "cells" }, c.blocks.map((b, i) => h("i", { class: b.s,
+          title: `${hhmm(i * blk)}–${hhmm((i + 1) * blk)}: ${STATE[b.s]}` + (b.talk != null ? ` · ${b.talk}%` : "") })))));
+    }
+    box.append(el);
+  }
+  const ok = ac.files.every((f) => !(f.notes || []).length);
+  box.append(h("div", { class: "chk-legend" },
+    ...["talk", "quiet", "silent", "missing"].map((k) => h("span", {}, h("i", { class: k, style: `background:var(--${k === "talk" ? "ok" : k === "silent" ? "warn" : k === "missing" ? "bad" : "line"})` }), STATE[k])),
+    h("span", {}, L("كل مربع = 5 دقائق", "each square = 5 minutes"))));
+  if (ok) box.prepend(h("div", { class: "alert ok" }, L("✓ كل الملفات تُقرأ لآخرها وكل القنوات فيها صوت", "✓ every file reads to the end and every channel has sound")));
 }
 
 function renderAudioChoices() {
@@ -511,11 +542,11 @@ window.addEventListener("message", (ev) => {
 
 // ---------------------------------------------------------------- jobs
 const TITLES_AR = {
-  diarize: "التحليل (مزامنة + متحدثين)", run: "القطع", sync: "المزامنة فقط", "models-download": "تحميل النموذج",
+  diarize: "التحليل (مزامنة + متحدثين)", run: "القطع", sync: "المزامنة فقط", check: "فحص الصوت", "models-download": "تحميل النموذج",
   "models-import": "استيراد النموذج", "models-export": "تصدير النموذج",
 };
 const TITLES_EN = {
-  diarize: "Analysis (sync + speakers)", run: "Cut", sync: "Sync only", "models-download": "Downloading the model",
+  diarize: "Analysis (sync + speakers)", run: "Cut", sync: "Sync only", check: "Audio check", "models-download": "Downloading the model",
   "models-import": "Importing the model", "models-export": "Exporting the model",
 };
 const jobTitle = (kind) => (EN() ? TITLES_EN : TITLES_AR)[kind] || kind;
@@ -542,6 +573,10 @@ function stepOf(line) {
   if (m) return L(`قراءة الصوت: ${m[1]} من ${m[2]}`, `Reading audio: ${m[1]} of ${m[2]}`);
   m = line.match(/diarization: (.+?) (\d+)%/);
   if (m) return L(`تمييز المتحدثين: ${DIA_AR[m[1]] || m[1]} ${m[2]}%`, `Speakers: ${m[1]} ${m[2]}%`);
+  m = line.match(/Checking (\S+)/);
+  if (m) return L(`فحص الصوت: ${m[1]}`, `Checking audio: ${m[1]}`);
+  m = line.match(/Mic levels: (\S+)/);
+  if (m) return L(`قراءة المايكات: ${m[1]}`, `Reading the mics: ${m[1]}`);
   if (/Loading diarization model/.test(line)) return L("تحميل نموذج المتحدثين…", "Loading the speaker model…");
   if (/=== .*Sync/.test(line)) return L("مزامنة: قراءة عيّنات الكاميرات…", "Sync: reading camera samples…");
   if (/=== .*Cut/.test(line)) return L("القطع…", "Cutting…");
@@ -620,6 +655,13 @@ async function reportJob(code) {
     return;
   }
   if (S.path) await loadProject(S.path);
+  if (kind === "check" && code === 0) {
+    const bad = ((S.project && S.project.audio_check && S.project.audio_check.files) || []).some((f) => (f.notes || []).length);
+    jobMessage(bad ? "warn" : "ok", bad ? L("انتهى الفحص — فيه مشاكل، شوف التفاصيل في الإعدادات (الخطوة ٢).", "Check done — problems found, see the details in settings (step 2).")
+      : L("انتهى الفحص ✓ — كل الملفات والقنوات سليمة.", "Check done ✓ — every file and channel is fine."));
+    $("checkBox").scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
   if (kind === "sync" && (code === 0 || code === 3)) {
     jobMessage(code === 0 ? "ok" : "warn", code === 0
       ? L("تمت المزامنة ✓ — ملف «synced» جاهز في الخطوة ٣: كل كاميرا على مسار، والصوت النظيف تحتها.",
@@ -655,7 +697,7 @@ async function reportJob(code) {
 }
 
 function setBusy(on) {
-  ["btnAnalyze", "btnSyncOnly", "btnTest", "btnFull", "btnImport", "btnDownload", "btnExport", "btnSaveCfg", "btnSaveSpk"]
+  ["btnAnalyze", "btnSyncOnly", "btnCheck", "btnTest", "btnFull", "btnImport", "btnDownload", "btnExport", "btnSaveCfg", "btnSaveSpk"]
     .forEach((id) => ($(id).disabled = on));
 }
 
@@ -670,7 +712,7 @@ async function runStage(kind, extra, before) {
     return jobMessage("error", L("الإعدادات: ", "Settings: ") + e.message);
   }
   // diarization needs the model unless this project was already analysed
-  const needsModel = kind !== "sync" && S.project.config.diarization.method !== "mics";
+  const needsModel = kind !== "sync" && kind !== "check" && S.project.config.diarization.method !== "mics";
   if (needsModel && !(await refreshModels()) && !S.project.speakers) {
     setBusy(false);
     $("modelsDlg").showModal();
@@ -741,6 +783,7 @@ $("btnAudio").onclick = async () => {
 $("btnSaveSpk").onclick = () => saveSpeakers().catch((e) => flash($("spkSaved"), L("خطأ: ", "Error: ") + e.message));
 $("btnAnalyze").onclick = () => runStage("diarize", { diarize_full: true });
 $("btnSyncOnly").onclick = () => runStage("sync", {});
+$("btnCheck").onclick = () => runStage("check", {});
 $("btnTest").onclick = () => runStage("run", {
   start: $("testStart").value.trim(), duration: $("testDur").value.trim(), allow_low: $("allowLow").checked }, saveSpeakers);
 $("btnFull").onclick = () => runStage("run", { allow_low: $("allowLow").checked }, saveSpeakers);

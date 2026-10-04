@@ -527,6 +527,10 @@ def run_xml(xml_path: Path, cfg: dict, until: str, start: str | None, duration: 
         cov = sq.coverage()
         long_cam = max(cams, key=lambda c: cov[c].sum())
         log.info("Wide camera: %s (the one with the most picture — set long_camera to change)", long_cam)
+    if until == "check":
+        from . import audiocheck
+        paths = sorted({sq.file_path(it.file_id) for it in sq.speech_items()})
+        return audiocheck.run_check([probe(p) for p in paths if p.exists()], workdir, workdir / "output")
     if until in ("scan", "sync"):
         return EXIT_OK
 

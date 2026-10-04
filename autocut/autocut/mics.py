@@ -35,13 +35,15 @@ MIN_ON = 0.25       # shorter bursts are dropped (s)
 BRIDGE = 0.35       # shorter pauses inside a turn are bridged (s)
 
 
-def channel_levels(info: MediaInfo, workdir: Path) -> np.ndarray:
+def channel_levels(info: MediaInfo, workdir: Path, errors: list | None = None) -> np.ndarray:
     """(channels, frames) level in dB per HOP, high-passed at 120 Hz (no rumble).
-    Cached per file in <workdir>/mics/."""
+    Cached per file in <workdir>/mics/. A decoding error part way keeps what was
+    read (and is appended to `errors` when given); an error at the start raises."""
     cache = workdir / "mics" / f"{fingerprint([info.path], f'levels-{HOP}')}.npy"
     if cache.exists():
         return np.load(cache)
     out: list[np.ndarray] = []
+    partial = False
     try:
         with av.open(str(info.path)) as c:
             st = c.streams.audio[0]
@@ -66,15 +68,22 @@ def channel_levels(info: MediaInfo, workdir: Path) -> np.ndarray:
                         out.append((blk.reshape(blk.shape[0], k, step) ** 2).mean(axis=2))
                         carry = carry[:, k * step:]
     except (av.error.FFmpegError, IndexError) as e:
-        raise ToolError(f"could not read the channels of {info.path}: {e}") from e
+        if not out:
+            raise ToolError(f"could not read the channels of {info.path}: {e}") from e
+        partial = True
+        read = sum(x.shape[1] for x in out) * HOP
+        log.warning("%s: decoding stopped at %.0fs: %s", info.path.name, read, e)
+        if errors is not None:
+            errors.append(f"decoding stopped at {read:.0f}s: {e}")
     if not out:
         return np.zeros((max(1, info.audio_channels), 0), np.float32)
     p = np.concatenate(out, axis=1)
     kern = np.ones(SMOOTH) / SMOOTH
     p = np.stack([np.convolve(row, kern, mode="same") for row in p])
     lv = (10 * np.log10(p + 1e-12)).astype(np.float32)
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    np.save(cache, lv)
+    if not partial:  # never cache a partial read
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        np.save(cache, lv)
     return lv
 
 

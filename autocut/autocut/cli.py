@@ -17,6 +17,7 @@ from .scan import ScanError
 
 HELP = {
     "scan": "step 1 only: list cameras, clips, fps, timecodes, clean audio",
+    "check": "check the clean audio: every channel, every 5 minutes, read to the end?",
     "sync": "steps 1-3: sync every clip and print the confidence table",
     "diarize": "steps 1-4: diarize and write speakers.json (for the speaker mapping)",
     "run": "everything: rough cut XML + cuts.csv",
@@ -33,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("project", type=Path, help="project folder (camera folders + audio/)")
         p.add_argument("--config", type=Path, help="config file (default: PROJECT/config.yaml)")
         p.add_argument("-v", "--verbose", action="store_true", help="debug output on the console")
-        if stage == "scan":
+        if stage in ("scan", "check"):
             continue
         p.add_argument("--start", help="start of the test segment in the clean audio "
                        "(HH:MM:SS, MM:SS or seconds)")

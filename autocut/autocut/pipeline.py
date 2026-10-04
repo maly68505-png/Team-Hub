@@ -17,14 +17,14 @@ from .sync import report_sync, write_sync_csv
 from .takes import build_reference_takes, group_takes, place
 from .timecode import fmt_seconds, parse_time
 from .timeline import TimeMap, Timeline
-from . import mics, xmeml, xmlcut
+from . import audiocheck, mics, xmeml, xmlcut
 
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_NEED_MAPPING = 2
 EXIT_LOW_SYNC = 3
 
-STAGES = ("scan", "sync", "diarize", "run")
+STAGES = ("scan", "check", "sync", "diarize", "run")
 
 
 def _test_suffix(t0: float, t1: float) -> str:
@@ -139,6 +139,8 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
         log.info("Clean audio: %d separate takes (not simultaneous tracks)", len(takes))
     if until == "scan":
         return EXIT_OK
+    if until == "check":
+        return audiocheck.run_check(project.audio, workdir, workdir / "output")
 
     rate = int(cfg["sync"]["analysis_rate"])
     banner("2-3. Sync: " + {"audio": "camera samples against the clean audio",
