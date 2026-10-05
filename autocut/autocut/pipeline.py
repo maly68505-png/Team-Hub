@@ -17,7 +17,7 @@ from .sync import report_sync, write_sync_csv
 from .takes import build_reference_takes, group_takes, place
 from .timecode import fmt_seconds, parse_time
 from .timeline import TimeMap, Timeline
-from . import audiocheck, mics, xmeml, xmlcut
+from . import audiocheck, mics, split, xmeml, xmlcut
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -35,6 +35,18 @@ def _test_name(t0: float, t1: float) -> str:
     return f" TEST {fmt_seconds(t0)[:8]} +{fmt_seconds(t1 - t0)[3:8]}"
 
 
+def prepare_split(project, cfg: dict) -> None:
+    """output.split_channels: mono copies of multichannel clean files for Premiere."""
+    if not cfg["output"].get("split_channels"):
+        return
+    ch = cfg.get("audio_channel")
+    for t in project.takes:
+        for f in t.files:
+            if split.needs_split(f):
+                only = [ch] if ch and ch <= f.audio_channels else None
+                project.split[f.path] = split.split_channels(f, project.workdir / "audio", only)
+
+
 def write_synced(project, syncs, window, is_test: bool, cfg: dict, out_dir: Path) -> Path:
     """Sync only: every camera on its own track, synced, nothing cut."""
     banner("Output: synced timeline (no cut)")
@@ -43,6 +55,7 @@ def write_synced(project, syncs, window, is_test: bool, cfg: dict, out_dir: Path
     suffix = _test_suffix(t0, t1) if is_test else ""
     xml_p = out_dir / f"synced{suffix}.xml"
     name = "autocut synced" + (_test_name(t0, t1) if is_test else "") + time.strftime(" %H.%M")
+    prepare_split(project, cfg)
     xmeml.write(xml_p, project, tl, None, cfg, name)
     lows = [r.rel for r in syncs.values() if r.low and r.method != "failed"]
     if lows:
@@ -234,6 +247,7 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
     name = cfg["output"]["sequence_name"] + (
         _test_name(t0, t1) if is_test else " FULL") + (
         " no-silence" if cc["remove_silence"] else "") + (" layers" if layered else "") + time.strftime(" %H.%M")  # tells re-imports apart
+    prepare_split(project, cfg)
     xmeml.write(xml_p, project, tl, shots, cfg, name, tm)
     write_cuts_csv(csv_p, shots, tl, project.rate, tm)
     summary = dict(breakdown(shots, project.rate), full=not is_test, sequence=name, xml=xml_p.name,

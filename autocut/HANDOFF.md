@@ -92,6 +92,14 @@ Offline Mac (Apple Silicon) tool that makes a multicam rough cut for Premiere Pr
   mic's speech level. Labels "MIC 2".. mapped in step 4. Also in XML mode. No model needed.
 - The user asked to be consulted BEFORE changes are made — ask first, then build.
 
+### Silent audio tracks in Premiere → mono copies (v0.6.0)
+- Users reported some clean-audio channel tracks silent in Premiere (5ch and 4ch recorder WAVs, files
+  complete per the audio check). Root cause not proven (Premiere's channel layout vs sourcetrack index);
+  fix: `output.split_channels` (default on) writes bit-exact mono WAVs per channel to `_autocut/audio/`
+  (`split.py`, BWF timecode kept, RF64 if needed) and the XML references them (trackindex 1).
+- `autocut check` / UI "Check audio": per channel, per 5 min: talk/quiet/no signal/unreadable;
+  flags WAVs bigger than their header (>4 GB plain WAV).
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.

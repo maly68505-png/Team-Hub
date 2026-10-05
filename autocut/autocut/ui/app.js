@@ -573,6 +573,8 @@ function stepOf(line) {
   if (m) return L(`قراءة الصوت: ${m[1]} من ${m[2]}`, `Reading audio: ${m[1]} of ${m[2]}`);
   m = line.match(/diarization: (.+?) (\d+)%/);
   if (m) return L(`تمييز المتحدثين: ${DIA_AR[m[1]] || m[1]} ${m[2]}%`, `Speakers: ${m[1]} ${m[2]}%`);
+  m = line.match(/Splitting (\S+) into mono/);
+  if (m) return L(`فصل قنوات الصوت: ${m[1]}`, `Splitting audio channels: ${m[1]}`);
   m = line.match(/Checking (\S+)/);
   if (m) return L(`فحص الصوت: ${m[1]}`, `Checking audio: ${m[1]}`);
   m = line.match(/Mic levels: (\S+)/);

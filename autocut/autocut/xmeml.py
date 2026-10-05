@@ -295,14 +295,17 @@ class Writer:
                 for t in takes:
                     if j >= len(t.files) or ch > max(1, t.files[j].audio_channels):
                         continue
-                    info = t.files[j]
+                    info, src_ch = t.files[j], ch
+                    mono = self.p.split.get(info.path, {}).get(ch)
+                    if mono is not None:  # that channel as its own mono file: no channel mapping in Premiere
+                        info, src_ch = mono, 1
                     total = int(info.duration * rate.float)
                     start_f = rate.frames(t.position - tl.t0)  # take start on the sequence
                     a, b = max(0, start_f), min(tl.n, start_f + total)
                     if b <= a:
                         continue
                     for s2, e2, skip in self.tm.split(a, b):
-                        self._audio_item(tr, info, ch, s2, e2, a - start_f + skip)
+                        self._audio_item(tr, info, src_ch, s2, e2, a - start_f + skip)
                         n_audio += 1
                 _sub(tr, "enabled", "TRUE")
                 _sub(tr, "locked", "FALSE")

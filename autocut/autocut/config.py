@@ -56,6 +56,7 @@ DEFAULTS = {
     "output": {
         "sequence_name": "autocut rough cut",
         "layered": True,   # every camera on its own track, cut there (no V1): cuts editable in place
+        "split_channels": True,   # recorder files with >2 channels: one mono WAV per channel for Premiere
         "lock_camera_tracks": True,
         "disable_camera_tracks": True,
     },

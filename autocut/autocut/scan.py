@@ -49,6 +49,7 @@ class Project:
     long_camera: str
     audio_dir: Path | None = None
     takes: list = field(default_factory=list)  # set by the pipeline (takes.group_takes)
+    split: dict = field(default_factory=dict)  # clean file path -> {channel: mono copy} (split.py)
 
     @property
     def workdir(self) -> Path:

@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 import csv
 import json
+import re
 import time
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -250,9 +251,15 @@ class SyncedSequence:
                     levels[p] = mics.channel_levels(info, workdir)
                 irate = _rate_of(it.el) or self.rate
                 src = max(0.0, it.src_in / irate.float - info.av_offset)
+                split_ch = re.search(r"_ch(\d+)$", p.stem)  # a mono copy made by autocut (split.py)
+                if info.audio_channels == 1 and split_ch:
+                    if int(split_ch.group(1)) == mix_channel or (
+                            dcfg.get("mic_channels") and int(split_ch.group(1)) not in dcfg["mic_channels"]):
+                        continue
                 for ch in chans:
                     if ch <= levels[p].shape[0]:
-                        label = f"MIC {ch}" if info.audio_channels > 1 else f"MIC A{ti + 1}"
+                        label = (f"MIC {ch}" if info.audio_channels > 1 else
+                                 f"MIC {split_ch.group(1)}" if split_ch else f"MIC A{ti + 1}")
                         tl.place(label, levels[p][ch - 1], it.start / fps, src, (it.end - it.start) / fps)
         return mics._finish(tl, dcfg)
 

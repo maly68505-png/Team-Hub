@@ -137,6 +137,8 @@ def test_speakers_from_mics(proj, tmp_path):
 
 def test_xml_mode_with_mics(proj, tmp_path):
     cfg(proj)
+    text = (proj / "config.yaml").read_text().replace("audio_channel: 1\n", "")
+    (proj / "config.yaml").write_text(text)   # every channel to Premiere (mono copies), as an editor exports it
     assert run(proj, until="sync") == EXIT_OK
     xml = tmp_path / "synced.xml"
     shutil.copy(proj / "_autocut" / "output" / "synced.xml", xml)
@@ -148,3 +150,35 @@ def test_xml_mode_with_mics(proj, tmp_path):
     with open(w / "output" / "cuts.csv", encoding="utf-8-sig") as fh:
         cams = {r["camera"] for r in csv.DictReader(fh)}
     assert {"CAM_A", "CAM_B", "CAM_C"} <= cams
+
+
+def test_every_channel_its_own_mono_file_in_premiere(proj, tmp_path):
+    """Multichannel recorder files go to Premiere as one mono copy per channel."""
+    from urllib.parse import unquote
+    import av
+    root = tmp_path / "p"
+    shutil.copytree(proj, root, ignore=shutil.ignore_patterns("_autocut"))
+    (root / "config.yaml").write_text("fps: 25\nlong_camera: CAM_WIDE\nspeakers:\noutput:\n  layered: false\n")
+    assert run(root, until="sync") == EXIT_OK
+    r = ET.parse(root / "_autocut" / "output" / "synced.xml").getroot()
+    files = {f.get("id"): f for f in r.iter("file") if f.find("pathurl") is not None}
+    tracks = r.find("sequence").findall("media/audio/track")
+    clean = [tr for tr in tracks if any("REC_001" in (c.findtext("name") or "") for c in tr.findall("clipitem"))]
+    assert len(clean) == 4
+    for k, tr in enumerate(clean, 1):
+        c = tr.find("clipitem")
+        assert c.findtext("name") == f"REC_001_ch{k}.wav"
+        assert c.findtext("sourcetrack/trackindex") == "1"
+        f = files[c.find("file").get("id")]
+        assert f.findtext("media/audio/channelcount") == "1"
+        p = unquote(f.findtext("pathurl").replace("file://localhost", ""))
+        assert probe(p).tc_seconds == synth.REC_TC          # timecode kept
+
+    def pcm(path, ch=None):
+        with av.open(str(path)) as c:
+            a = np.concatenate([fr.to_ndarray() for fr in c.decode(audio=0)], axis=1)
+        if a.shape[0] == 1 and ch is not None:                 # packed: interleaved
+            a = a.reshape(-1, 4).T
+        return a[ch - 1] if ch else a[0]
+    src = root / "audio" / "REC_001.WAV"
+    assert np.array_equal(pcm(src, 3), pcm(root / "_autocut" / "audio" / "REC_001_ch3.wav"))   # bit-exact
