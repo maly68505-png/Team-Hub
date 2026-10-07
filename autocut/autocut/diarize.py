@@ -228,7 +228,8 @@ def pick_samples(segs: list[Segment], spk: str, n: int = 3) -> list[Segment]:
 
 
 def write_speakers_json(path: Path, segs: list[Segment], rate: Rate, wav16k: Path | None,
-                        cameras: list[str], mapping: dict[str, str], min_seconds: float) -> dict:
+                        cameras: list[str], mapping: dict[str, str], min_seconds: float,
+                        suggested: dict[str, str] | None = None) -> dict:
     stats = speaker_stats(segs)
     samples_dir = path.parent / "speaker_samples"
     audio = None
@@ -241,6 +242,7 @@ def write_speakers_json(path: Path, segs: list[Segment], rate: Rate, wav16k: Pat
                  "turns": sum(1 for s in segs if s.speaker == spk),
                  "needs_mapping": total >= min_seconds,
                  "mapped_to": mapping.get(spk),
+                 "suggested": (suggested or {}).get(spk),
                  "samples": []}
         for i, s in enumerate(pick_samples(segs, spk)):
             smp = {"start": round(s.start, 2), "end": round(s.end, 2),

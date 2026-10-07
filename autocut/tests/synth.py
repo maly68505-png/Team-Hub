@@ -190,3 +190,36 @@ def make_multitrack_project(root: Path) -> Path:
         "fps: 25\nlong_camera: CAM_WIDE\naudio_channel: 1\nspeakers:\n"
         "diarization:\n  min_speaker_seconds: 5\noutput:\n  layered: false\n")
     return root
+
+
+def write_motion_video(path: Path, audio: np.ndarray, active, fps: int = 25, seed: int = 0) -> None:
+    """Video whose picture moves a lot while active(t) is true (t = video seconds)
+    and only a little otherwise — a close-up of someone talking — plus `audio`."""
+    import av
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(seed)
+    w, h = 160, 96
+    tex = (rng.uniform(0, 255, (h * 2, w * 2))).astype(np.uint8)
+    n = int(len(audio) / SR * fps)
+    tmp = path.with_suffix(".v.mp4")
+    with av.open(str(tmp), "w") as out:
+        st = out.add_stream("mpeg4", rate=fps)
+        st.width, st.height, st.pix_fmt = w, h, "yuv420p"
+        st.bit_rate = 2_000_000
+        x = y = 0
+        for i in range(n):
+            amp = 6 if active(i / fps) else 1
+            x = int(np.clip(x + rng.integers(-amp, amp + 1), 0, w))
+            y = int(np.clip(y + rng.integers(-amp, amp + 1), 0, h))
+            img = tex[y:y + h, x:x + w]
+            fr = av.VideoFrame.from_ndarray(np.stack([img] * 3, axis=-1), format="rgb24")
+            for p in st.encode(fr):
+                out.mux(p)
+        for p in st.encode(None):
+            out.mux(p)
+    wav = path.with_suffix(".tmp.wav")
+    write_wav(wav, audio)
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(tmp), "-i", str(wav),
+                    "-c:v", "copy", "-c:a", "aac", "-b:a", "96k", "-shortest", str(path)], check=True)
+    tmp.unlink()
+    wav.unlink()

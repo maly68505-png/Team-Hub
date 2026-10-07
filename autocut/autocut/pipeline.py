@@ -13,11 +13,11 @@ from .log import banner, log, setup
 from .probe import require_tools
 from .report import write_cuts_csv
 from .scan import WORK_DIR, scan
-from .sync import report_sync, write_sync_csv
+from .sync import SyncResult, report_sync, write_sync_csv
 from .takes import build_reference_takes, group_takes, place
 from .timecode import fmt_seconds, parse_time
 from .timeline import TimeMap, Timeline
-from . import audiocheck, mics, split, xmeml, xmlcut
+from . import audiocheck, automap, mics, split, xmeml, xmlcut
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -47,18 +47,45 @@ def prepare_split(project, cfg: dict) -> None:
                 project.split[f.path] = split.split_channels(f, project.workdir / "audio", only)
 
 
+PARK_GAP_S = 5.0
+
+
+def park_unsynced(project, syncs: dict, end: float) -> tuple[dict, float]:
+    """Clips that could not be synced (weak or no match, not fixed by hand) go
+    one after another AFTER the end of the timeline, instead of at a guess."""
+    out = dict(syncs)
+    cursor = end + PARK_GAP_S
+    parked = []
+    for clip in project.all_clips():
+        r = syncs[clip.rel]
+        if not r.low or r.method == "override":
+            continue
+        out[clip.rel] = SyncResult(clip.rel, r.duration, offset=cursor, confidence=r.confidence, low=True,
+                                   method="parked", notes=r.notes + ["not synced — placed after the end"])
+        parked.append(clip.rel)
+        cursor += r.duration + PARK_GAP_S
+    if not parked:
+        return out, end
+    log.warning("%d clip(s) could not be synced and are placed AFTER the end of the timeline "
+                "(red label): %s", len(parked), ", ".join(parked))
+    return out, cursor - PARK_GAP_S
+
+
 def write_synced(project, syncs, window, is_test: bool, cfg: dict, out_dir: Path) -> Path:
     """Sync only: every camera on its own track, synced, nothing cut."""
     banner("Output: synced timeline (no cut)")
     t0, t1 = window
+    if not is_test:
+        syncs, end = park_unsynced(project, syncs, t1)
+        window = (t0, max(t1, end))
     tl = Timeline(project, syncs, window, use_low=True)
     suffix = _test_suffix(t0, t1) if is_test else ""
     xml_p = out_dir / f"synced{suffix}.xml"
     name = "autocut synced" + (_test_name(t0, t1) if is_test else "") + time.strftime(" %H.%M")
     prepare_split(project, cfg)
     xmeml.write(xml_p, project, tl, None, cfg, name)
-    lows = [r.rel for r in syncs.values() if r.low and r.method != "failed"]
-    if lows:
+    lows = [r.rel for r in syncs.values() if r.low and r.method not in ("failed", "parked")]
+    if lows:  # test segments keep their guesses (no parking there)
         log.warning("%d clip(s) with LOW sync confidence are on their tracks with a red label: %s",
                     len(lows), ", ".join(lows))
     log.info("Synced XML: %s", xml_p)
@@ -66,13 +93,14 @@ def write_synced(project, syncs, window, is_test: bool, cfg: dict, out_dir: Path
     return xml_p
 
 
-def check_speakers(segs, cams: list[str], cfg: dict, workdir: Path, wav16k: Path, rate) -> int | None:
+def check_speakers(segs, cams: list[str], cfg: dict, workdir: Path, wav16k: Path, rate,
+                   suggested: dict | None = None) -> int | None:
     """speakers.json + samples; an exit code when the speaker mapping is wrong or missing."""
     dcfg = cfg["diarization"]
     mapping = cfg["speakers"]
     speakers_json = workdir / "speakers.json"
     write_speakers_json(speakers_json, segs, rate, wav16k, cams, mapping,
-                        float(dcfg["min_speaker_seconds"]))
+                        float(dcfg["min_speaker_seconds"]), suggested)
     stats = speaker_stats(segs)
     log.info("Speakers (%d):", len(stats))
     for spk, total in stats.items():
@@ -191,7 +219,16 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
         banner("4. Diarization")
         segs = diarize(ref.wav16k, ref.fp, ref.duration, window, dcfg, workdir, rttm, diarize_full)
     cams = list(project.cameras)
-    code = check_speakers(segs, cams, cfg, workdir, ref.wav16k, project.rate)
+    suggested = {}
+    unmapped = [s for s, t in speaker_stats(segs).items()
+                if s not in cfg["speakers"] and t >= float(dcfg["min_speaker_seconds"])]
+    if unmapped and len(cams) > 1:
+        banner("4b. Suggesting each speaker's camera (from the pictures)")
+        try:
+            suggested = automap.suggest(project, syncs, segs, workdir)
+        except Exception as e:  # noqa: BLE001 — a suggestion must never stop the analysis
+            log.warning("camera suggestions skipped: %s", e)
+    code = check_speakers(segs, cams, cfg, workdir, ref.wav16k, project.rate, suggested)
     if code == EXIT_NEED_MAPPING and lows:
         log.warning("(Also: %d clip(s) have LOW sync confidence — see above.)", len(lows))
     if code is not None:

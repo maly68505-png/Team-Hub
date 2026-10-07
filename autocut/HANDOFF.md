@@ -100,6 +100,14 @@ Offline Mac (Apple Silicon) tool that makes a multicam rough cut for Premiere Pr
 - `autocut check` / UI "Check audio": per channel, per 5 min: talk/quiet/no signal/unreadable;
   flags WAVs bigger than their header (>4 GB plain WAV).
 
+### Weak cameras, parking, camera suggestions (v0.7.0)
+- Sync confidence also from consistency: >= 4 windows on one line (10 ms) over >= 60 s => confident;
+  clips with no confident match are re-read every 30 s (`DENSE_EVERY_S`). TAKES_VERSION 6.
+- synced.xml: clips still weak/unmatched are PARKED one after another after the end (red), not at a guess.
+- `automap.py`: per close-up camera, picture motion during each speaker's solo moments (seeking, 96x54
+  grey) -> z-scores -> Hungarian; `speakers.json` "suggested"; UI pre-checks it with an
+  "auto-suggested" tag. Wide camera excluded. A guess the editor reviews.
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.

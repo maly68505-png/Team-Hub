@@ -407,14 +407,16 @@ function renderSpeakers() {
     let chosen = mapping[label];
     chosen = chosen == null ? [] : Array.isArray(chosen) ? chosen : [chosen];
     chosen = chosen.map((c) => (c === "long" ? cfg.long_camera : c));
-    if (!chosen.length && needing === 1 && info.needs_mapping) chosen = cams.slice();  // one presenter: all angles
+    const auto = !chosen.length && !!info.suggested && cams.includes(info.suggested);
+    if (auto) chosen = [info.suggested];  // guessed from the pictures: the editor checks it
+    else if (!chosen.length && needing === 1 && info.needs_mapping) chosen = cams.slice();  // one presenter: all angles
     const box = h("div", { class: "camchips" }, cams.map((c) =>
       h("label", { class: "chip-toggle" },
         h("input", { type: "checkbox", value: c, checked: chosen.includes(c) }),
         h("span", {}, c))));
     box.dataset.label = label;
     t.append(h("tr", {},
-      h("td", { class: "ltr" }, label),
+      h("td", { class: "ltr" }, label, auto ? h("div", {}, h("span", { class: "pill", title: L("اختارتها الأداة من حركة الصورة وقت كلامه — راجعها بالعيّنات", "Picked from picture motion while this speaker talks — check it with the samples") }, L("مقترح تلقائياً", "auto-suggested"))) : null),
       h("td", { class: "num-cell" }, fmtDur(info.total_seconds)),
       h("td", {}, info.samples.map((s, i) => s.wav
         ? h("button", { type: "button", class: "small", title: s.hhmmss,
@@ -575,6 +577,7 @@ function stepOf(line) {
   if (m) return L(`تمييز المتحدثين: ${DIA_AR[m[1]] || m[1]} ${m[2]}%`, `Speakers: ${m[1]} ${m[2]}%`);
   m = line.match(/Splitting (\S+) into mono/);
   if (m) return L(`فصل قنوات الصوت: ${m[1]}`, `Splitting audio channels: ${m[1]}`);
+  if (/Suggesting cameras/.test(line)) return L("اقتراح كاميرا لكل متحدث…", "Suggesting a camera per speaker…");
   m = line.match(/Checking (\S+)/);
   if (m) return L(`فحص الصوت: ${m[1]}`, `Checking audio: ${m[1]}`);
   m = line.match(/Mic levels: (\S+)/);

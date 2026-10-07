@@ -37,10 +37,12 @@ from .scan import Project, ScanError
 from .sync import SyncResult, Measurement, _parabolic, bandpass, ncc
 from .timecode import fmt_seconds
 
-TAKES_VERSION = 5
+TAKES_VERSION = 6
 GROUP_GAP_S = 5.0     # silence between take groups no camera connects
 MIN_WINDOWS = 6       # even a short clip is sampled at least this many times
 DRIFT_SPAN_S = 120.0  # measurements must span this much of a clip to estimate its drift
+CONSISTENT_N = 4      # this many windows agreeing on one line = a confident match
+DENSE_EVERY_S = 30.0  # a clip with no confident match is read again this densely
 
 
 @dataclass
@@ -240,7 +242,7 @@ def edges_from_points(pts, scfg: dict) -> dict:
     good_ratio = float(scfg["good_peak_ratio"])
     edges = {}
     for ti, ps in by.items():
-        _, _, keep = _line([p[0] for p in ps], [p[1] - p[0] for p in ps], tol=0.010)
+        _, slope, keep = _line([p[0] for p in ps], [p[1] - p[0] for p in ps], tol=0.010)
         ps = [p for p, k in zip(ps, keep) if k]
         if not ps:
             continue
@@ -248,6 +250,11 @@ def edges_from_points(pts, scfg: dict) -> dict:
         if len(ps) < 2 and ratio < 2.5:   # one lone window must stand out clearly
             continue
         conf = float(np.clip((ratio - 1.0) / max(good_ratio - 1.0, 1e-6), 0, 1))
+        # many windows on ONE straight line (within 10 ms) cannot be chance, even
+        # when each peak is modest (a camera far from the talkers, a noisy room)
+        span = max(p[1] for p in ps) - min(p[1] for p in ps)
+        if len(ps) >= CONSISTENT_N and span >= 60.0 and abs(slope) * 1e6 <= float(scfg["max_drift_ppm"]):
+            conf = max(conf, min(1.0, 0.6 + 0.1 * (len(ps) - CONSISTENT_N)))
         edges[ti] = {"points": [(tau, v, w) for tau, v, w, _ in ps], "ratio": ratio, "confidence": conf}
     return edges
 
@@ -375,8 +382,8 @@ def place_takes(project: Project, takes: list[Take], cfg: dict) -> dict[str, Syn
     log.info("Reading %.0fs of audio every %.0fs from %d camera files (%s of footage) ...",
              win, every, len(todo), fmt_seconds(total_s))
 
-    def read(clip, shift=0.0):
-        starts = window_starts(clip.info.duration, win, every, shift)
+    def read(clip, shift=0.0, step=None):
+        starts = window_starts(clip.info.duration, win, step or every, shift)
         length = min(win, clip.info.duration)
         return starts, decode_windows(clip.info, rate, starts, length)
 
@@ -390,8 +397,17 @@ def place_takes(project: Project, takes: list[Take], cfg: dict) -> dict[str, Syn
             if not pts:  # nothing heard in those spots: try the spots in between
                 starts2, xs2 = read(clip, 0.5)
                 pts = window_points(bank, prep_t, list(zip(starts2, xs2)), rate, crate, scfg)
+            found_edges = edges_from_points(pts, scfg)
+            if not any(e["confidence"] >= float(scfg["min_confidence"]) for e in found_edges.values()) \
+                    and every > DENSE_EVERY_S:
+                # weak: read it again, densely, between the first samples
+                starts3, xs3 = read(clip, 0.5, DENSE_EVERY_S)
+                pts += window_points(bank, prep_t, list(zip(starts3, xs3)), rate, crate, scfg)
+                found_edges = edges_from_points(pts, scfg)
+                log.info("  %s: weak match — read again every %.0fs (%d more samples)",
+                         clip.rel, DENSE_EVERY_S, len(starts3))
             found = []
-            for ti, e in edges_from_points(pts, scfg).items():
+            for ti, e in found_edges.items():
                 e["points"] = [(tau, v + clip.info.av_offset, w) for tau, v, w in e["points"]]
                 edges[(ti, ci)] = e
                 found.append(takes[ti].name)

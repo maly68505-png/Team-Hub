@@ -186,3 +186,20 @@ def test_premiere_style_xml(synced, tmp_path):
     ids = {c.get("id") for c in out.iter("clipitem")}
     assert all(ln.findtext("linkclipref") in ids for ln in out.iter("link"))
     assert not list(out.iter("transitionitem"))
+
+
+def test_unsynced_clip_parked_after_the_end(tmp_path):
+    """A clip that matches nothing goes after the end of synced.xml, not at a guess."""
+    import numpy as np
+    root = synth.make_project(tmp_path / "p", extra_noise_camera=True)
+    run(root, until="sync")
+    seq, vt, _ = tracks(root / "_autocut" / "output" / "synced.xml")
+    n = int(seq.findtext("duration"))
+    noise = [(s, e, i, c) for tr in vt for s, e, i, c in items(tr) if "NOISE" in c.findtext("name")]
+    assert len(noise) == 1
+    s, e, _, c = noise[0]
+    assert c.findtext("name").startswith("LOW-SYNC")
+    assert s >= 180 * 25 and e == n                      # after the 3-minute recording
+    others = [e2 for tr in vt for s2, e2, _, c2 in items(tr) if "NOISE" not in c2.findtext("name")]
+    assert max(others) <= 186 * 25                       # the wide camera runs to ~185 s
+    assert np.isfinite(n)
