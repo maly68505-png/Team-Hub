@@ -48,10 +48,26 @@ export PIP_DISABLE_PIP_VERSION_CHECK=1
 echo "==> launchers"
 cat > "$APP/Contents/Resources/bin/autocut" <<'SH'
 #!/bin/bash
-# Command-line entry point (also used by the Premiere panel).
+# Command-line entry point (also used by the app window and the Premiere panel).
+# Python + the engine ship as ONE file (runtime.tar: ~46,000 small files would
+# make the app very slow to copy between Macs); it is unpacked once per version
+# into ~/Library/Application Support/Autocut/runtime/<id>.
 R="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ID="$(cat "$R/runtime.id")"
+BASE="${AUTOCUT_RUNTIME_DIR:-$HOME/Library/Application Support/Autocut/runtime}"
+RT="$BASE/$ID"
+if [ ! -x "$RT/python/bin/python3" ]; then
+  echo "Autocut: preparing the engine (first start of this version, about a minute) ..." >&2
+  mkdir -p "$BASE"
+  TMP="$(mktemp -d "$BASE/.unpack.XXXXXX")"
+  tar -xf "$R/runtime.tar" -C "$TMP" || { rm -rf "$TMP"; echo "Autocut: could not unpack the engine" >&2; exit 1; }
+  xattr -dr com.apple.quarantine "$TMP" 2>/dev/null || true
+  [ -e "$RT" ] || mv "$TMP" "$RT"
+  rm -rf "$TMP"
+  for d in "$BASE"/*; do [ "$d" != "$RT" ] && rm -rf "$d"; done   # older versions
+fi
 export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 PYANNOTE_METRICS_ENABLED=false
-exec "$R/python/bin/python3" -m autocut "$@"
+exec "$RT/python/bin/python3" -m autocut "$@"
 SH
 chmod +x "$APP/Contents/Resources/bin/autocut"
 
@@ -90,6 +106,12 @@ echo "==> icon"
 "$PY" "$HERE/make_icon.py" "$OUT/icon.iconset" && \
   iconutil -c icns "$OUT/icon.iconset" -o "$APP/Contents/Resources/Autocut.icns" || echo "    (no icon)"
 rm -rf "$OUT/icon.iconset"
+
+echo "==> pack Python + engine into one file (fast to copy between Macs)"
+( cd "$APP/Contents/Resources" && tar -cf runtime.tar python )
+shasum -a 256 "$APP/Contents/Resources/runtime.tar" | cut -c1-16 > "$APP/Contents/Resources/runtime.id"
+rm -rf "$APP/Contents/Resources/python"
+echo "    runtime $(cat "$APP/Contents/Resources/runtime.id"), $(du -sh "$APP/Contents/Resources/runtime.tar" | cut -f1)"
 
 echo "==> ad-hoc signature for the whole bundle"
 # Not an Apple Developer ID, but a sealed bundle: a downloaded copy is reported

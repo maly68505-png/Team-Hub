@@ -4,11 +4,19 @@ set -euo pipefail
 APP="$(cd "$1" && pwd)"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CLI="$APP/Contents/Resources/bin/autocut"
-PY="$APP/Contents/Resources/python/bin/python3"
 export AUTOCUT_HOME="$(mktemp -d)"
+export AUTOCUT_RUNTIME_DIR="$AUTOCUT_HOME/runtime"
 
-echo "==> version"
+echo "==> app is a handful of files (engine packed in runtime.tar)"
+N=$(find "$APP" | wc -l)
+echo "    $N files"
+test "$N" -lt 200
+
+echo "==> version (first start unpacks the engine)"
 "$CLI" --version
+PY="$AUTOCUT_RUNTIME_DIR/$(cat "$APP/Contents/Resources/runtime.id")/python/bin/python3"
+test -x "$PY"
+"$CLI" --version   # second start: already unpacked
 
 echo "==> pyannote/torch import (offline, telemetry off)"
 HF_HUB_OFFLINE=1 PYANNOTE_METRICS_ENABLED=false "$PY" - <<'PY'

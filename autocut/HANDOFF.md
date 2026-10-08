@@ -113,6 +113,13 @@ Offline Mac (Apple Silicon) tool that makes a multicam rough cut for Premiere Pr
   `decode_windows` read only stream 0 (silent there). Now all audio streams are demuxed once and mixed.
   synced.xml camera audio uses the loudest stream (`audio.loudest_stream`) as trackindex.
 
+### App is a handful of files (v0.7.2)
+- The user could not copy the unzipped app between Macs (Finder stuck on "Preparing to copy" over
+  ~46,800 files). build_mac.sh now packs `Resources/python` into ONE `runtime.tar` (+ `runtime.id`);
+  `bin/autocut` unpacks it once per version into `~/Library/Application Support/Autocut/runtime/<id>`
+  (override: AUTOCUT_RUNTIME_DIR), removes quarantine, deletes older runtimes. The installer pre-unpacks.
+  smoke_test asserts < 200 files in the .app.
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.

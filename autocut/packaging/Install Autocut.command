@@ -27,6 +27,8 @@ xattr -dr com.apple.quarantine "$EXT" 2>/dev/null || true
 for v in 9 10 11 12 13; do defaults write "com.adobe.CSXS.$v" PlayerDebugMode 1; done
 
 CLI="$DEST/Autocut.app/Contents/Resources/bin/autocut"
+echo "• Preparing the engine (about a minute, once per version) ..."
+"$CLI" --version
 if [ -f "autocut-models.zip" ]; then
   echo "• Model (offline) ..."
   "$CLI" models import "autocut-models.zip"
