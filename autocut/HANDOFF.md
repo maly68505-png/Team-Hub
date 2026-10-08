@@ -108,6 +108,11 @@ Offline Mac (Apple Silicon) tool that makes a multicam rough cut for Premiere Pr
   grey) -> z-scores -> Hungarian; `speakers.json` "suggested"; UI pre-checks it with an
   "auto-suggested" tag. Wide camera excluded. A guess the editor reviews.
 
+### Camera MXF with several audio tracks (v0.7.1)
+- 4 of 7 cameras matched NOTHING on the user's shoot: XDCAM MXF has several mono audio streams and
+  `decode_windows` read only stream 0 (silent there). Now all audio streams are demuxed once and mixed.
+  synced.xml camera audio uses the loudest stream (`audio.loudest_stream`) as trackindex.
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.

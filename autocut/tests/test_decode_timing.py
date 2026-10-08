@@ -64,3 +64,30 @@ def test_windows_read_by_seeking_land_exactly(click_wav, tmp_path, ext, vcodec, 
         assert abs(click - 1.0) < 0.0005, (ext, start, click)
     full = decode_mono(info, 8000)
     assert abs(np.argmax(np.abs(full)) / 8000 - 1.0) < 0.0005
+
+
+def test_mic_on_second_track_of_mxf_syncs(tmp_path):
+    """Camera MXF with several mono audio tracks, the mic on track 2 and track 1
+    silent (a common XDCAM setup): sync must hear it."""
+    import synth
+    from autocut.pipeline import EXIT_OK, run
+    root = synth.make_project(tmp_path / "p")
+    cam = root / "CAM_B" / "B_001.MP4"
+    wav = tmp_path / "b.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(cam), "-vn", "-ac", "1", "-ar", "48000", str(wav)], check=True)
+    mxf = root / "CAM_B" / "B_001.MXF"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(cam), "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
+                    "-i", str(wav), "-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "mpeg2video", "-b:v", "2M",
+                    "-c:a", "pcm_s16le", "-shortest", str(mxf)], check=True)
+    cam.unlink()
+    assert run(root, until="sync") == EXIT_OK
+    import csv
+    with open(root / "_autocut" / "output" / "sync_report.csv", encoding="utf-8") as fh:
+        rows = {r["clip"]: r for r in csv.DictReader(fh)}
+    r = rows["CAM_B/B_001.MXF"]
+    assert r["status"] == "ok" and abs(float(r["offset_s"]) - 10.3) < 0.005
+    import xml.etree.ElementTree as ET
+    seq = ET.parse(root / "_autocut" / "output" / "synced.xml").getroot().find("sequence")
+    idx = [c.findtext("sourcetrack/trackindex") for tr in seq.findall("media/audio/track")
+           for c in tr.findall("clipitem") if c.findtext("name") == "B_001.MXF"]
+    assert idx == ["2"]                       # the camera's own sound, from the track the mic is on

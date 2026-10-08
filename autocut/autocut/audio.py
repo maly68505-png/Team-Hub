@@ -48,42 +48,85 @@ def decode_windows(info: MediaInfo, rate: int, starts: list[float], length: floa
     Camera files (MXF especially) interleave audio with video, so pulling the
     whole audio track means reading the whole file; a few seconds every couple
     of minutes is enough to sync and is ~15x less to read from a network drive.
-    Times are measured from the audio stream start, like decode_mono()."""
+    Every audio stream is read and mixed: camera MXF files carry 4-8 separate
+    mono tracks and the mic is not always on the first one.
+    Times are measured from the first audio stream's start, like decode_mono()."""
     out: list[np.ndarray] = []
     try:
         with av.open(str(info.path)) as c:
-            st = c.streams.audio[0]
-            tb = st.time_base
-            s0 = float(st.start_time * tb) if st.start_time is not None else 0.0
-            sr = st.codec_context.sample_rate or info.sample_rate
+            streams = list(c.streams.audio)
+            st0 = streams[0]
+            s0 = float(st0.start_time * st0.time_base) if st0.start_time is not None else 0.0
             for start in starts:
-                c.seek(max(0, int((s0 + max(0.0, start - 1.0)) / tb)), stream=st, backward=True)
-                conv = av.AudioResampler(format="fltp")  # format only: no resampling, no delay
-                buf, t_first, have = [], None, 0
-                need = int((start + length) * sr)
-                for frame in c.decode(st):
-                    if frame.pts is None:
+                c.seek(max(0, int((s0 + max(0.0, start - 1.0)) / st0.time_base)), stream=st0, backward=True)
+                state = {s.index: {"conv": av.AudioResampler(format="fltp"), "buf": [], "t0": None, "have": 0,
+                                   "sr": s.codec_context.sample_rate or info.sample_rate, "done": False}
+                         for s in streams}
+                for pkt in c.demux(*streams):
+                    w = state[pkt.stream.index]
+                    if w["done"]:
                         continue
-                    for f in conv.resample(frame):
-                        if t_first is None:
-                            t_first = float(frame.pts * tb) - s0
-                        a = _pick(f.to_ndarray(), channel)
-                        buf.append(a)
-                        have += len(a)
-                    if t_first is not None and int(t_first * sr) + have >= need:
+                    tb = pkt.stream.time_base
+                    for frame in pkt.decode():
+                        if frame.pts is None:
+                            continue
+                        for f in w["conv"].resample(frame):
+                            if w["t0"] is None:
+                                w["t0"] = float(frame.pts * tb) - s0
+                            a = _pick(f.to_ndarray(), channel)
+                            w["buf"].append(a)
+                            w["have"] += len(a)
+                    if w["t0"] is not None and int(w["t0"] * w["sr"]) + w["have"] >= int((start + length) * w["sr"]):
+                        w["done"] = True
+                    if all(v["done"] for v in state.values()):
                         break
-                if t_first is None or not buf:
-                    out.append(np.zeros(0, np.float32))
-                    continue
-                x = np.concatenate(buf)
-                a = int(round((start - t_first) * sr))
-                if a < 0:  # seek landed late (should not happen with backward seek)
-                    x, a = np.concatenate([np.zeros(-a, x.dtype), x]), 0
-                x = x[a:a + int(round(length * sr))]
-                out.append(resample_poly(x, rate, sr).astype(np.float32) if sr != rate else x.astype(np.float32))
+                mix = None
+                for w in state.values():
+                    if w["t0"] is None or not w["buf"]:
+                        continue
+                    sr = w["sr"]
+                    x = np.concatenate(w["buf"])
+                    a = int(round((start - w["t0"]) * sr))
+                    if a < 0:  # seek landed late (should not happen with backward seek)
+                        x, a = np.concatenate([np.zeros(-a, x.dtype), x]), 0
+                    x = x[a:a + int(round(length * sr))]
+                    x = resample_poly(x, rate, sr).astype(np.float32) if sr != rate else x.astype(np.float32)
+                    if mix is None:
+                        mix = x
+                    else:
+                        n = max(len(mix), len(x))
+                        mix = np.pad(mix, (0, n - len(mix))) + np.pad(x, (0, n - len(x)))
+                out.append(mix if mix is not None else np.zeros(0, np.float32))
     except (av.error.FFmpegError, IndexError) as e:
         raise ToolError(f"could not read audio of {info.path}: {e}") from e
     return out
+
+
+def loudest_stream(info: MediaInfo, n: int = 4, length: float = 2.0) -> int:
+    """1-based number of the audio track with the most signal (camera files with
+    several mono tracks: the one the mic was plugged into). 1 when unsure."""
+    try:
+        with av.open(str(info.path)) as c:
+            streams = list(c.streams.audio)
+            if len(streams) < 2:
+                return 1
+            dur = max(info.duration, length * 2)
+            starts = np.linspace(length, max(length, dur - 2 * length), n)
+            energy = np.zeros(len(streams))
+            for k, st in enumerate(streams):
+                tb = st.time_base
+                for t in starts:
+                    c.seek(int(t / tb) + int((st.start_time or 0)), stream=st, backward=True)
+                    got = 0.0
+                    for frame in c.decode(st):
+                        a = frame.to_ndarray().astype(np.float64)
+                        energy[k] += float(np.mean(a * a))
+                        got += frame.samples / (frame.sample_rate or 48000)
+                        if got >= length:
+                            break
+            return int(np.argmax(energy)) + 1
+    except (av.error.FFmpegError, IndexError, ValueError):
+        return 1
 
 
 def fingerprint(paths: list[Path], extra: str = "") -> str:

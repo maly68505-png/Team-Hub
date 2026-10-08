@@ -20,6 +20,7 @@ from urllib.parse import quote
 
 import numpy as np
 
+from .audio import loudest_stream
 from .cutlogic import Shot, _runs
 from .log import log
 from .probe import MediaInfo
@@ -209,14 +210,17 @@ class Writer:
         """One track per camera with its first audio channel, clips disabled:
         switch one on in Premiere to hear the camera mic against the clean audio."""
         tl = self.tl
+        loud: dict = {}
         for cam in self.p.cameras:
             tr = _sub(audio, "track")
             for piece in tl.pieces(cam, 0, tl.n):
                 info = piece.clip.info
                 if not info.has_audio:
                     continue
+                if info.path not in loud:  # the track the camera's mic is on (not always 1)
+                    loud[info.path] = loudest_stream(info)
                 for s, e, skip in self.tm.split(piece.start, piece.end):
-                    self._audio_item(tr, info, 1, s, e, piece.src_in + skip, enabled=False,
+                    self._audio_item(tr, info, loud[info.path], s, e, piece.src_in + skip, enabled=False,
                                      total=tl.total_src_frames(piece.clip))
             _sub(tr, "enabled", "TRUE")
             _sub(tr, "locked", "FALSE")
