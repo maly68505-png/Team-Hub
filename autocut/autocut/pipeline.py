@@ -236,28 +236,16 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
     if until == "diarize":
         return EXIT_OK
 
-    if lows and not allow_low_confidence:
-        log.error("")
-        log.error("%d clip(s) have LOW sync confidence — not guessing:", len(lows))
-        for r in lows:
-            guess = "unknown" if r.method == "failed" else fmt_seconds(r.offset)
-            log.error("  %s  (best guess %s, conf %.2f) %s", r.rel, guess,
-                      r.confidence, "; ".join(r.notes))
-        log.error("Fix: add the correct start (seconds into the clean audio where the clip's "
-                  "first frame lands) under sync.overrides in config.yaml, e.g.")
-        log.error("    sync:\n      overrides:\n        %s: 123.456", lows[0].rel)
-        log.error("or re-run with --allow-low-confidence: those clips then go on their camera "
-                  "track marked LOW-SYNC (red label) and are NOT used in the rough cut.")
-        return EXIT_LOW_SYNC
     if lows:
-        placed = [r.rel for r in lows if r.method != "failed"]
-        unplaced = [r.rel for r in lows if r.method == "failed"]
-        if placed:
-            log.warning("--allow-low-confidence: %d LOW-SYNC clip(s) are on the camera tracks "
-                        "with a red label and are excluded from V1: %s", len(placed), ", ".join(placed))
-        if unplaced:
-            log.warning("NOT placed at all (no usable audio — needs a sync override): %s",
-                        ", ".join(unplaced))
+        # never blocks the cut: weak / unmatched clips (a promo, a wrong card) are left out
+        names = ", ".join(r.rel for r in lows)
+        if allow_low_confidence:
+            log.warning("%d clip(s) with weak sync are on their camera tracks with a red label "
+                        "(LOW-SYNC) and are NOT used in the cut: %s", len(lows), names)
+        else:
+            log.warning("%d clip(s) could not be synced and are left out of the cut: %s", len(lows), names)
+        log.warning("To use one: type its start (seconds into the clean audio) in the sync table "
+                    "(sync.overrides).")
 
     banner("5. Cut")
     tl = Timeline(project, syncs, window, use_low=allow_low_confidence)

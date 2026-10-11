@@ -681,8 +681,8 @@ async function reportJob(code) {
       : L("تم التحليل ✓ — راجع المزامنة واختر كاميرا كل متحدث.", "Analysis done ✓ — check the sync and pick each speaker's camera.")],
     2: ["warn", L("اختر كاميرا لكل متحدث في الخطوة ٤ ثم احفظ، وبعدها اضغط تجربة.",
       "Pick a camera for each speaker in step 4, save, then press Test.")],
-    3: ["warn", L("بعض الملفات مزامنتها ضعيفة (بالأحمر في الخطوة ٣). اكتب لها تصحيحاً يدوياً، أو فعّل «تابع رغم…» في الخطوة ٥.",
-      "Some files synced weakly (red in step 3). Type a manual fix for them, or tick \"Continue despite…\" in step 5.")],
+    3: ["warn", L("بعض الملفات مزامنتها ضعيفة (بالأحمر في الخطوة ٣) — لن تدخل في القطع.",
+      "Some files synced weakly (red in step 3) — they are left out of the cut.")],
     130: ["warn", L("تم الإيقاف.", "Stopped.")],
     [-15]: ["warn", L("تم الإيقاف.", "Stopped.")],
   };

@@ -15,7 +15,7 @@ import pytest
 from scipy.io import wavfile
 from scipy.signal import fftconvolve
 
-from autocut.pipeline import EXIT_LOW_SYNC, EXIT_NEED_MAPPING, EXIT_OK, run
+from autocut.pipeline import EXIT_NEED_MAPPING, EXIT_OK, run
 
 import synth
 
@@ -174,7 +174,10 @@ def test_low_confidence_stops_and_is_excluded(project, tmp_path):
     rng = np.random.default_rng(99)
     synth.write_video(root / "CAM_X" / "NOISE.MP4", (0.1 * rng.normal(0, 1, 30 * synth.SR)).astype(np.float32))
     mapped(root)
-    assert run(root, rttm=root / "truth.rttm") == EXIT_LOW_SYNC
+    # a clip that cannot be synced never blocks the cut: it is left out
+    assert run(root, rttm=root / "truth.rttm") == EXIT_OK
+    seq, vt, _ = xml_tracks(root / "_autocut" / "output" / "roughcut.xml")
+    assert not any("CAM_X" in (c.findtext("name") or "") for tr in vt for c in tr.findall("clipitem"))
     assert run(root, rttm=root / "truth.rttm", allow_low_confidence=True) == EXIT_OK
     seq, vt, _ = xml_tracks(root / "_autocut" / "output" / "roughcut.xml")
     v1_names = [c.find("name").text for c in vt[0].findall("clipitem")]

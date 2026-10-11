@@ -67,8 +67,8 @@ const STATIC = {
   "إزالة السكتات بين الكلام (من كل المسارات معاً — تبقى متزامنة)":
     "Remove silences between speech (on all tracks together — stays in sync)",
   "أي سكتة أطول من (ث) تُقصَّر": "Shorten any pause longer than (s)",
-  "تابع رغم وجود ملفات مزامنتها ضعيفة (تُعلَّم بالأحمر ولا تدخل في القطع)":
-    "Continue despite weakly synced files (marked red, left out of the cut)",
+  "اعرض الملفات ذات المزامنة الضعيفة على مساراتها (بالأحمر — لا تدخل في القطع)":
+    "Show weakly synced files on their tracks (red — left out of the cut)",
   "تايم لاين طبقات: كل كاميرا في مسار خاص ومقطوعة في مكانها (تعديل القطع بالـ Rolling Edit)":
     "Layered timeline: each camera on its own track, cut in place (adjust cuts with a Rolling Edit)",
   "تجربة": "Test",
