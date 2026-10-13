@@ -182,3 +182,25 @@ def test_every_channel_its_own_mono_file_in_premiere(proj, tmp_path):
         return a[ch - 1] if ch else a[0]
     src = root / "audio" / "REC_001.WAV"
     assert np.array_equal(pcm(src, 3), pcm(root / "_autocut" / "audio" / "REC_001_ch3.wav"))   # bit-exact
+
+
+def test_eight_channel_recorder(tmp_path):
+    """8+ channels (a recorder with 8 inputs): every reader must cope (PyAV
+    crashed splitting 8 channels into planes)."""
+    from autocut.audio import decode_mono, decode_windows
+    from autocut.audiocheck import check_file
+    from autocut.mics import channel_levels
+    from autocut.split import split_channels
+    sp = synth.speech(20.0, [(1, 9, "A"), (10, 19, "B")])
+    chans = [sp["A"] * (k + 1) / 8 if k % 2 == 0 else sp["B"] * (k + 1) / 8 for k in range(8)]
+    wav = tmp_path / "REC8.WAV"
+    synth.write_multichannel_wav(wav, chans, 3600.0)
+    info = probe(wav)
+    assert info.audio_channels == 8
+    assert len(decode_mono(info, 8000)) == pytest.approx(20 * 8000, abs=10)
+    assert len(decode_mono(info, 8000, channel=8)) == pytest.approx(20 * 8000, abs=10)
+    assert [len(x) for x in decode_windows(info, 8000, [2.0, 12.0], 4.0)] == [32000, 32000]
+    assert channel_levels(info, tmp_path / "w").shape[0] == 8
+    assert len(check_file(info, tmp_path / "w")["channels"]) == 8
+    mono = split_channels(info, tmp_path / "split")
+    assert sorted(mono) == list(range(1, 9)) and all(m.audio_channels == 1 for m in mono.values())

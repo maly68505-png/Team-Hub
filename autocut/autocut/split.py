@@ -17,7 +17,7 @@ from pathlib import Path
 import av
 import numpy as np
 
-from .audio import fingerprint
+from .audio import as_channels, fingerprint
 from .log import log
 from .probe import MediaInfo, ToolError, probe
 
@@ -53,18 +53,17 @@ def _write(info: MediaInfo, dst: dict[int, Path]) -> None:
             st = src.streams.audio[0]
             cc = st.codec_context
             codec = cc.name if cc.name.startswith("pcm_") else "pcm_s24le"
-            planar = cc.format.name if cc.format.is_planar else cc.format.name + "p"
-            packed = planar[:-1]
+            packed = cc.format.name[:-1] if cc.format.is_planar else cc.format.name  # see audio.as_channels
             tc = src.metadata.get("time_reference")
             for c, p in tmp.items():
                 o = av.open(str(p), "w", format="wav", options={"rf64": "auto", "write_bext": "1"})
                 if tc:
                     o.metadata["time_reference"] = tc
                 outs[c] = (o, o.add_stream(codec, rate=cc.sample_rate, layout="mono"))
-            conv = av.AudioResampler(format=planar)
+            conv = av.AudioResampler(format=packed)
             for frame in src.decode(st):
                 for f in conv.resample(frame):
-                    a = f.to_ndarray()
+                    a = as_channels(f)
                     for c, (o, s) in outs.items():
                         nf = av.AudioFrame.from_ndarray(np.ascontiguousarray(a[c - 1:c]), format=packed, layout="mono")
                         nf.sample_rate = cc.sample_rate

@@ -22,7 +22,7 @@ import av
 import numpy as np
 from scipy.signal import butter, sosfilt
 
-from .audio import fingerprint
+from .audio import as_channels, fingerprint
 from .cutlogic import _runs
 from .diarize import Segment
 from .log import log
@@ -51,11 +51,11 @@ def channel_levels(info: MediaInfo, workdir: Path, errors: list | None = None) -
             step = int(round(HOP * sr))
             sos = butter(2, 120, btype="highpass", fs=sr, output="sos")
             zi = None
-            conv = av.AudioResampler(format="fltp")
+            conv = av.AudioResampler(format="flt")  # packed: see audio.as_channels
             carry = None
             for frame in c.decode(st):
                 for f in conv.resample(frame):
-                    a = f.to_ndarray().astype(np.float64)
+                    a = as_channels(f).astype(np.float64)
                     if zi is None:
                         zi = np.zeros((a.shape[0], sos.shape[0], 2))
                     y = np.empty_like(a)

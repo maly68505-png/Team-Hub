@@ -13,6 +13,15 @@ from .probe import MediaInfo, ToolError
 DIARIZE_RATE = 16000
 
 
+def as_channels(frame) -> np.ndarray:
+    """(channels, samples) from a PACKED audio frame (format "flt", "s32", ...).
+    Planar frames are avoided on purpose: PyAV crashes splitting 8+ channels
+    into planes ("plane index 8 out of range for 8 planes"); a packed frame is
+    one interleaved plane, split here."""
+    a = frame.to_ndarray()
+    return a.reshape(-1, max(1, frame.layout.nb_channels)).T
+
+
 def _pick(a: np.ndarray, channel: int | None) -> np.ndarray:
     """(channels, n) -> mono: one channel (1-based) or all of them summed."""
     if channel and 1 <= channel <= a.shape[0]:
@@ -27,12 +36,12 @@ def decode_mono(info: MediaInfo, rate: int, channel: int | None = None) -> np.nd
     try:
         with av.open(str(info.path)) as c:
             stream = c.streams.audio[0]
-            resampler = av.AudioResampler(format="fltp", rate=rate)
+            resampler = av.AudioResampler(format="flt", rate=rate)
             for frame in c.decode(stream):
                 for out in resampler.resample(frame):
-                    chunks.append(_pick(out.to_ndarray(), channel))
+                    chunks.append(_pick(as_channels(out), channel))
             for out in resampler.resample(None):
-                chunks.append(_pick(out.to_ndarray(), channel))
+                chunks.append(_pick(as_channels(out), channel))
     except (av.error.FFmpegError, IndexError) as e:
         raise ToolError(f"could not decode audio of {info.path}: {e}") from e
     if not chunks:
@@ -59,7 +68,7 @@ def decode_windows(info: MediaInfo, rate: int, starts: list[float], length: floa
             s0 = float(st0.start_time * st0.time_base) if st0.start_time is not None else 0.0
             for start in starts:
                 c.seek(max(0, int((s0 + max(0.0, start - 1.0)) / st0.time_base)), stream=st0, backward=True)
-                state = {s.index: {"conv": av.AudioResampler(format="fltp"), "buf": [], "t0": None, "have": 0,
+                state = {s.index: {"conv": av.AudioResampler(format="flt"), "buf": [], "t0": None, "have": 0,
                                    "sr": s.codec_context.sample_rate or info.sample_rate, "done": False}
                          for s in streams}
                 for pkt in c.demux(*streams):
@@ -73,7 +82,7 @@ def decode_windows(info: MediaInfo, rate: int, starts: list[float], length: floa
                         for f in w["conv"].resample(frame):
                             if w["t0"] is None:
                                 w["t0"] = float(frame.pts * tb) - s0
-                            a = _pick(f.to_ndarray(), channel)
+                            a = _pick(as_channels(f), channel)
                             w["buf"].append(a)
                             w["have"] += len(a)
                     if w["t0"] is not None and int(w["t0"] * w["sr"]) + w["have"] >= int((start + length) * w["sr"]):
@@ -118,9 +127,11 @@ def loudest_stream(info: MediaInfo, n: int = 4, length: float = 2.0) -> int:
                 for t in starts:
                     c.seek(int(t / tb) + int((st.start_time or 0)), stream=st, backward=True)
                     got = 0.0
+                    conv = av.AudioResampler(format="flt")
                     for frame in c.decode(st):
-                        a = frame.to_ndarray().astype(np.float64)
-                        energy[k] += float(np.mean(a * a))
+                        for f in conv.resample(frame):
+                            a = as_channels(f).astype(np.float64)
+                            energy[k] += float(np.mean(a * a))
                         got += frame.samples / (frame.sample_rate or 48000)
                         if got >= length:
                             break

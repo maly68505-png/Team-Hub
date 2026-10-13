@@ -120,6 +120,12 @@ Offline Mac (Apple Silicon) tool that makes a multicam rough cut for Premiere Pr
   (override: AUTOCUT_RUNTIME_DIR), removes quarantine, deletes older runtimes. The installer pre-unpacks.
   smoke_test asserts < 200 files in the .app.
 
+### 8-channel recorders (v0.7.4)
+- "plane index 8 out of range for 8 planes" on 8-channel WAVs (segfault on Linux): PyAV's planar
+  `to_ndarray` breaks at 8+ channels. Every audio read now resamples to a PACKED format and splits
+  channels itself (`audio.as_channels`). Never use planar ("fltp", "s32p") frames.
+- Unsynced clips no longer block Full cut (v0.7.3): left out with a warning.
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.
