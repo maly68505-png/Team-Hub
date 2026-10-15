@@ -205,7 +205,10 @@ def scan(root: Path, cfg: dict) -> Project:
                 raise ScanError(f"camera folder '{n}' has no video files ({', '.join(sorted(VIDEO_EXT))})")
     else:
         cam_root, videos = discover_cameras(root, audio_dir)
-        cam_names = list(videos)
+        cam_names = [n for n in videos if n not in set(cfg.get("exclude_cameras") or [])]
+        skipped = [n for n in videos if n not in cam_names]
+        if skipped:
+            log.info("Camera folders left out (unticked): %s", ", ".join(skipped))
     if cam_root != root:
         log.info("Camera folders are in %s", cam_root)
     if cfg["long_camera"] not in cam_names:

@@ -38,7 +38,15 @@ async function api(path, body) {
     opt.headers["Content-Type"] = "application/json";
     opt.body = JSON.stringify(body);
   }
-  const r = await fetch(path, opt);
+  let r;
+  for (let attempt = 0; ; attempt++) {
+    try { r = await fetch(path, opt); break; }
+    catch (e) {  // the engine did not answer (busy disk, a moment of load): try again
+      if (attempt >= 3) throw new Error(L("لا يوجد اتصال بمحرك Autocut — أغلق البرنامج وافتحه من جديد.",
+        "No connection to the Autocut engine — quit and reopen Autocut."));
+      await new Promise((res) => setTimeout(res, 1500 * (attempt + 1)));
+    }
+  }
   const data = await r.json().catch(() => ({}));
   if (r.status === 401) throw new Error(L("انتهت الجلسة — أعد فتح Autocut", "Session expired — reopen Autocut"));
   if (!r.ok) throw new Error(data.error || r.statusText);
@@ -184,9 +192,16 @@ function renderScan() {
     if (cam.clips.some((c) => c.fps && Math.abs(c.fps - seqFps) > 0.01)) warns.push(L("fps مختلف", "different fps"));
     if (cam.clips.some((c) => !c.audio)) warns.push(L("ملف بدون صوت", "file without audio"));
     box.append(h("div", { class: "cam" + (cam.name === st.config.long_camera ? " long" : "") },
-      h("b", {}, cam.name),
+      h("label", { class: "camtoggle", title: L("شيل العلامة عشان الأداة تتجاهل الفولدر ده", "Untick to ignore this folder") },
+        h("input", { type: "checkbox", checked: true, onchange: () => toggleCamera(cam.name, false) }), h("b", {}, cam.name)),
       h("span", { class: "muted" }, L(`${cam.clips.length} ملف · ${fmtDur(dur)}`, `${cam.clips.length} file(s) · ${fmtDur(dur)}`)),
       warns.length ? h("div", { class: "warn" }, "⚠ " + warns.join(L("، ", ", "))) : null));
+  }
+  for (const name of (st.all_cameras || []).filter((c) => !(st.cameras || []).includes(c))) {
+    box.append(h("div", { class: "cam off" },
+      h("label", { class: "camtoggle" },
+        h("input", { type: "checkbox", checked: false, onchange: () => toggleCamera(name, true) }), h("b", {}, name)),
+      h("span", { class: "muted" }, L("متجاهَل", "ignored"))));
   }
   const aud = st.scan.audio;
   const nt = st.scan.takes || 1;
@@ -301,6 +316,25 @@ function audioInfo() {
     : "";
 }
 
+async function toggleCamera(name, on) {
+  try {
+    await saveConfig((cfg) => {
+      const ex = new Set(cfg.exclude_cameras || []);
+      if (on) ex.delete(name); else ex.add(name);
+      cfg.exclude_cameras = [...ex];
+      if (cfg.cut.cameras) cfg.cut.cameras = cfg.cut.cameras.filter((c) => !ex.has(c));
+    });
+    await loadProject(S.path);
+  } catch (e) { showScanError(e.message); }
+}
+
+function renderCutCams() {
+  const st = S.project, cams = st.cameras || [];
+  const chosen = st.config.cut.cameras || cams;
+  $("cutCams").replaceChildren(...cams.map((c) => h("label", { class: "chip-toggle" },
+    h("input", { type: "checkbox", value: c, checked: chosen.includes(c) }), h("span", {}, c))));
+}
+
 function readSettings(cfg) {
   cfg.long_camera = $("cfgLong").value || cfg.long_camera;
   const n = parseInt($("cfgSpeakers").value, 10);
@@ -319,6 +353,11 @@ function readSettings(cfg) {
   cfg.audio_channel = Number.isFinite(ch) && ch > 0 ? ch : null;
   if (!isXml()) cfg.sync.method = $("cfgSyncMethod").value || "audio";
   cfg.diarization.method = $("cfgSpkMethod").value || "ai";
+  const boxes = [...document.querySelectorAll("#cutCams input")];
+  if (boxes.length) {
+    const on = boxes.filter((b) => b.checked).map((b) => b.value);
+    cfg.cut.cameras = on.length && on.length < boxes.length ? on : null;
+  }
   return cfg;
 }
 
@@ -397,6 +436,7 @@ function renderSpeakers() {
   show($("secSpeakers"), !!sp);
   show($("secCut"), !!sp);
   if (!sp) return;
+  renderCutCams();
   const cfg = S.project.config;
   const mapping = cfg.speakers || {};
   const cams = (S.project.cameras || sp.cameras.filter((c) => c !== "long"));
@@ -485,6 +525,8 @@ function renderSummary() {
 
 function outputTag(name) {
   const tags = [/_\d{6}_\d+s/.test(name) ? L("تجربة", "test") : L("كامل", "full")];
+  const mc = name.match(/^multicam_(.+?)(_\d{6}_\d+s)?\.xml$/);
+  if (mc) tags.unshift(L(`مالتي كام: ${mc[1]}`, `multicam: ${mc[1]}`));
   if (name.startsWith("synced")) tags.unshift(L("مزامنة فقط", "sync only"));
   if (name.includes("_tight")) tags.push(L("بدون سكتات", "no silences"));
   if (name.includes("_layers")) tags.push(L("طبقات", "layered"));

@@ -11,6 +11,9 @@ const STATIC = {
   "قطع مبدئي تلقائي متعدد الكاميرات لبريمير": "Automatic multicam rough cut for Premiere",
   "١": "1", "٢": "2", "٣": "3", "٤": "4", "٥": "5",
   "مجلد التصوير": "Shoot folder",
+  "كاميرات القطع": "Cameras to cut to",
+  "القطع يروح بس للكاميرات المعلّمة. الباقي يفضل على مساراته متزامن ومطفي.":
+    "The cut only goes to the ticked cameras. The others stay on their tracks, synced and off.",
   "فحص الصوت": "Check audio",
   "يمر على كل ملف صوت وكل قناة من أول الحلقة لآخرها": "Goes through every audio file and channel from start to end",
   "يتأكد أن صوت كل قناة موجود طول الحلقة، وأن الملفات تُقرأ لآخرها":

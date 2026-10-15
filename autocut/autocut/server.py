@@ -208,6 +208,8 @@ def project_state(path: Path) -> dict:
             cams = list(discover_cameras(path, ad)[1])
         except ScanError:
             cams = [d for d in subdirs if not AUDIO_NAME.search(d)]
+    out["all_cameras"] = cams
+    cams = [c for c in cams if c not in set(cfg.get("exclude_cameras") or [])]
     out["cameras"] = cams
     if cams and cfg.get("long_camera") not in cams:
         # no choice yet, or a saved one that no longer exists: guess, and say so

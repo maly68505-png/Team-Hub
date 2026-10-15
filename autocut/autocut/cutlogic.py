@@ -118,6 +118,26 @@ def _rotate(pieces: list[Shot], speaker_cam: dict, pauses: list[tuple[int, int]]
     return out
 
 
+def restrict_cameras(allowed: list[str] | None, cameras: list[str], long_cam: str,
+                     speaker_cam: dict, coverage: dict) -> tuple[list[str], str, dict, dict]:
+    """cut.cameras: the cut only goes to these cameras. The others keep their
+    tracks (synced, off) but never get a shot: a speaker mapped only to cameras
+    left out goes to the wide camera (or the first allowed one)."""
+    if not allowed:
+        return cameras, long_cam, speaker_cam, coverage
+    keep = [c for c in cameras if c in allowed]
+    if not keep:
+        log.warning("cut.cameras names no camera of this shoot — cutting to all cameras")
+        return cameras, long_cam, speaker_cam, coverage
+    long_cut = long_cam if long_cam in keep else keep[0]
+    sc = {}
+    for spk, v in speaker_cam.items():
+        cams = [c for c in (v if isinstance(v, (list, tuple)) else [v]) if c in keep]
+        sc[spk] = (cams if len(cams) > 1 else cams[0]) if cams else long_cut
+    log.info("Cutting only to: %s (wide: %s)", ", ".join(keep), long_cut)
+    return keep, long_cut, sc, {c: v for c, v in coverage.items() if c in keep}
+
+
 def plan_cuts(segs: list[Segment], window: tuple[float, float], rate: Rate,
               speaker_cam: dict, cameras: list[str], long_cam: str,
               coverage: dict[str, np.ndarray], ccfg: dict,

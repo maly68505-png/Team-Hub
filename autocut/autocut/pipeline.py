@@ -7,7 +7,8 @@ import time
 from pathlib import Path
 
 from . import config as config_mod
-from .cutlogic import breakdown, keep_ranges, plan_cuts, silence_frames, speech_mask, summarize
+from .cutlogic import (breakdown, keep_ranges, plan_cuts, restrict_cameras, silence_frames, speech_mask,
+                       summarize)
 from .diarize import clip_segments, diarize, speaker_stats, write_speakers_json
 from .log import banner, log, setup
 from .probe import require_tools
@@ -91,6 +92,27 @@ def write_synced(project, syncs, window, is_test: bool, cfg: dict, out_dir: Path
     log.info("Synced XML: %s", xml_p)
     log.info("In Premiere: File > Import > %s", xml_p.name)
     return xml_p
+
+
+def write_person_multicams(project, syncs, window, cfg: dict, out_dir: Path, suffix: str) -> list[Path]:
+    """One sequence per person mapped to 2+ cameras: only that person's cameras,
+    stacked and synced, with the clean audio — in Premiere: nest it and enable
+    Multi-Camera to switch between that person's angles."""
+    import dataclasses
+    import re
+    written = []
+    for spk, v in speaker_cameras(cfg["speakers"], project.long_camera).items():
+        cams = [c for c in (v if isinstance(v, list) else [v]) if c in project.cameras]
+        cams = list(dict.fromkeys(cams))
+        if len(cams) < 2:
+            continue
+        sub = dataclasses.replace(project, cameras={c: project.cameras[c] for c in cams}, long_camera=cams[0])
+        tl = Timeline(sub, syncs, window, use_low=False)
+        p = out_dir / f"multicam_{re.sub(r'[^0-9A-Za-z_-]+', '_', spk)}{suffix}.xml"
+        xmeml.write(p, sub, tl, None, cfg, f"{spk} multicam ({', '.join(cams)})" + time.strftime(" %H.%M"))
+        written.append(p)
+        log.info("Multicam of %s (%s): %s", spk, ", ".join(cams), p.name)
+    return written
 
 
 def check_speakers(segs, cams: list[str], cfg: dict, workdir: Path, wav16k: Path, rate,
@@ -250,9 +272,11 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
     banner("5. Cut")
     tl = Timeline(project, syncs, window, use_low=allow_low_confidence)
     speaker_cam = speaker_cameras(cfg["speakers"], project.long_camera)
+    cut_cams, cut_long, speaker_cam, coverage = restrict_cameras(
+        cfg["cut"].get("cameras"), cams, project.long_camera, speaker_cam, tl.coverage)
     quiet = silence_frames(ref.x, ref.rate, window, project.rate)
-    shots = plan_cuts(clip_segments(segs, t0, t1), window, project.rate, speaker_cam, cams,
-                      project.long_camera, tl.coverage, cfg["cut"], quiet)
+    shots = plan_cuts(clip_segments(segs, t0, t1), window, project.rate, speaker_cam, cut_cams,
+                      cut_long, coverage, cfg["cut"], quiet)
     summarize(shots, project.rate)
 
     cc = cfg["cut"]
@@ -275,6 +299,7 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
     prepare_split(project, cfg)
     xmeml.write(xml_p, project, tl, shots, cfg, name, tm)
     write_cuts_csv(csv_p, shots, tl, project.rate, tm)
+    write_person_multicams(project, syncs, window, cfg, out_dir, _test_suffix(t0, t1) if is_test else "")
     summary = dict(breakdown(shots, project.rate), full=not is_test, sequence=name, xml=xml_p.name,
                    length=round(tm.total / project.rate.float, 1),
                    removed=round(tm.removed / project.rate.float, 1))

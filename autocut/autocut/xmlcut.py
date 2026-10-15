@@ -30,7 +30,7 @@ import numpy as np
 from scipy.io import wavfile
 
 from .audio import DIARIZE_RATE, Reference, decode_windows, fingerprint
-from .cutlogic import Shot, _runs, breakdown, plan_cuts, silence_frames, summarize
+from .cutlogic import Shot, _runs, breakdown, plan_cuts, restrict_cameras, silence_frames, summarize
 from .diarize import clip_segments, diarize
 from .log import banner, log
 from .probe import MediaInfo, ToolError, probe
@@ -570,8 +570,10 @@ def run_xml(xml_path: Path, cfg: dict, until: str, start: str | None, duration: 
     coverage = {c: v[f0:f0 + n] for c, v in sq.coverage().items()}
     coverage = {c: np.pad(v, (0, n - len(v))) for c, v in coverage.items()}
     quiet = silence_frames(ref.x, ref.rate, window, rate)
-    shots = plan_cuts(clip_segments(segs, t0, t1), window, rate, speaker_cameras(cfg["speakers"], long_cam),
-                      cams, long_cam, coverage, cfg["cut"], quiet)
+    cut_cams, cut_long, spk_cam, coverage = restrict_cameras(
+        cfg["cut"].get("cameras"), cams, long_cam, speaker_cameras(cfg["speakers"], long_cam), coverage)
+    shots = plan_cuts(clip_segments(segs, t0, t1), window, rate, spk_cam, cut_cams, cut_long,
+                      coverage, cfg["cut"], quiet)
     summarize(shots, rate)
     cc = cfg["cut"]
     tm = silence_map(n, segs, window, rate, quiet, cc)

@@ -13,6 +13,7 @@ DEFAULTS = {
     "audio_mode": "auto",  # auto | tracks (simultaneous, mixed) | takes (one after another)
     "audio_channel": None,  # clean audio: use only this channel (1-based, e.g. the recorder's mix); None = all
     "cameras": None,
+    "exclude_cameras": [],  # camera folders to ignore (a promo folder that cannot be moved, ...)
     "speakers": {},
     "sync": {
         "method": "audio",        # audio | timecode | timecode+audio (timecode placement checked by audio)
@@ -49,6 +50,7 @@ DEFAULTS = {
         "rotate_min_shot": 4.0,   # presenter on several cameras: shortest shot before an angle change
         "rotate_max_shot": 9.0,   # ... and the longest (cuts at the longest pause in between)
         "pause_min": 0.25,        # a pause at least this long is a place to change angle
+        "cameras": None,          # cut only to these cameras (None = all); the others stay on their tracks
         "remove_silence": False,  # shorten long pauses on every track (jump cuts)
         "silence_max": 0.6,       # pauses longer than this are shortened ...
         "silence_pad": 0.15,      # ... to this much on each side of the cut
@@ -98,6 +100,9 @@ def load(path: Path, require_long: bool = True) -> dict:
                        for k, v in (cfg["speakers"] or {}).items()}
     cfg["sync"]["overrides"] = {
         str(k).replace("\\", "/"): float(v) for k, v in (cfg["sync"]["overrides"] or {}).items()}
+    cfg["exclude_cameras"] = [str(c) for c in (cfg["exclude_cameras"] or [])]
+    if cfg["cut"]["cameras"] is not None:
+        cfg["cut"]["cameras"] = [str(c) for c in cfg["cut"]["cameras"]] or None
     if require_long and not cfg["long_camera"]:
         raise ConfigError("config: 'long_camera' is required (folder name of the wide shot)")
     if cfg["sync"]["method"] not in ("audio", "timecode", "timecode+audio"):

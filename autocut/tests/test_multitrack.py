@@ -69,7 +69,8 @@ def test_timecode_plus_audio(proj):
     cfg(proj, sync="  method: timecode+audio\n")
     assert run(proj, until="sync") == EXIT_OK
     rows = sync_rows(proj)
-    assert "timecode agrees" in rows["CAM_A/C0001.MP4"]["notes"]
+    assert "near its timecode" in rows["CAM_A/C0001.MP4"]["notes"]
+    assert float(rows["CAM_A/C0001.MP4"]["offset_s"]) == pytest.approx(3.0, abs=0.002)
     assert rows["CAM_B/B_001.MP4"]["method"] == "audio"      # no timecode: audio alone
     assert float(rows["CAM_B/B_001.MP4"]["offset_s"]) == pytest.approx(10.3, abs=0.002)
 
@@ -204,3 +205,29 @@ def test_eight_channel_recorder(tmp_path):
     assert len(check_file(info, tmp_path / "w")["channels"]) == 8
     mono = split_channels(info, tmp_path / "split")
     assert sorted(mono) == list(range(1, 9)) and all(m.audio_channels == 1 for m in mono.values())
+
+
+def test_retakes_placed_by_timecode(tmp_path):
+    """Two takes with the SAME lines (a retake): audio alone cannot tell them
+    apart; timecode says which take, audio fine-tunes."""
+    sp = synth.speech(60.0, [(1, 20, "A"), (21, 40, "B"), (41, 59, "C")], seed=3)
+    lines = (sp["A"] + sp["B"] + sp["C"]).astype(np.float32)
+    rng = np.random.default_rng(1)
+    root = tmp_path / "p"
+    take1, take2 = 36000.0, 36000.0 + 300.0          # 10:00:00 and 10:05:00
+    for name, tc, seed in (("T1.WAV", take1, 1), ("T2.WAV", take2, 2)):
+        x = lines + rng.normal(0, 0.002, len(lines)).astype(np.float32)
+        synth.write_multichannel_wav(root / "audio" / name, [x * 0.8, x * 0.8], tc)
+    for cam, i in (("CAM_A", 0), ("CAM_B", 1)):
+        for k, (tc_s, start_in_take) in enumerate(((take1 + 2.0 + i, 2.0 + i), (take2 + 3.0 + i, 3.0 + i))):
+            a = synth.scratch(synth.timewarp(lines, start_in_take, 0.0, 50.0), seed=10 * i + k)
+            h, m, s_ = int(tc_s // 3600), int(tc_s // 60 % 60), tc_s % 60
+            synth.write_video(root / cam / f"C{k + 1:03d}.MP4", a, tc=f"{h:02d}:{m:02d}:{int(s_):02d}:00")
+    (root / "config.yaml").write_text("fps: 25\nlong_camera: CAM_A\nspeakers:\nsync:\n  method: timecode+audio\n")
+    run(root, until="sync")
+    rows = sync_rows(root)
+    # positions on the timeline (takes at their timecode: take 2 starts 300 s after take 1)
+    want = {"CAM_A/C001.MP4": 2.0, "CAM_A/C002.MP4": 303.0, "CAM_B/C001.MP4": 3.0, "CAM_B/C002.MP4": 304.0}
+    for clip, pos in want.items():
+        assert rows[clip]["status"] == "ok", clip
+        assert float(rows[clip]["offset_s"]) == pytest.approx(pos, abs=0.002), clip

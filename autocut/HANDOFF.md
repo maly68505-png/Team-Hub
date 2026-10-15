@@ -126,6 +126,17 @@ Offline Mac (Apple Silicon) tool that makes a multicam rough cut for Premiere Pr
   channels itself (`audio.as_channels`). Never use planar ("fltp", "s32p") frames.
 - Unsynced clips no longer block Full cut (v0.7.3): left out with a warning.
 
+### Folder ticks, cut cameras, per-person multicam, timecode-guided sync (v0.8.0)
+- `exclude_cameras`: unticked camera folders (step 1 checkboxes) are ignored entirely (a promo folder
+  the user cannot move). `cut.cameras`: the cut only goes to these (step 5 chips); others stay on their
+  tracks. `cutlogic.restrict_cameras`.
+- After a cut, `multicam_<speaker>.xml` per speaker mapped to 2+ cameras (their cameras stacked +
+  clean audio) — nest + Enable Multi-Camera in Premiere.
+- `sync.method: timecode+audio` with timecoded clean audio = `takes.place_tc_guided`: takes at their
+  timecode, each camera window searched only ±2 s around its timecode position (retakes repeating the
+  same lines no longer confuse it); no audio match -> placed by timecode. Clips without TC use the bank.
+- UI `api()` retries network failures ("Load failed") 3 times.
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.

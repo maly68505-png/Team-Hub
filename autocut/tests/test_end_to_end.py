@@ -240,3 +240,29 @@ def test_layered_timeline(project, tmp_path):
         return m
     a, b = src_at(vt), src_at(vt_normal[1:])
     assert a == b
+
+
+def test_folders_cut_cameras_and_person_multicam(project, tmp_path):
+    """exclude_cameras ignores a folder; cut.cameras limits the cut; a speaker on
+    several cameras gets a multicam sequence of their own."""
+    root = tmp_path / "p"
+    shutil.copytree(project, root, ignore=shutil.ignore_patterns("_autocut"))
+    (root / "config.yaml").write_text(           # its own config: other tests edit the shared one
+        "fps: 25\nlong_camera: CAM_WIDE\nexclude_cameras: [CAM_C]\n"
+        "speakers:\n  SPEAKER_A: [CAM_A, CAM_WIDE]\n  SPEAKER_B: CAM_B\n  SPEAKER_C: CAM_B\n"
+        "diarization:\n  min_speaker_seconds: 5\n"
+        "cut:\n  cameras: [CAM_A, CAM_WIDE]\noutput:\n  layered: false\n")
+    assert run(root, rttm=root / "truth.rttm") == EXIT_OK
+    out = root / "_autocut" / "output"
+    seq, vt, _ = xml_tracks(out / "roughcut.xml")
+    names = {c.findtext("name").split(" | ")[0] for tr in vt[1:] for c in tr.findall("clipitem")}
+    assert "CAM_C" not in names and "CAM_B" in names              # C ignored, B still on its track
+    with open(out / "cuts.csv", encoding="utf-8-sig") as fh:
+        cams = {r["camera"] for r in csv.DictReader(fh)}
+    assert cams <= {"CAM_A", "CAM_WIDE"}                           # B speaks, but is not a cut camera
+    mc = out / "multicam_SPEAKER_A.xml"
+    seq, vt, at = xml_tracks(mc)
+    assert len(vt) == 2
+    assert {c.findtext("name").split(" | ")[0] for tr in vt for c in tr.findall("clipitem")} == {"CAM_A", "CAM_WIDE"}
+    assert at, "the clean audio is in the multicam sequence"
+    assert not (out / "multicam_SPEAKER_B.xml").exists()          # one camera: no multicam

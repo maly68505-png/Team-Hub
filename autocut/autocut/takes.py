@@ -491,15 +491,151 @@ def place_takes(project: Project, takes: list[Take], cfg: dict) -> dict[str, Syn
 
 def place(project: Project, takes: list[Take], cfg: dict) -> dict[str, SyncResult]:
     """sync.method: audio (camera samples against the clean audio), timecode
-    (embedded timecode only: nothing is read), or timecode+audio (audio
-    placement, checked against timecode; timecode fills in where audio is weak)."""
+    (embedded timecode only: nothing is read), or timecode+audio (timecode says
+    which take and roughly where, audio fine-tunes within a few seconds — safe
+    with retakes that repeat the same lines)."""
     method = cfg["sync"]["method"]
     if method == "timecode":
         return place_by_timecode(project, takes, cfg)
-    results = place_takes(project, takes, cfg)
     if method == "timecode+audio":
+        tt, _ = _tc_values(project, takes)
+        if all(v is not None for v in tt):
+            return place_tc_guided(project, takes, cfg)
+        log.warning("timecode+audio: the clean audio has no timecode — syncing by audio, "
+                    "checked against the camera timecode")
+        results = place_takes(project, takes, cfg)
         check_timecode(project, takes, results, cfg)
-    return results
+        return results
+    return place_takes(project, takes, cfg)
+
+
+TC_SEARCH_S = 2.0   # timecode+audio: audio searched this far either side of the timecode position
+
+
+def _near(prep: _Prepared, x8: np.ndarray, tau0: float, rate: int, search: float):
+    """Best match of camera window x8 in a take around take time tau0 (start).
+    -> (tau start, ncc, ratio) or None."""
+    f = bandpass(x8, rate, 100, 3000)
+    a = int(round((tau0 - search) * rate))
+    b = a + len(f) + int(2 * search * rate)
+    seg = np.zeros(b - a, np.float32)
+    lo, hi = max(0, a), min(len(prep.f), b)
+    if hi - lo < len(f):
+        return None
+    seg[lo - a:hi - a] = prep.f[lo:hi]
+    n = ncc(seg, f)
+    j = int(np.argmax(n))
+    excl = int(0.02 * rate)
+    rest = np.concatenate([n[:max(0, j - excl)], n[j + excl + 1:]])
+    ratio = float(n[j]) / max(float(np.max(rest)) if len(rest) else 0.0, 1e-6)
+    return (a + j + _parabolic(n, j)) / rate, float(n[j]), ratio
+
+
+def place_tc_guided(project: Project, takes: list[Take], cfg: dict) -> dict[str, SyncResult]:
+    scfg = cfg["sync"]
+    rate, crate = int(scfg["analysis_rate"]), int(scfg["coarse_rate"])
+    clips = project.all_clips()
+    frame_s = 1.0 / project.rate.float
+    tt, ct = _tc_values(project, takes)
+    t0 = min(tt)
+    for t, v in zip(takes, tt):
+        t.position, t.linked = v - t0, True
+    key = hashlib.sha1(json.dumps({
+        "v": TAKES_VERSION, "mode": "tc-guided", "audio": fingerprint([f.path for t in takes for f in t.files]),
+        "clips": fingerprint([c.path for c in clips]), "groups": [[f.path.name for f in t.files] for t in takes],
+        "cfg": {k: v for k, v in scfg.items() if k != "overrides"}, "channel": cfg.get("audio_channel")},
+        sort_keys=True).encode()).hexdigest()[:16]
+    cache_p = project.workdir / "takes.json"
+    try:
+        data = json.loads(cache_p.read_text())
+        if data.get("key") == key:
+            log.info("Take placement (timecode + audio): cached")
+            return _apply_overrides({r["rel"]: SyncResult.from_dict(r) for r in data["clips"]}, clips, scfg)
+    except (OSError, ValueError, KeyError):
+        pass
+
+    log.info("Takes placed by their timecode: %s", ", ".join(f"{t.name} @ {fmt_seconds(t.position)}" for t in takes))
+    prep = [_Prepared(_mix(t, rate, cfg.get("audio_channel")), rate, crate) for t in takes]
+    bank = _Bank(prep, crate)
+    win, every = float(scfg["window_seconds"]), float(scfg["sample_every"])
+    todo = [c for c in clips if c.info.has_audio]
+
+    def read(clip):
+        starts = window_starts(clip.info.duration, win, every)
+        return starts, decode_windows(clip.info, rate, starts, min(win, clip.info.duration))
+
+    results: dict[str, SyncResult] = {}
+    started = time.time()
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {c.rel: pool.submit(read, c) for c in todo}
+        for n, clip in enumerate(todo, 1):
+            starts, xs = futures[clip.rel].result()
+            r = SyncResult(clip.rel, clip.info.duration)
+            av_off = clip.info.av_offset
+            v_tc = ct.get(clip.rel)
+            offs = []   # (video time of the window centre, reference - video)
+            if v_tc is not None:
+                for v0, x in zip(starts, xs):
+                    if len(x) < 2 * rate or float(np.std(x)) < 1e-5:
+                        continue
+                    ref_t = (v_tc - t0) + v0 + av_off           # where timecode says this window is
+                    k = next((i for i, t in enumerate(takes) if t.position <= ref_t < t.position + t.duration), None)
+                    if k is None:
+                        continue
+                    m = _near(prep[k], x, ref_t - takes[k].position, rate, TC_SEARCH_S)
+                    if m is None or m[1] < float(scfg["min_ncc"]) or m[2] < 1.3:
+                        continue
+                    w = len(x) / rate
+                    offs.append((v0 + av_off + w / 2, takes[k].position + m[0] + w / 2 - (v0 + av_off + w / 2)))
+            else:  # no timecode on this clip: search every take, as with audio sync
+                pts = window_points(bank, prep, list(zip(starts, xs)), rate, crate, scfg)
+                for ti, e in edges_from_points(pts, scfg).items():
+                    offs += [(v + av_off, takes[ti].position + tau - (v + av_off)) for tau, v, _ in e["points"]]
+            if offs:
+                vv, oo = np.array([p[0] for p in offs]), np.array([p[1] for p in offs])
+                a, b, keep = _line(vv, oo, tol=0.010)
+                kept = int(keep.sum())
+            else:
+                kept = 0
+            if kept >= 2 or (kept == 1 and v_tc is not None):
+                vk, ok = vv[keep], oo[keep]
+                span = float(vk.max() - vk.min()) if kept > 1 else 0.0
+                r.offset, r.method = float(np.median(ok)), "audio"
+                if span >= DRIFT_SPAN_S and abs(b) * 1e6 <= float(scfg["max_drift_ppm"]):
+                    r.drift_measured = float(b)
+                    if abs(b) * clip.info.duration > float(scfg["drift_correct_frames"]) * frame_s:
+                        r.drift, r.offset = float(b), float(a)
+                r.confidence = 1.0 if kept >= 3 else 0.8
+                r.low = False
+                r.notes.append(f"{kept} audio match(es)" + (" near its timecode" if v_tc is not None else ""))
+                if v_tc is not None:
+                    r.notes.append(f"timecode {clip.info.start_tc}: {(r.offset - (v_tc - t0)) * 1000:+.0f} ms")
+            elif v_tc is not None and _tc_take(takes, tt, v_tc, clip.info.duration) is not None:
+                r.offset, r.method, r.confidence, r.low = v_tc - t0, "timecode", 0.7, False
+                r.notes.append(f"audio did not confirm — placed by timecode ({clip.info.start_tc})")
+            else:
+                r.method = "failed" if v_tc is None else "timecode"
+                r.notes.append("no timecode and no audio match" if v_tc is None else
+                               "its timecode is outside every take of the clean audio")
+            results[clip.rel] = r
+            log.info("  [%d/%d] %-34s %2d samples -> %s", n, len(todo), clip.rel, len(starts),
+                     "LOW" if r.low else f"{r.method} ({kept} match)")
+    for clip in clips:
+        if clip.rel not in results:
+            r = SyncResult(clip.rel, clip.info.duration)
+            if ct.get(clip.rel) is not None and _tc_take(takes, tt, ct[clip.rel], clip.info.duration) is not None:
+                r.offset, r.method, r.confidence, r.low = ct[clip.rel] - t0, "timecode", 0.7, False
+                r.notes.append("no audio stream — placed by timecode")
+            else:
+                r.method = "failed"
+                r.notes.append("no audio stream")
+            results[clip.rel] = r
+    log.info("Camera audio read in %.0fs", time.time() - started)
+    cache_p.parent.mkdir(parents=True, exist_ok=True)
+    cache_p.write_text(json.dumps({"key": key, "takes": [{"name": t.name, "position": t.position, "linked": True,
+                                                          "notes": []} for t in takes],
+                                   "clips": [r.to_dict() for r in results.values()]}, indent=1))
+    return _apply_overrides(results, clips, scfg)
 
 
 def _tc_values(project: Project, takes: list[Take]):

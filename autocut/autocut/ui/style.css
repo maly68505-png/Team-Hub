@@ -150,3 +150,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
 .chk-row i.missing { background: var(--bad); }
 .chk-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin-top: 4px; }
 .chk-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-inline-end: 4px; vertical-align: middle; }
+
+.camtoggle { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.camtoggle input { margin: 0; accent-color: var(--accent); }
+.cam.off { opacity: .5; }
