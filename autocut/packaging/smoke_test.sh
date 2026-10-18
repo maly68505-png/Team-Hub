@@ -26,6 +26,37 @@ print("torch", torch.__version__, "mps", torch.backends.mps.is_available(), "av"
 assert os.environ["PYANNOTE_METRICS_ENABLED"] == "false"
 PY
 
+echo "==> speech to text with the model inside the app"
+MODEL="$APP/Contents/Resources/models/whisper-large-v3-turbo-8bit"
+test -f "$MODEL/config.json" && test -f "$MODEL/weights.safetensors"
+du -sh "$MODEL"
+SAID="$AUTOCUT_HOME/hello16.wav"
+if say -o "$AUTOCUT_HOME/hello.aiff" "Hello, this is a test of the automatic rough cut." 2>/dev/null; then
+  ffmpeg -v error -y -i "$AUTOCUT_HOME/hello.aiff" -ar 16000 -ac 1 -c:a pcm_s16le "$SAID"
+else
+  echo "    (no speech synthesis on this Mac: the model only has to run)"
+  SAID=""
+fi
+AUTOCUT_WHISPER_MODEL="$MODEL" "$PY" - "$SAID" <<'PY'
+import sys, time
+import numpy as np
+from scipy.io import wavfile
+from autocut import transcribe
+assert transcribe.status()["ready"], transcribe.status()
+if sys.argv[1]:
+    sr, x = wavfile.read(sys.argv[1])
+    x = x.astype(np.float32) / 32768
+else:
+    x = (0.01 * np.random.default_rng(0).normal(0, 1, 16000 * 5)).astype(np.float32)
+t = time.time()
+segs = transcribe._run_chunk(x, str(transcribe.model_path()), "en")
+text = " ".join(s["text"] for s in segs).lower()
+print(f"    {time.time() - t:.1f} s: {text!r}")
+if sys.argv[1]:
+    assert "hello" in text and "test" in text, text
+    assert all(s["words"] for s in segs), "word timings missing"
+PY
+
 echo "==> native app binary"
 file "$APP/Contents/MacOS/Autocut" | grep -q "Mach-O 64-bit executable arm64"
 plutil -lint "$APP/Contents/Info.plist"

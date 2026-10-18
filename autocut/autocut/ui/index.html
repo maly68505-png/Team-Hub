@@ -85,11 +85,23 @@
         <input id="cfgSpeakers" type="number" min="1" max="20" placeholder="تلقائي">
       </label>
     </div>
+    <div class="grid">
+      <label class="check"><input id="cfgTranscript" type="checkbox"> تفريغ الكلام: ترجمة SRT + نص الحلقة + ماركرز المواضيع</label>
+      <label id="langBox">لغة الكلام
+        <select id="cfgLanguage">
+          <option value="ar">عربي</option>
+          <option value="en">إنجليزي</option>
+          <option value="">تلقائي</option>
+        </select>
+      </label>
+    </div>
+    <label class="check"><input id="cfgVideoCheck" type="checkbox"> فحص الصورة: سوداء، متجمدة، محروقة، مش واضحة، فريمات ناقصة، كاميرا وقفت</label>
     <div class="row">
-      <button id="btnCheck" type="button" title="يمر على كل ملف صوت وكل قناة من أول الحلقة لآخرها">فحص الصوت</button>
+      <button id="btnCheck" type="button" title="يمر على كل ملف صوت وكل قناة من أول الحلقة لآخرها">فحص الصوت والصورة</button>
       <small class="muted">يتأكد أن صوت كل قناة موجود طول الحلقة، وأن الملفات تُقرأ لآخرها</small>
     </div>
     <div id="checkBox"></div>
+    <div id="mediaBox"></div>
     <details>
       <summary>قواعد القطع (متقدم)</summary>
       <div class="grid">
@@ -155,8 +167,23 @@
       <button id="btnTest" type="button">تجربة</button>
       <button id="btnFull" class="primary" type="button">القطع الكامل</button>
     </div>
+    <div class="row">
+      <button id="btnQueueAdd" type="button" title="القطع الكامل للحلقة دي يشتغل في الطابور، بعد اللي قبلها">أضف للطابور</button>
+    </div>
     <div id="summary"></div>
     <div id="outputs"></div>
+  </section>
+
+  <!-- queue -->
+  <section class="card hidden" id="secQueue">
+    <h2>طابور الحلقات</h2>
+    <p class="muted">كل حلقة بإعداداتها المحفوظة. شغّل الطابور وسيب الجهاز — لو حلقة فيها مشكلة، الطابور يكمل اللي بعدها.</p>
+    <div id="queueList"></div>
+    <div class="row">
+      <button id="btnQueueStart" class="primary" type="button">شغّل الطابور</button>
+      <button id="btnQueueStop" type="button" title="الحلقة الحالية تكمل، ومفيش حلقة جديدة تبدأ">وقّف بعد الحالية</button>
+      <button id="btnQueueClear" type="button">امسح المنتهية</button>
+    </div>
   </section>
 </main>
 
@@ -194,6 +221,8 @@
     </div>
     <h3>مشاركة مع الفريق</h3>
     <div class="row"><button id="btnExport" type="button">تصدير النموذج إلى مجلد…</button></div>
+    <h3>نموذج تفريغ الكلام</h3>
+    <p id="mdlTranscribe" class="muted"></p>
     <div class="row end"><button value="close">إغلاق</button></div>
   </form>
 </dialog>

@@ -18,7 +18,7 @@ from .sync import SyncResult, report_sync, write_sync_csv
 from .takes import build_reference_takes, group_takes, place
 from .timecode import fmt_seconds, parse_time
 from .timeline import TimeMap, Timeline
-from . import audiocheck, automap, mics, split, xmeml, xmlcut
+from . import audiocheck, automap, mediacheck, mics, split, topics, transcribe, xmeml, xmlcut
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -175,6 +175,72 @@ def silence_map(n: int, segs, window, rate, quiet, cc: dict) -> TimeMap:
     return tm
 
 
+def seq_frame(t: float, t0: float, rate, tm: TimeMap) -> int | None:
+    """Clean-audio seconds -> frame on the output sequence (the next kept frame when
+    t falls in removed silence; None outside the sequence)."""
+    f = rate.frames(t - t0)
+    n = tm.total + tm.removed
+    if f < 0 or f >= n:
+        return None
+    parts = tm.split(f, n)
+    return parts[0][0] if parts else None
+
+
+def speaker_names(cfg: dict, long_camera: str | None) -> dict:
+    """Speaker label -> the name shown in the transcript (its camera)."""
+    out = {}
+    for spk, cams in (cfg.get("speakers") or {}).items():
+        cams = cams if isinstance(cams, list) else [cams]
+        names = [long_camera if c == "long" else c for c in cams if c]
+        if names:
+            out[spk] = names[0]
+    return out
+
+
+def transcript_outputs(sentences, window, rate, tm: TimeMap, cfg: dict, out_dir: Path, suffix: str,
+                       tc_base: int, names: dict) -> tuple[list, int]:
+    """transcript*.json/.srt/.txt; returns (topic markers, number of topics)."""
+    if sentences is None:
+        return [], 0
+    t0 = window[0]
+    tcfg = cfg["transcript"]
+    transcribe.save_json(out_dir / f"transcript{suffix}.json", sentences)
+    n = transcribe.write_srt(out_dir / f"transcript{suffix}.srt", sentences, t0, rate, tm,
+                             int(tcfg["srt_max_chars"]))
+    transcribe.write_txt(out_dir / f"transcript{suffix}.txt", sentences, t0, rate, tc_base, tm, names)
+    log.info("Subtitles: %s (%d cues)", out_dir / f"transcript{suffix}.srt", n)
+    markers = []
+    if tcfg.get("topics", True):
+        found = topics.find_topics(sentences, float(tcfg["topic_min_minutes"]))
+        for i, (t, title) in enumerate(found, 1):
+            f = seq_frame(t, t0, rate, tm)
+            if f is not None:
+                markers.append((f, f"{i}. {title}", "topic"))
+        log.info("Topics: %d marker(s)", len(markers))
+    return markers, len(markers)
+
+
+def media_markers(res: dict | None, window, rate, tm: TimeMap) -> list:
+    out = []
+    for t, name, comment in mediacheck.markers(res or {}):
+        f = seq_frame(t, window[0], rate, tm)
+        if f is not None:
+            out.append((f, name, comment))
+    return out
+
+
+def heavy_steps(project, syncs, ref, window, cfg: dict, workdir: Path, out_dir: Path, segs,
+                video: bool = True):
+    """Picture check + speech to text (both cached; neither ever stops the cut)."""
+    media = None
+    if cfg["check"]["video"] and video:
+        try:
+            media = mediacheck.run_media_check(project, workdir, out_dir, float(cfg["check"]["sample_every"]), syncs)
+        except Exception as e:  # noqa: BLE001 — a check must never stop the cut
+            log.warning("picture check skipped: %s", e)
+    return media, transcribe.run_stage(ref, window, cfg, workdir, segs)
+
+
 def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
         start: str | None = None, duration: str | None = None, rttm: Path | None = None,
         diarize_full: bool = False, allow_low_confidence: bool = False,
@@ -203,7 +269,13 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
     if until == "scan":
         return EXIT_OK
     if until == "check":
-        return audiocheck.run_check(project.audio, workdir, workdir / "output")
+        code = audiocheck.run_check(project.audio, workdir, workdir / "output")
+        if cfg["check"]["video"]:
+            try:
+                mediacheck.run_media_check(project, workdir, workdir / "output", float(cfg["check"]["sample_every"]))
+            except Exception as e:  # noqa: BLE001 — the audio check result still stands
+                log.warning("picture check failed: %s", e)
+        return code
 
     rate = int(cfg["sync"]["analysis_rate"])
     banner("2-3. Sync: " + {"audio": "camera samples against the clean audio",
@@ -254,6 +326,10 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
     if code == EXIT_NEED_MAPPING and lows:
         log.warning("(Also: %d clip(s) have LOW sync confidence — see above.)", len(lows))
     if code is not None:
+        if until == "run" and not is_test:
+            # a full run (or an overnight queue) stopped for the speaker cameras: do the slow,
+            # mapping-free steps now (both cached), so the cut after the mapping is quick
+            heavy_steps(project, syncs, ref, window, cfg, workdir, out_dir, segs)
         return code
     if until == "diarize":
         return EXIT_OK
@@ -268,6 +344,9 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
             log.warning("%d clip(s) could not be synced and are left out of the cut: %s", len(lows), names)
         log.warning("To use one: type its start (seconds into the clean audio) in the sync table "
                     "(sync.overrides).")
+
+    media, sentences = heavy_steps(project, syncs, ref, window, cfg, workdir, out_dir, segs,
+                                   video=not is_test)
 
     banner("5. Cut")
     tl = Timeline(project, syncs, window, use_low=allow_low_confidence)
@@ -297,12 +376,18 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
         _test_name(t0, t1) if is_test else " FULL") + (
         " no-silence" if cc["remove_silence"] else "") + (" layers" if layered else "") + time.strftime(" %H.%M")  # tells re-imports apart
     prepare_split(project, cfg)
-    xmeml.write(xml_p, project, tl, shots, cfg, name, tm)
+    tsuffix = (_test_suffix(t0, t1) if is_test else "") + ("_tight" if cc["remove_silence"] else "")
+    markers, n_topics = transcript_outputs(sentences, window, project.rate, tm, cfg, out_dir, tsuffix,
+                                           project.rate.frames(t0), speaker_names(cfg, project.long_camera))
+    markers += media_markers(media, window, project.rate, tm)
+    xmeml.write(xml_p, project, tl, shots, cfg, name, tm, markers)
     write_cuts_csv(csv_p, shots, tl, project.rate, tm)
     write_person_multicams(project, syncs, window, cfg, out_dir, _test_suffix(t0, t1) if is_test else "")
     summary = dict(breakdown(shots, project.rate), full=not is_test, sequence=name, xml=xml_p.name,
                    length=round(tm.total / project.rate.float, 1),
-                   removed=round(tm.removed / project.rate.float, 1))
+                   removed=round(tm.removed / project.rate.float, 1),
+                   transcript=sentences is not None, topics=n_topics,
+                   picture_problems=sum(len(c["issues"]) for c in (media or {}).get("cameras", [])))
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
     log.info("Premiere XML: %s", xml_p)
     log.info("Cut list:     %s", csv_p)

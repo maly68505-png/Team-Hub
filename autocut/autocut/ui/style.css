@@ -154,3 +154,6 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
 .camtoggle { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .camtoggle input { margin: 0; accent-color: var(--accent); }
 .cam.off { opacity: .5; }
+.issue { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; font-size: 13px; margin: 3px 0; }
+.issue .ico { width: 18px; text-align: center; flex: none; }
+.issue.warn .ico { color: var(--warn); } .issue.bad .ico { color: var(--bad); }

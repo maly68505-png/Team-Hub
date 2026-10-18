@@ -326,9 +326,20 @@ class _OneTake:
         self.files, self.position = list(files), 0.0
 
 
+def add_markers(seq: ET.Element, markers: list[tuple[int, str, str]] | None) -> None:
+    """Sequence markers (Premiere shows them on the timeline ruler): (frame, name, comment)."""
+    for frame, name, comment in sorted(markers or []):
+        m = _sub(seq, "marker")
+        _sub(m, "name", name)
+        _sub(m, "comment", comment)
+        _sub(m, "in", int(frame))
+        _sub(m, "out", -1)
+
+
 def write(path: Path, project: Project, tl: Timeline, shots: list[Shot] | None, cfg: dict, name: str,
-          tm: TimeMap | None = None) -> None:
+          tm: TimeMap | None = None, markers: list[tuple[int, str, str]] | None = None) -> None:
     root = Writer(project, tl, cfg, tm).build(shots, name)
+    add_markers(root.find("sequence"), markers)
     ET.indent(root, space="  ")
     body = ET.tostring(root, encoding="unicode")
     Path(path).write_text('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE xmeml>\n' + body + "\n",

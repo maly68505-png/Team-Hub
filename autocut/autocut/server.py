@@ -78,12 +78,101 @@ class State:
         self.job: Job | None = None
         self.last_seen = time.time()
         self.lock = threading.Lock()
+        self.queue = Queue(self)
+
+
+QUEUE_KINDS = ("check", "sync", "diarize", "run")
+# exit code -> queue item status (see pipeline.EXIT_*)
+QUEUE_STATUS = {0: "done", 2: "needs_speakers", 3: "weak_sync"}
+
+
+class Queue:
+    """Episodes run one after another (overnight): each with its own saved settings.
+    A failed episode does not stop the others."""
+
+    def __init__(self, state: "State"):
+        self.state = state
+        self.items: list[dict] = []
+        self.active = False
+        self.n = 0
+        self.current: dict | None = None
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def add(self, path: str, kind: str) -> dict:
+        if kind not in QUEUE_KINDS:
+            raise ValueError(f"cannot queue {kind}")
+        path = str(Path(path).expanduser().resolve())
+        for it in self.items:
+            if it["path"] == path and it["kind"] == kind and it["status"] in ("waiting", "running"):
+                return it
+        self.n += 1
+        it = {"id": self.n, "path": path, "name": Path(path).name, "kind": kind, "status": "waiting",
+              "code": None, "started": None, "ended": None}
+        self.items.append(it)
+        return it
+
+    def remove(self, item_id: int) -> None:
+        self.items = [it for it in self.items if it["id"] != item_id or it["status"] == "running"]
+
+    def clear_finished(self) -> None:
+        self.items = [it for it in self.items if it["status"] in ("waiting", "running")]
+
+    def to_dict(self) -> dict:
+        return {"active": self.active, "items": self.items}
+
+    def _loop(self):
+        while True:
+            time.sleep(1.0)
+            try:
+                self._tick()
+            except Exception:  # noqa: BLE001 — the queue must never die
+                pass
+
+    def _tick(self):
+        st = self.state
+        with st.lock:
+            cur = self.current
+            if cur is not None and st.job is not None and not st.job.running:
+                code = st.job.exit_code
+                cur["code"] = code
+                cur["ended"] = time.time()
+                cur["status"] = QUEUE_STATUS.get(code, "stopped" if code in (130, -15) else "failed")
+                self.current = None
+                if cur["status"] == "stopped":
+                    self.active = False  # the editor pressed Stop: do not go on by itself
+            if not self.active or self.current is not None or (st.job and st.job.running):
+                return
+            nxt = next((it for it in self.items if it["status"] == "waiting"), None)
+            if nxt is None:
+                self.active = False
+                return
+            nxt["status"] = "running"
+            nxt["started"] = time.time()
+            self.current = nxt
+            st.job = Job(nxt["kind"], engine_cmd(*job_args({"kind": nxt["kind"], "path": nxt["path"]})),
+                         nxt["path"])
 
 
 # --- helpers used by the API -----------------------------------------------
 
 def engine_cmd(*args: str) -> list[str]:
     return [sys.executable, "-m", "autocut", *args]
+
+
+def job_args(b: dict) -> list[str]:
+    """Engine arguments of an analysis job (from the app's request)."""
+    kind = b["kind"]
+    args = [kind, str(Path(b["path"]).expanduser().resolve())]
+    if kind not in ("scan", "check"):
+        if b.get("start"):
+            args += ["--start", str(b["start"])]
+        if b.get("duration"):
+            args += ["--duration", str(b["duration"])]
+    if kind in ("diarize", "run") and b.get("diarize_full", kind == "diarize"):
+        args.append("--diarize-full")
+    if kind == "run" and b.get("allow_low"):
+        args.append("--allow-low-confidence")
+    return args
 
 
 def config_text(cfg: dict) -> str:
@@ -114,12 +203,13 @@ def _results(out: dict, work: Path) -> None:
         with open(rep, encoding="utf-8") as fh:
             out["sync"] = list(csv.DictReader(fh))
     outdir = work / "output"
-    ac = outdir / "audio_check.json"
-    if ac.exists():
-        try:
-            out["audio_check"] = json.loads(ac.read_text(encoding="utf-8"))
-        except ValueError:
-            pass
+    for key in ("audio_check", "media_check"):
+        f = outdir / f"{key}.json"
+        if f.exists():
+            try:
+                out[key] = json.loads(f.read_text(encoding="utf-8"))
+            except ValueError:
+                pass
     sm = outdir / "summary.json"
     if sm.exists():
         try:
@@ -129,7 +219,7 @@ def _results(out: dict, work: Path) -> None:
     if outdir.exists():
         out["outputs"] = [{"name": f.name, "path": str(f), "mtime": f.stat().st_mtime}
                           for f in sorted(outdir.iterdir(), key=lambda f: -f.stat().st_mtime)
-                          if f.suffix in (".xml", ".csv")]
+                          if f.suffix in (".xml", ".csv", ".srt", ".txt")]
 
 
 def xml_state(path: Path) -> dict:
@@ -332,10 +422,13 @@ def make_handler(state: State):
         def _get_api(self, path: str, qs: dict):
             q = {k: v[0] for k, v in qs.items()}
             if path == "/api/ping":
+                from . import transcribe
                 return self._json({"version": __version__, "models": models.status(),
-                                   "platform": sys.platform})
+                                   "transcribe": transcribe.status(), "platform": sys.platform})
             if path == "/api/project":
                 return self._json(project_state(Path(q["path"])))
+            if path == "/api/queue":
+                return self._json(state.queue.to_dict())
             if path == "/api/job":
                 job = state.job
                 return self._json(job.to_dict(int(q.get("since", 0))) if job else {"running": False})
@@ -380,6 +473,23 @@ def make_handler(state: State):
                 return self._json({"ok": True})
             if path == "/api/run":
                 return self._start(b)
+            if path.startswith("/api/queue/"):
+                q = state.queue
+                with state.lock:
+                    action = path.rsplit("/", 1)[1]
+                    if action == "add":
+                        q.add(b["path"], b.get("kind", "run"))
+                    elif action == "remove":
+                        q.remove(int(b["id"]))
+                    elif action == "start":
+                        q.active = True
+                    elif action == "stop":
+                        q.active = False  # the running episode finishes; nothing new starts
+                    elif action == "clear":
+                        q.clear_finished()
+                    else:
+                        return self._json({"error": "unknown queue action"}, 404)
+                return self._json(q.to_dict())
             if path == "/api/shutdown":
                 self._json({"ok": True})
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
@@ -394,16 +504,7 @@ def make_handler(state: State):
                 proj = b.get("path")
                 env = None
                 if kind in ("scan", "check", "sync", "diarize", "run"):
-                    args = [kind, str(Path(proj).expanduser().resolve())]
-                    if kind not in ("scan", "check"):
-                        if b.get("start"):
-                            args += ["--start", str(b["start"])]
-                        if b.get("duration"):
-                            args += ["--duration", str(b["duration"])]
-                    if kind in ("diarize", "run") and b.get("diarize_full"):
-                        args.append("--diarize-full")
-                    if kind == "run" and b.get("allow_low"):
-                        args.append("--allow-low-confidence")
+                    args = job_args(dict(b, diarize_full=bool(b.get("diarize_full"))))
                 elif kind == "models-download":
                     args = ["models", "download"]
                     env = {"HF_TOKEN": str(b.get("token") or "")}  # not on the command line
@@ -497,7 +598,7 @@ def serve(port: int = DEFAULT_PORT, open_browser: bool = False, app_mode: bool =
         def idle_watch():
             while True:
                 time.sleep(30)
-                busy = state.job is not None and state.job.running
+                busy = (state.job is not None and state.job.running) or state.queue.active
                 if not busy and time.time() - state.last_seen > IDLE_EXIT_S:
                     httpd.shutdown()
                     return

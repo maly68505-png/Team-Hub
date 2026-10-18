@@ -39,10 +39,21 @@ def channel_levels(info: MediaInfo, workdir: Path, errors: list | None = None) -
     """(channels, frames) level in dB per HOP, high-passed at 120 Hz (no rumble).
     Cached per file in <workdir>/mics/. A decoding error part way keeps what was
     read (and is appended to `errors` when given); an error at the start raises."""
+    return _levels_and_peaks(info, workdir, errors)[0]
+
+
+def channel_peaks(info: MediaInfo, workdir: Path) -> np.ndarray:
+    """(channels, frames) highest absolute sample per HOP (1.0 = full scale), unfiltered."""
+    return _levels_and_peaks(info, workdir, None)[1]
+
+
+def _levels_and_peaks(info: MediaInfo, workdir: Path, errors: list | None) -> tuple[np.ndarray, np.ndarray]:
     cache = workdir / "mics" / f"{fingerprint([info.path], f'levels-{HOP}')}.npy"
-    if cache.exists():
-        return np.load(cache)
+    pcache = cache.with_name(cache.stem + "-peaks.npy")
+    if cache.exists() and pcache.exists():
+        return np.load(cache), np.load(pcache)
     out: list[np.ndarray] = []
+    peaks: list[np.ndarray] = []
     partial = False
     try:
         with av.open(str(info.path)) as c:
@@ -52,10 +63,11 @@ def channel_levels(info: MediaInfo, workdir: Path, errors: list | None = None) -
             sos = butter(2, 120, btype="highpass", fs=sr, output="sos")
             zi = None
             conv = av.AudioResampler(format="flt")  # packed: see audio.as_channels
-            carry = None
+            carry = carry_raw = None
             for frame in c.decode(st):
                 for f in conv.resample(frame):
                     a = as_channels(f).astype(np.float64)
+                    raw = a if carry is None else np.concatenate([carry_raw, a], axis=1)
                     if zi is None:
                         zi = np.zeros((a.shape[0], sos.shape[0], 2))
                     y = np.empty_like(a)
@@ -66,7 +78,11 @@ def channel_levels(info: MediaInfo, workdir: Path, errors: list | None = None) -
                     if k:
                         blk = carry[:, :k * step]
                         out.append((blk.reshape(blk.shape[0], k, step) ** 2).mean(axis=2))
+                        rb = raw[:, :k * step]
+                        peaks.append(np.abs(rb.reshape(rb.shape[0], k, step)).max(axis=2))
                         carry = carry[:, k * step:]
+                        raw = raw[:, k * step:]
+                    carry_raw = raw
     except (av.error.FFmpegError, IndexError) as e:
         if not out:
             raise ToolError(f"could not read the channels of {info.path}: {e}") from e
@@ -76,15 +92,18 @@ def channel_levels(info: MediaInfo, workdir: Path, errors: list | None = None) -
         if errors is not None:
             errors.append(f"decoding stopped at {read:.0f}s: {e}")
     if not out:
-        return np.zeros((max(1, info.audio_channels), 0), np.float32)
+        empty = np.zeros((max(1, info.audio_channels), 0), np.float32)
+        return empty, empty
     p = np.concatenate(out, axis=1)
     kern = np.ones(SMOOTH) / SMOOTH
     p = np.stack([np.convolve(row, kern, mode="same") for row in p])
     lv = (10 * np.log10(p + 1e-12)).astype(np.float32)
+    pk = np.concatenate(peaks, axis=1).astype(np.float32)
     if not partial:  # never cache a partial read
         cache.parent.mkdir(parents=True, exist_ok=True)
         np.save(cache, lv)
-    return lv
+        np.save(pcache, pk)
+    return lv, pk
 
 
 def mic_label(channel: int, file_no: int, n_files: int, n_channels: int) -> str:

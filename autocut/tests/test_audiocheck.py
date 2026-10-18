@@ -52,3 +52,15 @@ def test_file_bigger_than_its_header(files):
     assert r["on_disk"] == pytest.approx(900, abs=2)
     assert any(n["level"] == "error" and "header covers only" in n["en"] for n in r["notes"])
     assert all(c["blocks"][2]["s"] == "missing" for c in r["channels"])
+
+
+def test_clipping_reported(tmp_path):
+    x = (0.3 * np.sin(np.arange(60 * SR) * 2 * np.pi * 220 / SR)).astype(np.float32)
+    for t in (10, 20, 70 - 40, 50):                 # four short overloads
+        x[t * SR:t * SR + 2000] = np.clip(x[t * SR:t * SR + 2000] * 10, -1, 1)
+    f = tmp_path / "HOT.wav"
+    synth.write_multichannel_wav(f, [x, 0.5 * x])
+    r = check_file(probe(f), tmp_path / "w")
+    assert r["channels"][0]["clipped"] >= 4 and r["channels"][1]["clipped"] == 0
+    notes = [n for n in r["notes"] if "clipped" in n["en"]]
+    assert len(notes) == 1 and "channel 1" in notes[0]["en"] and "Clipping" in notes[0]["ar"]

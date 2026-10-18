@@ -55,6 +55,18 @@ DEFAULTS = {
         "silence_max": 0.6,       # pauses longer than this are shortened ...
         "silence_pad": 0.15,      # ... to this much on each side of the cut
     },
+    "transcript": {
+        "enabled": True,          # speech to text (offline, in the app): subtitles + topic markers
+        "language": "ar",         # ar | en | ... | None (detect)
+        "model": None,            # folder of an MLX Whisper model (default: the one in the app)
+        "topics": True,           # a marker at every change of topic
+        "topic_min_minutes": 3.0, # topics at least this far apart
+        "srt_max_chars": 42,      # subtitle line length
+    },
+    "check": {
+        "video": True,            # picture check (black, frozen, burnt, soft, missing frames, camera stopped)
+        "sample_every": 120,      # seconds between the 2-second windows read from each clip
+    },
     "output": {
         "sequence_name": "autocut rough cut",
         "layered": True,   # every camera on its own track, cut there (no V1): cuts editable in place
@@ -122,6 +134,12 @@ def load(path: Path, require_long: bool = True) -> dict:
     mc = cfg["diarization"]["mic_channels"]
     if mc is not None:
         cfg["diarization"]["mic_channels"] = [int(x) for x in (mc if isinstance(mc, list) else [mc])]
+    lang = cfg["transcript"]["language"]
+    cfg["transcript"]["language"] = str(lang).strip().lower() if lang not in (None, "", "auto") else None
+    if float(cfg["transcript"]["topic_min_minutes"]) <= 0:
+        raise ConfigError("config: transcript.topic_min_minutes must be > 0")
+    if float(cfg["check"]["sample_every"]) < 10:
+        raise ConfigError("config: check.sample_every must be at least 10 seconds")
     c = cfg["cut"]
     for key in ("min_segment", "overlap_min", "min_shot", "cut_lead", "rotate_min_shot",
                 "rotate_max_shot", "pause_min", "silence_max", "silence_pad"):

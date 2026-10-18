@@ -23,7 +23,7 @@ content creator, not a programmer). Give click-by-click steps; they send screens
   artifact and refreshes the public release **`autocut-latest`** on every green push to this
   branch or the default branch. The user installs from that release link only.
 - Local tests: `cd autocut && python -m pytest -q` (needs `ffmpeg` CLI for fixtures, numpy,
-  scipy, av, pyyaml). 66 tests, ~2 min. Browser checks were done with Playwright scripts in
+  scipy, av, pyyaml). ~115 tests, ~10 min. Browser checks were done with Playwright scripts in
   the scratchpad (not in the repo).
 - No `gh` CLI here; the GitHub API polling for run status used `curl` on the public API.
 
@@ -136,6 +136,34 @@ Offline Mac (Apple Silicon) tool that makes a multicam rough cut for Premiere Pr
   timecode, each camera window searched only ±2 s around its timecode position (retakes repeating the
   same lines no longer confuse it); no audio match -> placed by timecode. Clips without TC use the bank.
 - UI `api()` retries network failures ("Load failed") 3 times.
+
+### Phase 1 of the user's feature list: transcript, topics, picture check, queue (v0.9.0)
+The user picked ideas 1, 4, 8, 11, 13, 15, 16, 20, 22, 23, 29 from a numbered list (see the chat).
+Agreed phases: **1** = 1 transcript + 8 topic markers + 20 media check + 23 queue (this version);
+**2** = 4 paper edit (Word file with highlights AND marking inside the app — user chose both) +
+29 pre-delivery QC; **3** = through the Premiere panel: 13 lower thirds (MOGRT), 15 graphics videos
+at times/keywords, 16 video box in a MOGRT (test media replacement first), 11 music auto-ducking —
+needs the user's MOGRT files + Premiere version; **4** = 22 proxies.
+- `transcribe.py`: MLX Whisper large-v3-turbo, **bundled in the app** (user chose bundled over
+  download-on-first-use). `packaging/fetch_whisper.py` downloads `mlx-community/whisper-large-v3-turbo`
+  at build time and stores it 8-bit (~850 MB; fp16 would push the zip near GitHub's 2 GB asset limit).
+  Launcher sets AUTOCUT_WHISPER_MODEL. 5-min chunks cut in pauses, cached per chunk in
+  `<work>/transcript/<key>/`; GPU failure -> CPU fallback. Never stops the cut (warning only).
+  Outputs `transcript*.json/.srt/.txt` (SRT/TXT on the output sequence's time via TimeMap).
+- `topics.py`: TextTiling (Arabic-normalised word counts, 60 s each side, valleys >= mean+0.5sd,
+  `transcript.topic_min_minutes` apart). Names = first sentence (offline; user chose this over an
+  online title).
+- `mediacheck.py`: 2 s windows every `check.sample_every` s per clip at 320x180 (cached per clip):
+  black / frozen / burnt / soft (vs the camera's own median) / dropped frames, plus `stopped`
+  (gap >= 5 s between a camera's placed clips). `audiocheck` now reports clipping
+  (`mics.channel_peaks`, cached next to the levels).
+- Markers: `xmeml.add_markers` (sequence `<marker>`), used by both writers. Topic markers
+  "1. title", picture markers "⚠ CAM: ...".
+- A full run that stops for the speaker mapping (exit 2) still runs the picture check +
+  transcription first (`pipeline.heavy_steps`), so a queued episode does the slow work overnight.
+- Server `Queue` (`/api/queue`, `/api/queue/{add,remove,start,stop,clear}`): one job at a time
+  through the normal Job; status from the exit code. UI: "Add to queue" in step 5, queue card.
+- Smoke test transcribes a `say` sentence with the bundled model (asserts words + timings).
 
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the

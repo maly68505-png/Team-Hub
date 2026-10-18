@@ -266,3 +266,46 @@ def test_folders_cut_cameras_and_person_multicam(project, tmp_path):
     assert {c.findtext("name").split(" | ")[0] for tr in vt for c in tr.findall("clipitem")} == {"CAM_A", "CAM_WIDE"}
     assert at, "the clean audio is in the multicam sequence"
     assert not (out / "multicam_SPEAKER_B.xml").exists()          # one camera: no multicam
+
+
+def test_transcript_subtitles_and_markers(project, tmp_path, monkeypatch):
+    """With a (fake) speech-to-text model: subtitles + text next to the XML, and the
+    topic and picture-check markers on the sequence."""
+    from autocut import transcribe
+    root = tmp_path / "t"
+    shutil.copytree(project, root, ignore=shutil.ignore_patterns("_autocut"))
+    (root / "config.yaml").write_text(
+        "fps: 25\nlong_camera: CAM_WIDE\n"
+        "speakers:\n  SPEAKER_A: CAM_A\n  SPEAKER_B: CAM_B\n  SPEAKER_C: CAM_C\n"
+        "diarization:\n  min_speaker_seconds: 5\n"
+        "transcript:\n  topic_min_minutes: 0.5\n"
+        "check:\n  sample_every: 30\n"
+        "output:\n  layered: false\n")
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text("{}")
+    monkeypatch.setenv(transcribe.MODEL_ENV, str(model))
+    words = {0: "الكورة الماتش الدوري", 1: "الأكل الطبخ المطبخ", 2: "السفر الطيارة المطار"}
+
+    def fake(audio, model_dir, language):
+        d = len(audio) / transcribe.SR
+        return [{"start": t, "end": t + 2.5, "text": words[int(t // 60) % 3],
+                 "words": [{"start": t, "end": t + 2.5, "word": words[int(t // 60) % 3]}]}
+                for t in np.arange(1.0, d - 3, 3.0)]
+    monkeypatch.setattr(transcribe, "_run_chunk", fake)
+    assert run(root, rttm=root / "truth.rttm") == EXIT_OK
+    out = root / "_autocut" / "output"
+    srt = (out / "transcript.srt").read_text(encoding="utf-8")
+    assert srt.startswith("1\n00:00:01,000 --> ") and "الكورة الماتش الدوري" in srt
+    txt = (out / "transcript.txt").read_text(encoding="utf-8")
+    assert txt.startswith("[00:00:") and "CAM_" in txt                  # speakers named by camera
+    assert (out / "transcript.json").exists()
+    seq, _, _ = xml_tracks(out / "roughcut.xml")
+    marks = [(int(m.findtext("in")), m.findtext("name")) for m in seq.findall("marker")]
+    topics_ = [m for m in marks if m[1][0].isdigit()]
+    assert len(topics_) == 3, marks                                    # a topic per minute
+    assert [round(f / FPS / 60) for f, _ in topics_] == [0, 1, 2]
+    assert (out / "media_check.json").exists()
+    import json
+    sm = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert sm["transcript"] is True and sm["topics"] == 3

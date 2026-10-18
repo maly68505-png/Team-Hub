@@ -64,6 +64,29 @@ Open **Autocut** from Applications, or inside Premiere: Window → Extensions �
    - After each cut, **"What happened in the last cut"** shows each camera's share, the reasons, and tips.
    - In the panel: **Import into Premiere**. From the app: in Premiere File → Import → the XML.
 
+## Subtitles, transcript and topic markers
+A full cut (or a test) also transcribes the episode, **offline** (the model is inside the app),
+and writes next to the XML:
+- **`transcript.srt`**: subtitles on the output sequence's timing (silence removal included).
+  In Premiere: File → Import, then drag it onto the timeline.
+- **`transcript.txt`**: the episode as text, with timecodes and each speaker's camera.
+- **Topic markers** on the sequence: one where the conversation moves to a new subject, named
+  after its first sentence.
+
+Pick the language in settings (step 2). Transcription is cached: a stopped run resumes.
+
+## Audio and picture check
+**Check audio and picture** (step 2): every audio channel for the whole episode, clipping, and
+every camera file sampled every 2 minutes for black, frozen, burnt-out, out-of-focus pictures
+and missing frames; after sync, also a camera that stopped recording mid-episode. In a full
+cut each picture problem is a **⚠ marker** on the timeline.
+
+## Episode queue (overnight)
+Open an episode, set it up, press **Add to queue** (step 5); repeat; press **Start the queue**.
+Episodes run one after another with their own settings; a failing one does not stop the rest.
+One that needs speaker cameras stops at that step — with transcription and the picture check
+already done, so the cut after the mapping is quick.
+
 ## The sequence
 
 | Track | Content |

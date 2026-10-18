@@ -8,7 +8,8 @@ point where the file can be read). Also flags:
     over 4 GB written as plain WAV: everything past the header's size is not
     read by FFmpeg, nor shown by Premiere;
   - a channel that goes silent while the others still talk (a mic that died);
-  - a channel with no speech at all.
+  - a channel with no speech at all;
+  - clipping: samples at full scale (the recorder's input was too hot).
 
 Writes <work>/output/audio_check.json for the app; levels are cached and reused
 by the "speakers from mics" analysis.
@@ -24,13 +25,15 @@ import av
 import numpy as np
 
 from .log import banner, log
-from .mics import FLOOR_DB, HOP, channel_levels
+from .mics import FLOOR_DB, HOP, channel_levels, channel_peaks
 from .probe import MediaInfo, ToolError
 from .timecode import fmt_seconds
 
 BLOCK = 300.0     # seconds per block
 TALK_MIN = 0.02   # share of a block's frames above the speech threshold to count as talking
 SILENT_DB = -85.0 # median level under this = no signal at all
+CLIP_PEAK = 0.999 # a sample this close to full scale is clipped ...
+CLIP_MIN = 3      # ... reported from this many clipped 20 ms frames on a channel
 
 
 def _pcm(info: MediaInfo) -> tuple[int, int, int] | None:
@@ -118,6 +121,22 @@ def check_file(info: MediaInfo, workdir: Path) -> dict:
             notes.append({"level": "warn",
                           "en": f"channel {c['channel']}: no signal at {span} while other channels talk",
                           "ar": f"القناة {c['channel']}: بلا صوت عند {span} بينما القنوات الأخرى فيها كلام"})
+    try:
+        pk = channel_peaks(info, workdir)
+    except ToolError:
+        pk = np.zeros((0, 0))
+    for c in chans:
+        k = c["channel"] - 1
+        hits = np.flatnonzero(pk[k] >= CLIP_PEAK) if k < pk.shape[0] else np.zeros(0, int)
+        c["clipped"] = int(len(hits))
+        if len(hits) >= CLIP_MIN:
+            times = sorted({int(h * HOP // 60) for h in hits})
+            span = ", ".join(f"{m // 60}:{m % 60:02d}" for m in times[:6]) + ("…" if len(times) > 6 else "")
+            notes.append({"level": "warn",
+                          "en": f"channel {c['channel']}: clipped (distorted) audio {len(hits)} time(s), "
+                                f"at {span} (h:mm)",
+                          "ar": f"القناة {c['channel']}: صوت مضروب (Clipping) {len(hits)} مرة، "
+                                f"عند {span} (ساعة:دقيقة)"})
     missing = [b for b in range(n_blocks) if all(c["blocks"][b]["s"] == "missing" for c in chans)]
     if missing and not any(n["level"] == "error" for n in notes):
         notes.append({"level": "error", "en": f"no audio read after {fmt_seconds(missing[0] * BLOCK)[:8]}",

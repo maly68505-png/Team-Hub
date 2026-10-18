@@ -83,6 +83,11 @@ async function refreshModels() {
       : L("غير مثبت على هذا الجهاز. استورده من زميل أو حمّله مرة واحدة.",
           "Not installed on this Mac. Import it from a colleague or download it once.");
     $("btnExport").disabled = !m.ready;
+    const tr = p.transcribe || {};
+    $("mdlTranscribe").textContent = tr.ready
+      ? L("موجود داخل البرنامج ✓ — يعمل بدون إنترنت.", "Inside the app ✓ — works offline.")
+      : L("غير موجود في هذه النسخة — التفريغ والترجمة والمواضيع لن تعمل.",
+          "Not in this copy — speech to text, subtitles and topics will not run.");
     return m.ready;
   } catch (e) {
     $("modelsBadge").textContent = L("غير متصل", "Not connected");
@@ -248,8 +253,15 @@ function renderSettings() {
   $("cfgSilenceMax").value = cfg.cut.silence_max;
   show($("silenceOpts"), !!cfg.cut.remove_silence);
   $("cfgRotMax").value = cfg.cut.rotate_max_shot;
+  const tr = cfg.transcript || {};
+  $("cfgTranscript").checked = tr.enabled !== false;
+  $("cfgLanguage").value = tr.language == null ? "" : tr.language;
+  show($("langBox"), tr.enabled !== false);
+  $("cfgVideoCheck").checked = !cfg.check || cfg.check.video !== false;
+  show($("cfgVideoCheck").parentElement, !isXml());
   renderAudioChoices();
   renderCheck();
+  renderMediaCheck();
 }
 
 function renderCheck() {
@@ -280,6 +292,40 @@ function renderCheck() {
     ...["talk", "quiet", "silent", "missing"].map((k) => h("span", {}, h("i", { class: k, style: `background:var(--${k === "talk" ? "ok" : k === "silent" ? "warn" : k === "missing" ? "bad" : "line"})` }), STATE[k])),
     h("span", {}, L("كل مربع = 5 دقائق", "each square = 5 minutes"))));
   if (ok) box.prepend(h("div", { class: "alert ok" }, L("✓ كل الملفات تُقرأ لآخرها وكل القنوات فيها صوت", "✓ every file reads to the end and every channel has sound")));
+}
+
+const KIND_ICON = { black: "■", frozen: "❄", burnt: "☀", soft: "◌", dropped: "⋯", stopped: "⏹", error: "✕" };
+
+function renderMediaCheck() {
+  const box = $("mediaBox");
+  box.replaceChildren();
+  const mc = S.project.media_check;
+  if (!mc || isXml()) return;
+  const n = mc.cameras.reduce((a, c) => a + c.issues.length, 0);
+  box.append(h("h3", {}, L("فحص الصورة", "Picture check")));
+  if (!n) {
+    box.append(h("div", { class: "alert ok" }, L(`✓ مفيش مشاكل في الصورة (عيّنة كل ${mc.sample_every} ثانية من كل ملف)`,
+      `✓ No picture problems (a sample every ${mc.sample_every} s of every file)`)));
+    return;
+  }
+  for (const c of mc.cameras) {
+    if (!c.issues.length) continue;
+    const el = h("div", { class: "chk" }, h("b", {}, c.name),
+      h("span", { class: "meta" }, L(` · ${c.issues.length} ملاحظة`, ` · ${c.issues.length} issue(s)`)));
+    for (const i of c.issues.slice(0, 30)) {
+      const where = i.ref_t != null ? L(`في الحلقة ${fmtDur(i.ref_t)}`, `episode ${fmtDur(i.ref_t)}`)
+        : L(`في الملف ${fmtDur(i.t)}`, `in the file ${fmtDur(i.t)}`);
+      el.append(h("div", { class: "issue " + (i.kind === "error" || i.kind === "stopped" ? "bad" : "warn") },
+        h("span", { class: "ico" }, KIND_ICON[i.kind] || "!"),
+        h("span", {}, EN() ? i.en : i.ar),
+        h("span", { class: "muted" }, ` · ${where}` + (i.dur > 2.5 ? L(` · لمدة ${fmtDur(i.dur)}`, ` · for ${fmtDur(i.dur)}`) : "")),
+        h("span", { class: "muted ltr" }, " · " + i.clip)));
+    }
+    if (c.issues.length > 30) el.append(h("div", { class: "muted" }, "…"));
+    box.append(el);
+  }
+  box.append(h("small", { class: "muted" }, L("في القطع الكامل، كل مشكلة بتبقى ماركر على التايم لاين في بريمير.",
+    "In the full cut, every problem becomes a marker on the Premiere timeline.")));
 }
 
 function renderAudioChoices() {
@@ -353,6 +399,9 @@ function readSettings(cfg) {
   cfg.audio_channel = Number.isFinite(ch) && ch > 0 ? ch : null;
   if (!isXml()) cfg.sync.method = $("cfgSyncMethod").value || "audio";
   cfg.diarization.method = $("cfgSpkMethod").value || "ai";
+  cfg.transcript = Object.assign({}, cfg.transcript, {
+    enabled: $("cfgTranscript").checked, language: $("cfgLanguage").value || null });
+  cfg.check = Object.assign({}, cfg.check, { video: $("cfgVideoCheck").checked });
   const boxes = [...document.querySelectorAll("#cutCams input")];
   if (boxes.length) {
     const on = boxes.filter((b) => b.checked).map((b) => b.value);
@@ -507,6 +556,11 @@ function renderSummary() {
     `What happened in the last cut (${sm.full ? "full" : "test"}): ${sm.shots} shots · ${fmtDur(sm.length)}`)
     + (sm.removed ? L(` · حُذف ${fmtDur(sm.removed)} سكتات`, ` · ${fmtDur(sm.removed)} of silence removed`) : "")));
   if (sm.sequence) box.append(h("p", { class: "muted" }, L("اسم التسلسل في بريمير: ", "Sequence name in Premiere: "), h("b", { class: "ltr" }, sm.sequence)));
+  const extras = [];
+  if (sm.transcript) extras.push(L("✓ تفريغ الكلام والترجمة", "✓ transcript and subtitles"));
+  if (sm.topics) extras.push(L(`${sm.topics} ماركر مواضيع`, `${sm.topics} topic marker(s)`));
+  if (sm.picture_problems) extras.push(L(`⚠ ${sm.picture_problems} ملاحظة في الصورة (ماركرز)`, `⚠ ${sm.picture_problems} picture issue(s) (markers)`));
+  if (extras.length) box.append(h("p", {}, extras.join(" · ")));
   box.append(h("div", { class: "sumgrid" },
     h("div", {}, h("b", {}, L("نصيب كل كاميرا", "Share per camera")), Object.entries(sm.cameras).map(([c, p]) => bar(c === "(gap)" ? L("فراغ", "gap") : c, p))),
     h("div", {}, h("b", {}, L("السبب", "Why")), Object.entries(sm.reasons).map(([r, p]) => bar(WHY[r] || r, p)))));
@@ -528,6 +582,7 @@ function outputTag(name) {
   const mc = name.match(/^multicam_(.+?)(_\d{6}_\d+s)?\.xml$/);
   if (mc) tags.unshift(L(`مالتي كام: ${mc[1]}`, `multicam: ${mc[1]}`));
   if (name.startsWith("synced")) tags.unshift(L("مزامنة فقط", "sync only"));
+  if (name.startsWith("transcript")) tags.unshift(name.endsWith(".srt") ? L("ترجمة SRT", "SRT subtitles") : L("نص الحلقة", "transcript"));
   if (name.includes("_tight")) tags.push(L("بدون سكتات", "no silences"));
   if (name.includes("_layers")) tags.push(L("طبقات", "layered"));
   return tags.join(" · ");
@@ -535,7 +590,8 @@ function outputTag(name) {
 
 function renderOutputs() {
   renderSummary();
-  const all = (S.project.outputs || []).filter((o) => o.name.endsWith(".xml") || o.name.startsWith("cuts"));
+  const all = (S.project.outputs || []).filter((o) => o.name.endsWith(".xml") || o.name.startsWith("cuts")
+    || (o.name.startsWith("transcript") && /\.(srt|txt)$/.test(o.name)));
   fileList($("syncOutputs"), all.filter((o) => o.name.startsWith("synced")), L("ملفات المزامنة", "Synced timelines"));
   fileList($("outputs"), all.filter((o) => !o.name.startsWith("synced")), L("الملفات الناتجة", "Output files"));
 }
@@ -586,11 +642,11 @@ window.addEventListener("message", (ev) => {
 
 // ---------------------------------------------------------------- jobs
 const TITLES_AR = {
-  diarize: "التحليل (مزامنة + متحدثين)", run: "القطع", sync: "المزامنة فقط", check: "فحص الصوت", "models-download": "تحميل النموذج",
+  diarize: "التحليل (مزامنة + متحدثين)", run: "القطع", sync: "المزامنة فقط", check: "فحص الصوت والصورة", "models-download": "تحميل النموذج",
   "models-import": "استيراد النموذج", "models-export": "تصدير النموذج",
 };
 const TITLES_EN = {
-  diarize: "Analysis (sync + speakers)", run: "Cut", sync: "Sync only", check: "Audio check", "models-download": "Downloading the model",
+  diarize: "Analysis (sync + speakers)", run: "Cut", sync: "Sync only", check: "Audio and picture check", "models-download": "Downloading the model",
   "models-import": "Importing the model", "models-export": "Exporting the model",
 };
 const jobTitle = (kind) => (EN() ? TITLES_EN : TITLES_AR)[kind] || kind;
@@ -619,6 +675,10 @@ function stepOf(line) {
   if (m) return L(`تمييز المتحدثين: ${DIA_AR[m[1]] || m[1]} ${m[2]}%`, `Speakers: ${m[1]} ${m[2]}%`);
   m = line.match(/Splitting (\S+) into mono/);
   if (m) return L(`فصل قنوات الصوت: ${m[1]}`, `Splitting audio channels: ${m[1]}`);
+  m = line.match(/Speech to text: part (\d+)\/(\d+) \((\d+)%\)(?:, about (\S+) left)?/);
+  if (m) return L(`تفريغ الكلام: ${m[3]}%`, `Speech to text: ${m[3]}%`) + (m[4] ? L(` · باقي ${m[4]}`, ` · ${m[4]} left`) : "");
+  m = line.match(/Picture check (\d+)\/(\d+): (\S+)/);
+  if (m) return L(`فحص الصورة: ملف ${m[1]} من ${m[2]}`, `Picture check: file ${m[1]} of ${m[2]}`);
   if (/Suggesting cameras/.test(line)) return L("اقتراح كاميرا لكل متحدث…", "Suggesting a camera per speaker…");
   m = line.match(/Checking (\S+)/);
   if (m) return L(`فحص الصوت: ${m[1]}`, `Checking audio: ${m[1]}`);
@@ -695,6 +755,15 @@ async function finishJob(code) {
 
 async function reportJob(code) {
   const kind = S.jobKind;
+  if (S.queueJob) {
+    const name = S.queueJob;
+    S.queueJob = null;
+    if (S.path) await loadProject(S.path);
+    jobMessage(code === 0 ? "ok" : "warn", L(`الطابور: «${name}» ${QSTATUS_AR[qStatus(code)]}`,
+      `Queue: "${name}" ${QSTATUS_EN[qStatus(code)]}`));
+    refreshQueue();
+    return;
+  }
   if (kind && kind.startsWith("models")) {
     await refreshModels();
     jobMessage(code === 0 ? "ok" : "error", code === 0 ? L("تم ✓", "Done ✓") : L("لم يكتمل — راجع السجل", "Did not finish — see the log"));
@@ -703,9 +772,10 @@ async function reportJob(code) {
   }
   if (S.path) await loadProject(S.path);
   if (kind === "check" && code === 0) {
-    const bad = ((S.project && S.project.audio_check && S.project.audio_check.files) || []).some((f) => (f.notes || []).length);
+    const bad = ((S.project && S.project.audio_check && S.project.audio_check.files) || []).some((f) => (f.notes || []).length)
+      || ((S.project && S.project.media_check && S.project.media_check.cameras) || []).some((c) => c.issues.length);
     jobMessage(bad ? "warn" : "ok", bad ? L("انتهى الفحص — فيه مشاكل، شوف التفاصيل في الإعدادات (الخطوة ٢).", "Check done — problems found, see the details in settings (step 2).")
-      : L("انتهى الفحص ✓ — كل الملفات والقنوات سليمة.", "Check done ✓ — every file and channel is fine."));
+      : L("انتهى الفحص ✓ — الصوت والصورة سليمين.", "Check done ✓ — audio and picture are fine."));
     $("checkBox").scrollIntoView({ behavior: "smooth", block: "center" });
     return;
   }
@@ -767,6 +837,70 @@ async function runStage(kind, extra, before) {
   }
   const ok = await startJob({ kind, path: S.project.path, ...extra });
   if (!ok) setBusy(false);
+}
+
+// ---------------------------------------------------------------- queue
+const QSTATUS_AR = { waiting: "في الانتظار", running: "شغالة الآن", done: "خلصت ✓", needs_speakers: "محتاجة تختار كاميرا كل متحدث",
+  weak_sync: "خلصت — فيه ملفات مزامنتها ضعيفة", failed: "فيها مشكلة — افتح السجل", stopped: "اتوقفت" };
+const QSTATUS_EN = { waiting: "waiting", running: "running now", done: "done ✓", needs_speakers: "needs a camera per speaker",
+  weak_sync: "done — some files synced weakly", failed: "failed — open the log", stopped: "stopped" };
+const qStatus = (code) => ({ 0: "done", 2: "needs_speakers", 3: "weak_sync", 130: "stopped", [-15]: "stopped" })[code] || "failed";
+const qKind = (k) => ({ run: L("قطع كامل", "full cut"), diarize: L("تحليل", "analysis"), check: L("فحص", "check"),
+  sync: L("مزامنة", "sync") })[k] || k;
+let queueTimer = null;
+
+async function refreshQueue() {
+  let q;
+  try { q = await api("/api/queue"); } catch (e) { return; }
+  renderQueue(q);
+  const running = q.items.find((i) => i.status === "running");
+  if (running && S.running && !S.queueJob && S.jobKind === running.kind) S.queueJob = running.name;  // after a reload
+  if (running && !S.running) {  // a queue episode started: follow it in the job bar
+    S.jobKind = running.kind;
+    S.queueJob = running.name;
+    S.running = true;
+    $("log").replaceChildren();
+    show($("jobMsg"), false);
+    show($("jobBar"), true);
+    show($("btnCancel"), true);
+    show($("btnCloseJob"), false);
+    $("jobSpin").classList.remove("stop");
+    $("jobTitle").textContent = L(`الطابور: ${running.name} — ${jobTitle(running.kind)}`, `Queue: ${running.name} — ${jobTitle(running.kind)}`);
+    setBusy(true);
+    pollJob(0);
+  }
+  clearTimeout(queueTimer);
+  if (q.active || running) queueTimer = setTimeout(refreshQueue, 3000);
+}
+
+function renderQueue(q) {
+  show($("secQueue"), q.items.length > 0);
+  const box = $("queueList");
+  box.replaceChildren();
+  for (const it of q.items) {
+    const cls = it.status === "done" ? "ok" : ["failed", "stopped"].includes(it.status) ? "bad" : it.status === "waiting" ? "" : "warn";
+    const took = it.started && it.ended ? " · " + fmtDur(it.ended - it.started) : "";
+    box.append(h("div", { class: "outfile" },
+      h("span", { class: "name" }, h("b", { class: "ltr", title: it.path }, it.name), " ",
+        h("span", { class: "muted" }, qKind(it.kind))),
+      h("span", { class: "pill " + cls }, (EN() ? QSTATUS_EN : QSTATUS_AR)[it.status] + took),
+      h("button", { type: "button", onclick: () => loadProject(it.path) }, L("فتح", "Open")),
+      it.status !== "running" ? h("button", { type: "button", class: "x", title: L("شيل من الطابور", "Remove from the queue"),
+        onclick: () => api("/api/queue/remove", { id: it.id }).then(renderQueue) }, "×") : null));
+  }
+  $("btnQueueStart").disabled = q.active || !q.items.some((i) => i.status === "waiting");
+  $("btnQueueStop").disabled = !q.active;
+  $("btnQueueClear").disabled = !q.items.some((i) => !["waiting", "running"].includes(i.status));
+}
+
+async function queueAdd() {
+  if (!S.project) return;
+  try {
+    await saveSpeakers();
+    await saveConfig();
+    renderQueue(await api("/api/queue/add", { path: S.project.path, kind: "run" }));
+    $("secQueue").scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch (e) { jobMessage("error", e.message); }
 }
 
 // ---------------------------------------------------------------- wiring
@@ -835,6 +969,11 @@ $("btnTest").onclick = () => runStage("run", {
   start: $("testStart").value.trim(), duration: $("testDur").value.trim(), allow_low: $("allowLow").checked }, saveSpeakers);
 $("btnFull").onclick = () => runStage("run", { allow_low: $("allowLow").checked }, saveSpeakers);
 $("btnCancel").onclick = () => api("/api/job/cancel", {});
+$("btnQueueAdd").onclick = queueAdd;
+$("btnQueueStart").onclick = () => api("/api/queue/start", {}).then(() => setTimeout(refreshQueue, 1500));
+$("btnQueueStop").onclick = () => api("/api/queue/stop", {}).then(renderQueue);
+$("btnQueueClear").onclick = () => api("/api/queue/clear", {}).then(renderQueue);
+$("cfgTranscript").onchange = () => show($("langBox"), $("cfgTranscript").checked);
 $("btnLog").onclick = () => show($("log"), $("log").classList.contains("hidden"));
 $("btnCloseJob").onclick = () => show($("jobBar"), false);
 
@@ -880,6 +1019,7 @@ setInterval(() => api("/api/heartbeat", {}).catch(() => {}), 60000);
       if (j.project) loadProject(j.project);
     }
   } catch (e) { /* not running */ }
+  refreshQueue();
   const last = recall("autocut-recent", [])[0];
   if (last && !S.path && !recall("autocut-last-closed", false)) loadProject(last);
 })();

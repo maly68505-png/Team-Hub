@@ -15,6 +15,22 @@ const STATIC = {
   "القطع يروح بس للكاميرات المعلّمة. الباقي يفضل على مساراته متزامن ومطفي.":
     "The cut only goes to the ticked cameras. The others stay on their tracks, synced and off.",
   "فحص الصوت": "Check audio",
+  "فحص الصوت والصورة": "Check audio and picture",
+  "تفريغ الكلام: ترجمة SRT + نص الحلقة + ماركرز المواضيع": "Speech to text: SRT subtitles + transcript + topic markers",
+  "لغة الكلام": "Spoken language",
+  "عربي": "Arabic", "إنجليزي": "English", "تلقائي": "Automatic",
+  "فحص الصورة: سوداء، متجمدة، محروقة، مش واضحة، فريمات ناقصة، كاميرا وقفت":
+    "Picture check: black, frozen, burnt, out of focus, missing frames, camera stopped",
+  "أضف للطابور": "Add to queue",
+  "القطع الكامل للحلقة دي يشتغل في الطابور، بعد اللي قبلها": "The full cut of this episode runs in the queue, after the ones before it",
+  "طابور الحلقات": "Episode queue",
+  "كل حلقة بإعداداتها المحفوظة. شغّل الطابور وسيب الجهاز — لو حلقة فيها مشكلة، الطابور يكمل اللي بعدها.":
+    "Each episode with its saved settings. Start the queue and leave the Mac — if one episode has a problem, the queue goes on with the next.",
+  "شغّل الطابور": "Start the queue",
+  "وقّف بعد الحالية": "Stop after this one",
+  "الحلقة الحالية تكمل، ومفيش حلقة جديدة تبدأ": "The current episode finishes; no new one starts",
+  "امسح المنتهية": "Clear finished",
+  "نموذج تفريغ الكلام": "Speech-to-text model",
   "يمر على كل ملف صوت وكل قناة من أول الحلقة لآخرها": "Goes through every audio file and channel from start to end",
   "يتأكد أن صوت كل قناة موجود طول الحلقة، وأن الملفات تُقرأ لآخرها":
     "Checks that every channel has sound for the whole episode and that the files read to the end",

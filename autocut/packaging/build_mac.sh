@@ -40,10 +40,13 @@ PY="$APP/Contents/Resources/python/bin/python3"
 echo "==> autocut + dependencies"
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 "$PY" -m pip install --no-cache-dir --upgrade pip wheel
-"$PY" -m pip install --no-cache-dir "$ROOT[diarize]"
+"$PY" -m pip install --no-cache-dir "$ROOT[diarize,transcribe]"
 "$PY" -m pip freeze > "$APP/Contents/Resources/requirements.lock"
 # precompile so the app never writes into its own bundle at run time
 "$PY" -m compileall -q -j 0 "$APP/Contents/Resources/python/lib" || true
+
+echo "==> speech-to-text model (inside the app: works offline from the first start)"
+"$PY" "$HERE/fetch_whisper.py" "$APP/Contents/Resources/models/whisper-large-v3-turbo-8bit"
 
 echo "==> launchers"
 cat > "$APP/Contents/Resources/bin/autocut" <<'SH'
@@ -67,6 +70,7 @@ if [ ! -x "$RT/python/bin/python3" ]; then
   for d in "$BASE"/*; do [ "$d" != "$RT" ] && rm -rf "$d"; done   # older versions
 fi
 export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 PYANNOTE_METRICS_ENABLED=false
+export AUTOCUT_WHISPER_MODEL="$R/models/whisper-large-v3-turbo-8bit"
 exec "$RT/python/bin/python3" -m autocut "$@"
 SH
 chmod +x "$APP/Contents/Resources/bin/autocut"

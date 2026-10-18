@@ -422,7 +422,7 @@ def _fix_files_and_links(root: ET.Element, defs: dict[str, ET.Element]) -> None:
 
 
 def write_cut(sq: SyncedSequence, shots: list[Shot], f0: int, n: int, tm: TimeMap,
-              cfg: dict, name: str, path: Path) -> None:
+              cfg: dict, name: str, path: Path, markers: list[tuple[int, str, str]] | None = None) -> None:
     root = copy.deepcopy(sq.root)
     seq = _find_sequence(root)
     # the copy's tracks, in the same order as the parsed ones
@@ -489,6 +489,11 @@ def write_cut(sq: SyncedSequence, shots: list[Shot], f0: int, n: int, tm: TimeMa
         _set(tc, "frame", sq.tc_start + f0)
         _set(tc, "string", frames_to_tc(sq.tc_start + f0, sq.rate))
     _fix_files_and_links(root, defs)
+    for m in seq.findall("marker"):  # the source sequence's markers are on its old timing
+        if retimed:
+            seq.remove(m)
+    from .xmeml import add_markers
+    add_markers(seq, markers)
     ET.indent(root, space="  ")
     body = ET.tostring(root, encoding="unicode")
     path.write_text('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE xmeml>\n' + body + "\n",
@@ -515,8 +520,9 @@ def write_cuts_csv(path: Path, shots: list[Shot], rate: Rate, base: int, tm: Tim
 
 def run_xml(xml_path: Path, cfg: dict, until: str, start: str | None, duration: str | None,
             rttm: Path | None, diarize_full: bool) -> int:
+    from . import transcribe
     from .pipeline import (EXIT_ERROR, EXIT_OK, _test_name, _test_suffix, check_speakers,
-                           silence_map, speaker_cameras)
+                           silence_map, speaker_cameras, speaker_names, transcript_outputs)
     workdir = workdir_for(xml_path)
     banner("1. Read the synced sequence (XML)")
     sq = SyncedSequence(xml_path)
@@ -566,6 +572,8 @@ def run_xml(xml_path: Path, cfg: dict, until: str, start: str | None, duration: 
     if until == "diarize":
         return EXIT_OK
 
+    sentences = transcribe.run_stage(ref, window, cfg, workdir, segs)
+
     banner("3. Cut")
     coverage = {c: v[f0:f0 + n] for c, v in sq.coverage().items()}
     coverage = {c: np.pad(v, (0, n - len(v))) for c, v in coverage.items()}
@@ -588,10 +596,15 @@ def run_xml(xml_path: Path, cfg: dict, until: str, start: str | None, duration: 
     csv_p = out_dir / f"cuts{suffix}.csv"
     name = f"{sq.name} autocut" + (_test_name(t0, t1) if is_test else " FULL") + (
         " no-silence" if cc["remove_silence"] else "") + (" layers" if layered else "") + time.strftime(" %H.%M")
-    write_cut(sq, shots, f0, n, tm, cfg, name, xml_p)
+    markers, n_topics = transcript_outputs(
+        sentences, window, rate, tm, cfg, out_dir,
+        (_test_suffix(t0, t1) if is_test else "") + ("_tight" if cc["remove_silence"] else ""),
+        sq.tc_start + f0, speaker_names(cfg, long_cam))
+    write_cut(sq, shots, f0, n, tm, cfg, name, xml_p, markers)
     write_cuts_csv(csv_p, shots, rate, sq.tc_start + f0, tm)
     summary = dict(breakdown(shots, rate), full=not is_test, sequence=name, xml=xml_p.name,
-                   length=round(tm.total / rate.float, 1), removed=round(tm.removed / rate.float, 1))
+                   length=round(tm.total / rate.float, 1), removed=round(tm.removed / rate.float, 1),
+                   transcript=sentences is not None, topics=n_topics)
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
     log.info("Premiere XML: %s", xml_p)
     log.info("Cut list:     %s", csv_p)
