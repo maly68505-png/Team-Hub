@@ -500,7 +500,20 @@ def place(project: Project, takes: list[Take], cfg: dict) -> dict[str, SyncResul
     if method == "timecode+audio":
         tt, _ = _tc_values(project, takes)
         if all(v is not None for v in tt):
-            return place_tc_guided(project, takes, cfg)
+            results = place_tc_guided(project, takes, cfg)
+            heard = [results[c.rel] for c in project.all_clips() if c.info.has_audio]
+            confirmed = [r for r in heard if r.method in ("audio", "override") and not r.low]
+            if len(confirmed) * 2 >= len(heard):
+                return results
+            # most clips found nothing near their timecode: cameras and recorder were not
+            # on the same timecode (not jammed) — the timecode cannot be trusted here
+            log.warning("timecode+audio: only %d of %d clip(s) match the clean audio near their "
+                        "timecode — the cameras and the recorder are not on the same timecode. "
+                        "Syncing by audio instead.", len(confirmed), len(heard))
+            results = place_takes(project, takes, cfg)
+            for r in results.values():
+                r.notes.append("timecode not matching the recorder — synced by audio")
+            return results
         log.warning("timecode+audio: the clean audio has no timecode — syncing by audio, "
                     "checked against the camera timecode")
         results = place_takes(project, takes, cfg)
@@ -545,7 +558,7 @@ def place_tc_guided(project: Project, takes: list[Take], cfg: dict) -> dict[str,
         "clips": fingerprint([c.path for c in clips]), "groups": [[f.path.name for f in t.files] for t in takes],
         "cfg": {k: v for k, v in scfg.items() if k != "overrides"}, "channel": cfg.get("audio_channel")},
         sort_keys=True).encode()).hexdigest()[:16]
-    cache_p = project.workdir / "takes.json"
+    cache_p = project.workdir / "takes_tc.json"
     try:
         data = json.loads(cache_p.read_text())
         if data.get("key") == key:

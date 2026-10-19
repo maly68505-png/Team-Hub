@@ -231,3 +231,18 @@ def test_retakes_placed_by_timecode(tmp_path):
     for clip, pos in want.items():
         assert rows[clip]["status"] == "ok", clip
         assert float(rows[clip]["offset_s"]) == pytest.approx(pos, abs=0.002), clip
+
+
+def test_timecode_plus_audio_when_not_jammed(tmp_path, monkeypatch):
+    """Cameras and recorder on different timecode (not jammed): timecode+audio
+    must not give up — it falls back to syncing by audio."""
+    monkeypatch.setattr(synth, "REC_TC", 15 * 3600.0)   # recorder 15:00:00, cameras 10:00:xx
+    root = synth.make_multitrack_project(tmp_path / "p")
+    cfg(root, sync="  method: timecode+audio\n")
+    assert run(root, until="sync") == EXIT_OK
+    rows = sync_rows(root)
+    want = {"CAM_A/C0001.MP4": 3.0, "CAM_A/C0002.MP4": 85.0, "CAM_B/B_001.MP4": 10.3, "CAM_C/CLIP1.MP4": 1.52}
+    for clip, pos in want.items():
+        assert rows[clip]["status"] == "ok", (clip, rows[clip])
+        assert float(rows[clip]["offset_s"]) == pytest.approx(pos, abs=0.01), clip
+    assert "not on the same timecode" in (root / "_autocut" / "autocut.log").read_text()

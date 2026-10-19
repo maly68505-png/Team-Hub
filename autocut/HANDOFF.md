@@ -165,6 +165,12 @@ needs the user's MOGRT files + Premiere version; **4** = 22 proxies.
   through the normal Job; status from the exit code. UI: "Add to queue" in step 5, queue card.
 - Smoke test transcribes a `say` sentence with the bundled model (asserts words + timings).
 
+### timecode+audio when cameras and recorder are not jammed (v0.9.1)
+- The user's episode: camera TCs fell outside every clean-audio take -> tc-guided gave up ("its timecode
+  is outside every take"), all weak. Now: if fewer than half the clips with audio are confirmed by audio
+  near their timecode, `place()` warns and re-syncs everything by audio (`place_takes`). The tc-guided pass
+  caches in `takes_tc.json` (audio sync keeps `takes.json`).
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.
