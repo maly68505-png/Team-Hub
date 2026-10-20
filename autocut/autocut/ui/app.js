@@ -386,8 +386,13 @@ async function toggleCamera(name, on) {
 function renderCutCams() {
   const st = S.project, cams = st.cameras || [];
   const chosen = st.config.cut.cameras || cams;
-  $("cutCams").replaceChildren(...cams.map((c) => h("label", { class: "chip-toggle" },
-    h("input", { type: "checkbox", value: c, checked: chosen.includes(c) }), h("span", {}, c))));
+  const wide = st.config.long_camera;
+  $("cutCams").replaceChildren(...cams.map((c) => h("label", { class: "chip-toggle", title: c === wide ? L("الواسعة دايماً متاحة للقطع", "The wide camera is always available to the cut") : null },
+    h("input", { type: "checkbox", value: c, checked: c === wide || chosen.includes(c), disabled: c === wide }),
+    h("span", {}, c === wide ? `${c} · ${L("الواسعة", "wide")}` : c))));
+  $("wideName").textContent = wide ? `(${wide})` : "";
+  $("cfgWideInterrupt").checked = st.config.cut.wide_on_interrupt !== false;
+  $("cfgInterruptShot").value = st.config.cut.interrupt_shot ?? 3;
 }
 
 function readSettings(cfg) {
@@ -404,6 +409,10 @@ function readSettings(cfg) {
   cfg.output.layered = $("cfgLayered").checked;
   cfg.cut.silence_max = Math.max(0.2, num("cfgSilenceMax", cfg.cut.silence_max));
   cfg.cut.rotate_max_shot = Math.max(num("cfgRotMax", cfg.cut.rotate_max_shot), cfg.cut.rotate_min_shot + 1);
+  if ($("cfgInterruptShot").value !== "") {
+    cfg.cut.wide_on_interrupt = $("cfgWideInterrupt").checked;
+    cfg.cut.interrupt_shot = Math.min(15, Math.max(1, num("cfgInterruptShot", cfg.cut.interrupt_shot ?? 3)));
+  }
   const ch = parseInt($("cfgChannel").value, 10);
   cfg.audio_channel = Number.isFinite(ch) && ch > 0 ? ch : null;
   if (!isXml()) cfg.sync.method = $("cfgSyncMethod").value || "audio";
@@ -540,13 +549,13 @@ async function saveSpeakers() {
 
 // ---------------------------------------------------------------- outputs
 const WHY_AR = {
-  speaker: "على المتكلم", angle: "تنويع الزوايا عند الوقفات", hold: "إبقاء اللقطة أثناء الصمت",
+  interrupt: "مقاطعة ← الواسعة", speaker: "على المتكلم", angle: "تنويع الزوايا عند الوقفات", hold: "إبقاء اللقطة أثناء الصمت",
   overlap: "أصوات متداخلة ← الواسعة", unmapped: "متحدث غير مربوط بكاميرا ← الواسعة",
   fallback: "الكاميرا المطلوبة بلا تصوير هنا ← بديل", gap: "لا توجد أي كاميرا (فراغ أسود)",
   opening: "قبل أول كلمة", other: "أخرى",
 };
 const WHY_EN = {
-  speaker: "on the speaker", angle: "angle change at pauses", hold: "hold the shot during silence",
+  interrupt: "interruption → wide", speaker: "on the speaker", angle: "angle change at pauses", hold: "hold the shot during silence",
   overlap: "crosstalk → wide", unmapped: "speaker without a camera → wide",
   fallback: "chosen camera has no footage here → another", gap: "no camera at all (black gap)",
   opening: "before the first word", other: "other",

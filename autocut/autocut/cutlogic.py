@@ -6,6 +6,8 @@ Everything happens on the sequence frame grid, so every cut is frame-snapped.
   2. per frame: one speaker -> that speaker's camera
                 2+ speakers for longer than `overlap_min` -> long camera
                 silence, or a shorter overlap -> hold the previous camera
+  2b. someone interrupts (talks while / between another speaker's words, and that
+      speaker goes on) -> the wide camera for `interrupt_shot` seconds
   3. camera has no footage at that moment -> long camera -> any camera -> gap
   4. shots shorter than `min_shot` are absorbed by a neighbour (the previous
      shot is preferred: the cut is delayed rather than advanced)
@@ -125,7 +127,7 @@ def restrict_cameras(allowed: list[str] | None, cameras: list[str], long_cam: st
     left out goes to the wide camera (or the first allowed one)."""
     if not allowed:
         return cameras, long_cam, speaker_cam, coverage
-    keep = [c for c in cameras if c in allowed]
+    keep = [c for c in cameras if c in allowed or c == long_cam]   # the wide is never left out
     if not keep:
         log.warning("cut.cameras names no camera of this shoot — cutting to all cameras")
         return cameras, long_cam, speaker_cam, coverage
@@ -136,6 +138,45 @@ def restrict_cameras(allowed: list[str] | None, cameras: list[str], long_cam: st
         sc[spk] = (cams if len(cams) > 1 else cams[0]) if cams else long_cut
     log.info("Cutting only to: %s (wide: %s)", ", ".join(keep), long_cut)
     return keep, long_cut, sc, {c: v for c, v in coverage.items() if c in keep}
+
+
+def interruptions(segs: list[Segment], min_len: float = 0.7, gap: float = 0.6,
+                  max_len: float = 4.0) -> list[tuple[float, str]]:
+    """(time, who) where someone cuts in: a few words (min_len..max_len seconds) that
+    start while another speaker is talking (or within `gap` of their last word), and
+    that speaker goes on after them. A plain hand-over (the first speaker stops) or
+    a long answer is not an interruption."""
+    by_spk: dict[str, list[Segment]] = {}
+    for g in segs:
+        by_spk.setdefault(g.speaker, []).append(g)
+    out = []
+    for s in segs:
+        if not min_len <= s.duration <= max_len:
+            continue
+        for spk, gs in by_spk.items():
+            if spk == s.speaker:
+                continue
+            before = any(g.start < s.start and g.end > s.start - gap for g in gs)
+            after = any(g.end > s.end and g.start < s.end + gap for g in gs)
+            if before and after:
+                out.append((s.start, f"{s.speaker} -> {spk}"))
+                break
+    return sorted(out)
+
+
+def _overlay(pieces: list[Shot], a: int, b: int, cam: str, spk: str, reason: str) -> list[Shot]:
+    """pieces with frames [a, b) replaced by one shot on `cam`."""
+    out: list[Shot] = []
+    for p in pieces:
+        if p.end <= a or p.start >= b:
+            out.append(p)
+            continue
+        if p.start < a:
+            out.append(Shot(p.start, a, p.camera, p.speaker, p.reason))
+        if p.end > b:
+            out.append(Shot(b, p.end, p.camera, p.speaker, p.reason))
+    out.append(Shot(a, b, cam, spk, reason))
+    return sorted(out, key=lambda x: x.start)
 
 
 def plan_cuts(segs: list[Segment], window: tuple[float, float], rate: Rate,
@@ -211,6 +252,26 @@ def plan_cuts(segs: list[Segment], window: tuple[float, float], rate: Rate,
         pieces = _rotate(pieces, speaker_cam, pauses, rate, ccfg, coverage)
         log.info("Angle changes for presenters on several cameras: %d pauses found",
                  len(pauses))
+
+    # --- interruptions: a short cut to the wide camera ---------------------
+    if ccfg.get("wide_on_interrupt", True):
+        dur = rate.frames(float(ccfg.get("interrupt_shot", 3.0)))
+        spans: list[list] = []
+        for t, who in interruptions(segs, float(ccfg.get("interrupt_min", 0.7))):
+            a = max(0, rate.frames(t - t0 - lead))
+            if a >= n:
+                continue
+            if spans and a <= spans[-1][1]:       # a second interruption inside the wide shot
+                spans[-1][1] = min(n, max(spans[-1][1], a + dur))
+            else:
+                spans.append([a, min(n, a + dur), who])
+        for a, b, who in spans:
+            on_wide = [p for p in pieces if p.camera == long_cam and p.start < b and p.end > a]
+            if any(p.start <= a and p.end >= b for p in on_wide):
+                continue                          # already on the wide all along (crosstalk)
+            b = max([b] + [p.end for p in on_wide])
+            pieces = _overlay(pieces, a, b, long_cam, who, "interruption -> wide")
+        log.info("Interruptions (-> wide camera for %.1fs): %d", dur / fps, len(spans))
 
     # --- footage availability ----------------------------------------------
     fallback_order = [long_cam] + [c for c in cameras if c != long_cam]
@@ -341,7 +402,7 @@ def keep_ranges(sound: np.ndarray, rate: Rate, max_pause: float, pad: float) -> 
     return keep
 
 
-REASON_GROUPS = [("angle change", "angle"), ("no footage on", "fallback"), ("NO FOOTAGE", "gap"),
+REASON_GROUPS = [("interruption", "interrupt"), ("angle change", "angle"), ("no footage on", "fallback"), ("NO FOOTAGE", "gap"),
                  ("unmapped", "unmapped"), ("overlap", "overlap"), ("hold", "hold"),
                  ("opening", "opening"), ("speaker", "speaker")]
 

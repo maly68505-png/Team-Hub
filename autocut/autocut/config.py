@@ -50,6 +50,9 @@ DEFAULTS = {
         "rotate_min_shot": 4.0,   # presenter on several cameras: shortest shot before an angle change
         "rotate_max_shot": 9.0,   # ... and the longest (cuts at the longest pause in between)
         "pause_min": 0.25,        # a pause at least this long is a place to change angle
+        "wide_on_interrupt": True, # someone cuts in on another speaker -> the wide camera ...
+        "interrupt_shot": 3.0,    # ... for this many seconds
+        "interrupt_min": 0.7,     # ... when they speak at least this long (shorter: "mm-hm", ignored)
         "cameras": None,          # cut only to these cameras (None = all); the others stay on their tracks
         "remove_silence": False,  # shorten long pauses on every track (jump cuts)
         "silence_max": 0.6,       # pauses longer than this are shortened ...
@@ -142,7 +145,7 @@ def load(path: Path, require_long: bool = True) -> dict:
         raise ConfigError("config: check.sample_every must be at least 10 seconds")
     c = cfg["cut"]
     for key in ("min_segment", "overlap_min", "min_shot", "cut_lead", "rotate_min_shot",
-                "rotate_max_shot", "pause_min", "silence_max", "silence_pad"):
+                "rotate_max_shot", "pause_min", "silence_max", "silence_pad", "interrupt_shot", "interrupt_min"):
         if float(c[key]) < 0:
             raise ConfigError(f"config: cut.{key} must be >= 0")
     return cfg

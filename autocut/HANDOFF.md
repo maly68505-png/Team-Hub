@@ -188,6 +188,14 @@ needs the user's MOGRT files + Premiere version; **4** = 22 proxies.
   non-letter before t/tk/take, and same folder + same start TC (±1 s) or same length (±0.1 s) = tracks.
 - Mics diarization names one-file-per-person speakers after the files (`mics.file_labels`: Host, Guest 1).
 
+### Wide camera on interruptions (v0.9.4)
+- User: the wide camera (not tied to a speaker) never appeared in the cut. Chosen behaviour: when someone
+  cuts in, cut to the wide for 3 s. `cutlogic.interruptions`: a 0.7-4 s turn that starts while another
+  speaker talks (or within 0.6 s) and that speaker goes on after it; a hand-over or a long answer is not
+  one. Overlaid on the planned pieces (`_overlay`) unless the wide already covers it (crosstalk).
+  Config `cut.wide_on_interrupt`, `cut.interrupt_shot` (3 s), `cut.interrupt_min` (0.7 s). Step 5 UI has
+  its own wide line. `restrict_cameras` never leaves the wide out of the cut cameras.
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.

@@ -46,9 +46,10 @@ def test_silence_holds_previous_camera():
 
 
 def test_min_shot_length_enforced():
-    shots = cut([(0, 10, "S_A"), (10, 11.5, "S_B"), (11.5, 20, "S_A")], dur=20)
+    shots = cut([(0, 10, "S_A"), (10, 11.5, "S_B"), (11.5, 20, "S_A")], dur=20, wide_on_interrupt=False)
     assert [s.camera for s in shots] == ["A"]
-    shots = cut([(0, 10, "S_A"), (10, 11.5, "S_B"), (11.5, 20, "S_A")], dur=20, min_shot=1.0)
+    shots = cut([(0, 10, "S_A"), (10, 11.5, "S_B"), (11.5, 20, "S_A")], dur=20, min_shot=1.0,
+                wide_on_interrupt=False)
     assert [s.camera for s in shots] == ["A", "B", "A"]
     shots = cut([(0, 5, "S_A"), (5, 6.2, "S_B"), (6.2, 20, "S_A"), (20, 21, "S_B"), (21, 40, "S_B")], dur=40)
     assert all(s.length >= 50 for s in shots)
@@ -148,3 +149,33 @@ def test_rotation_picks_cameras_that_are_rolling():
     assert all(s.camera != "A" for s in shots if s.end <= R.frames(30))
     assert any(s.camera == "A" for s in shots if s.start >= R.frames(30))
     assert all(x.camera != y.camera for x, y in zip(shots, shots[1:]))
+
+
+def test_interruption_goes_to_the_wide_for_a_few_seconds():
+    # A talks, B cuts in for a second, A goes on: 3 s on the wide from B's first word
+    shots = cut([(0, 10, "S_A"), (10.2, 11.2, "S_B"), (11.4, 30, "S_A")], dur=30)
+    assert cams(shots) == [("A", 0, 255), ("WIDE", 255, 330), ("A", 330, 750)]
+    assert shots[1].reason == "interruption -> wide" and shots[1].speaker == "S_B -> S_A"
+    # B talks over A without A stopping
+    shots = cut([(0, 30, "S_A"), (12, 13, "S_B")], dur=30)
+    assert ("WIDE", 300, 375) in cams(shots)
+    # off: no wide
+    shots = cut([(0, 10, "S_A"), (10.2, 11.2, "S_B"), (11.4, 30, "S_A")], dur=30, wide_on_interrupt=False)
+    assert "WIDE" not in [s.camera for s in shots]
+    # other length
+    shots = cut([(0, 10, "S_A"), (10.2, 11.2, "S_B"), (11.4, 30, "S_A")], dur=30, interrupt_shot=5.0)
+    assert ("WIDE", 255, 380) in cams(shots)
+
+
+def test_hand_over_and_backchannel_are_not_interruptions():
+    # A stops, B answers: a normal turn, no wide
+    shots = cut([(0, 10, "S_A"), (10.3, 25, "S_B")], dur=25)
+    assert "WIDE" not in [s.camera for s in shots[1:]]
+    # "mm-hm" (0.4 s) while A talks: ignored
+    shots = cut([(0, 20, "S_A"), (8, 8.4, "S_B")], dur=20)
+    assert [s.camera for s in shots] == ["A"]
+
+
+def test_crosstalk_stays_crosstalk():
+    shots = cut([(0, 10, "S_A"), (8, 20, "S_B"), (20.2, 30, "S_A")], dur=30)
+    assert any(s.reason == "overlap" for s in shots)

@@ -22,6 +22,9 @@ const STATIC = {
   "فحص الصورة: سوداء، متجمدة، محروقة، مش واضحة، فريمات ناقصة، كاميرا وقفت":
     "Picture check: black, frozen, burnt, out of focus, missing frames, camera stopped",
   "أضف للطابور": "Add to queue",
+  "الكاميرا الواسعة": "Wide camera",
+  "(مش مربوطة بمتحدث): لما حد يقاطع، القطع يروح لها لمدة": "(not tied to a speaker): when someone cuts in, cut to it for",
+  "ث": "s",
   "القطع الكامل للحلقة دي يشتغل في الطابور، بعد اللي قبلها": "The full cut of this episode runs in the queue, after the ones before it",
   "طابور الحلقات": "Episode queue",
   "كل حلقة بإعداداتها المحفوظة. شغّل الطابور وسيب الجهاز — لو حلقة فيها مشكلة، الطابور يكمل اللي بعدها.":
