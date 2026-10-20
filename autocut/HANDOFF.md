@@ -181,6 +181,13 @@ needs the user's MOGRT files + Premiere version; **4** = 22 proxies.
   prefers `1_RAW_Footage` over a sibling `3_Proxy` tree (pointing at the proxy tree still works).
 - UI: camera folder ticks show even when the clean audio folder has an error.
 
+### One mic file per person (v0.9.3)
+- Al-Janoub audio: each part folder has `..._Host.wav`, `..._Guest 1.wav` .. `Guest 4.wav` (mono, same
+  length, start TC 00:00:00 / 00:51:09). Only one file per part reached the timeline: `TAKE_NO` read
+  "Guest 1" as take 1 (the `t` of "Guest"), and separate lavs fail `same_recording`. Now TAKE_NO needs a
+  non-letter before t/tk/take, and same folder + same start TC (±1 s) or same length (±0.1 s) = tracks.
+- Mics diarization names one-file-per-person speakers after the files (`mics.file_labels`: Host, Guest 1).
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.

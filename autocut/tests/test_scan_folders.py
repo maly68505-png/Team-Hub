@@ -52,3 +52,24 @@ def test_raw_footage_chosen_over_proxy_tree(tmp_path):
     # pointing at the proxy tree itself still works
     root, cams = discover_cameras(tmp_path / "3_Proxy", None)
     assert sorted(cams) == ["CAM01", "CAM02"]
+
+
+def test_one_mic_per_person_in_two_parts(tmp_path):
+    """EP/1 and EP/2, each with Host.wav + Guest 1..4.wav (one lav per person, each
+    hearing a different voice): two takes of five tracks, not ten takes."""
+    import numpy as np
+    from scipy.io import wavfile
+    from autocut.probe import probe
+    from autocut.takes import group_takes
+    rng = np.random.default_rng(0)
+    root = tmp_path / "EP"
+    names_ = ["aja.aljanoub.261015_Host", *(f"aja.aljanoub.261015_Guest {i}" for i in range(1, 5))]
+    for part, secs in (("1", 40.0), ("2", 31.0)):
+        (root / part).mkdir(parents=True)
+        for n in names_:
+            x = (0.1 * rng.normal(0, 1, int(secs * 8000))).astype(np.float32)   # unrelated signals
+            wavfile.write(root / part / f"{n}.wav", 8000, (x * 32767).astype(np.int16))
+    takes = group_takes([probe(f) for f in clean_audio_files(root)], "auto")
+    assert len(takes) == 2
+    assert [len(t.files) for t in takes] == [5, 5]
+    assert [round(t.duration) for t in takes] == [40, 31]

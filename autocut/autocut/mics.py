@@ -16,6 +16,7 @@ No model, no GPU: a 2-hour recording takes about a minute (decode only).
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import av
@@ -176,10 +177,31 @@ def segments(levels: dict[str, np.ndarray], margin_db: float = 10.0) -> list[Seg
     return out
 
 
+def file_labels(files) -> list[str | None]:
+    """One mono file per person (Host.wav, Guest 1.wav ...): the part of the name that
+    differs ("Host", "Guest 1"); None when the names say nothing (Tr1, Tr2 -> MIC n)."""
+    stems = [f.path.stem for f in files]
+    if len(stems) < 2:
+        return [None] * len(stems)
+    pre = len(os.path.commonprefix(stems))
+    while pre and stems[0][pre - 1].isalnum() and not all(s[pre - 1:pre].isdigit() for s in stems):
+        pre -= 1                                # never cut a word in half
+    if any(s[pre:].strip(" _-.").isdigit() for s in stems):   # Guest 1, Guest 2: keep the word
+        while pre and not stems[0][pre - 1].isalnum():
+            pre -= 1
+        while pre and stems[0][pre - 1].isalpha():
+            pre -= 1
+    rest = [s[pre:].strip(" _-.") for s in stems]
+    if any(not r or r.isdigit() for r in rest) or len(set(rest)) < len(rest):
+        return [None] * len(stems)
+    return rest
+
+
 def from_takes(takes, duration: float, dcfg: dict, mix_channel: int | None, workdir: Path) -> list[Segment]:
     """Folder mode: every take's mic channels at the take's position."""
     tl = Timeline(duration)
     for t in takes:
+        names = file_labels(t.files)
         for j, f in enumerate(t.files, 1):
             chans = mic_channels(f, dcfg, mix_channel)
             if not chans:
@@ -188,7 +210,9 @@ def from_takes(takes, duration: float, dcfg: dict, mix_channel: int | None, work
             lv = channel_levels(f, workdir)
             for ch in chans:
                 if ch <= lv.shape[0]:
-                    tl.place(mic_label(ch, j, len(t.files), f.audio_channels), lv[ch - 1], t.position)
+                    label = names[j - 1] if f.audio_channels == 1 and names[j - 1] else \
+                        mic_label(ch, j, len(t.files), f.audio_channels)
+                    tl.place(label, lv[ch - 1], t.position)
     return _finish(tl, dcfg)
 
 

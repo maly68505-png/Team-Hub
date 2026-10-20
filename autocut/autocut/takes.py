@@ -55,7 +55,7 @@ class Take:
     notes: list[str] = field(default_factory=list)
 
 
-TAKE_NO = re.compile(r"(?:take|tk|t)[\s._-]*0*(\d+)", re.IGNORECASE)
+TAKE_NO = re.compile(r"(?<![a-z])(?:take|tk|t)[\s._-]*0*(\d+)", re.IGNORECASE)  # not "Guest 1"
 
 
 def _take_no(name: str) -> str | None:
@@ -96,8 +96,12 @@ def group_takes(audio: list[MediaInfo], mode: str = "auto", similar=None) -> lis
                 and first.path.parent == a.path.parent)
         if same:
             na, nb = _take_no(first.path.stem), _take_no(a.path.stem)
+            ta, tb = getattr(first, "tc_seconds", None), getattr(a, "tc_seconds", None)
+            same_tc = ta is not None and tb is not None and abs(ta - tb) <= 1.0
             if na and nb and na != nb:
                 same = False           # TAKE1 / TAKE2: different takes whatever their length
+            elif same_tc or abs(first.duration - a.duration) <= 0.1:
+                same = True            # one mic per person (Host.wav, Guest 1.wav ...): same start / length
             elif mode == "auto" or mode == "takes":
                 same = similar(first, a)
         if same:
