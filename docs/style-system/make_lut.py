@@ -1,54 +1,43 @@
-"""Build the "Warehouse Night" grade as a 33^3 .cube LUT (Rec.709 in / out).
+"""Build the tone-only grade as a 33^3 .cube LUT (Rec.709 in / out).
 
-Measured on the warehouse reference still:
-  blacks  ~72% of the frame, lifted a touch with a green-teal tint   RGB(16,20,15)
-  shadows steel blue                                                RGB(40,48,55)
-  mids    cool grey-blue                                            RGB(96,112,124)
-  highs   compressed, cool white, rarely above ~0.75                RGB(172,185,192)
-  accent  only warm orange/red survives in colour (<0.3% of pixels) RGB(97,52,40)
+It changes brightness and contrast only: every pixel keeps its hue and saturation
+(RGB is scaled by the luma ratio), so colour is left to the per-project grade.
+
+Measured on the references (luma, 0-255):
+  1012.mov   p0.5 0-3   p50 21-37   p95 160-216   p99.5 216-249   -> true crushed blacks, bright small highlights
+  warehouse  p0.5 11    p50 20      p95 105       p99.5 174       -> milky lifted black, rolled-off highlights
+The curve sits between them: blacks just off zero, low-key mids, soft highlight shoulder.
 """
-import colorsys, sys
+import sys
 import numpy as np
 
 N = 33
-# (input luma, output luma, tint RGB) control points
-CURVE = [(0.00, 0.035), (0.10, 0.060), (0.25, 0.150), (0.50, 0.330), (0.75, 0.560), (0.90, 0.700), (1.00, 0.780)]
-TINT = [(0.00, (16, 20, 15)), (0.19, (40, 48, 55)), (0.44, (96, 112, 124)), (0.72, (172, 185, 192)), (1.00, (225, 232, 236))]
-BASE_SAT = 0.30      # everything goes near-monochrome…
-ACCENT_SAT = 0.95    # …except warm orange/red light
-ACCENT_HUE = (0.0, 0.11)   # 0–40°, plus wrap-around reds
+CURVE = [(0.00, 0.012), (0.05, 0.022), (0.15, 0.070), (0.30, 0.175), (0.50, 0.350),
+         (0.70, 0.560), (0.85, 0.740), (0.95, 0.860), (1.00, 0.900)]
 
-def interp(x, pts):
-    xs = [p[0] for p in pts]
-    return float(np.interp(x, xs, [p[1] for p in pts]))
+def tone(l):
+    return float(np.interp(l, [p[0] for p in CURVE], [p[1] for p in CURVE]))
 
-def tint_at(l):
-    xs = [p[0] for p in TINT]
-    c = np.array([np.interp(l, xs, [p[1][k] for p in TINT]) for k in range(3)])
-    return c / c.mean()
-
-def grade(r, g, b):
-    l = 0.2126 * r + 0.7152 * g + 0.0722 * b
-    lo = interp(l, CURVE)
-    h, s, v = colorsys.rgb_to_hsv(r, g, b)
-    warm = (ACCENT_HUE[0] <= h <= ACCENT_HUE[1]) or h >= 0.96
-    w = min(1.0, s * 2.0) if warm else 0.0          # only really saturated warm pixels keep colour
-    sat = BASE_SAT + (ACCENT_SAT - BASE_SAT) * w
-    chroma = (np.array([r, g, b]) - l) * sat
-    if warm:
-        chroma *= 1.15
-    mono = lo * tint_at(lo) * (1 - 0.6 * w) + lo * 0.6 * w
-    out = mono + chroma * (lo / max(l, 1e-4)) ** 0.5
+def grade(rgb):
+    l = float(rgb @ np.array([0.2126, 0.7152, 0.0722]))
+    lo = tone(l)
+    if l < 1e-4:
+        return np.full(3, lo)
+    out = rgb * (lo / l)
+    # anything pushed past white is pulled back toward its luma, not clipped per channel
+    m = out.max()
+    if m > 1.0:
+        out = lo + (out - lo) * ((1.0 - lo) / (m - lo))
     return np.clip(out, 0, 1)
 
 def write(path, title):
     with open(path, 'w') as f:
         f.write(f'TITLE "{title}"\nLUT_3D_SIZE {N}\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n')
-        for bi in range(N):
-            for gi in range(N):
-                for ri in range(N):
-                    o = grade(ri / (N - 1), gi / (N - 1), bi / (N - 1))
+        for b in range(N):
+            for g in range(N):
+                for r in range(N):
+                    o = grade(np.array([r, g, b], float) / (N - 1))
                     f.write(f'{o[0]:.6f} {o[1]:.6f} {o[2]:.6f}\n')
 
 if __name__ == '__main__':
-    write(sys.argv[1] if len(sys.argv) > 1 else 'warehouse_night.cube', 'Warehouse Night')
+    write(sys.argv[1] if len(sys.argv) > 1 else 'tone_lowkey.cube', 'Tone Low-Key (no colour)')
