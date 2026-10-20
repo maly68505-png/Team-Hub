@@ -15,25 +15,28 @@ import argparse, json, os, re, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 TARGETS = {
     'tv':     dict(I=-23.0, TP=-1.0, LRA=7.0),    # EBU R128 broadcast
-    'social': dict(I=-14.0, TP=-1.0, LRA=7.0),    # YouTube / Instagram / podcasts
+    'social': dict(I=-16.0, TP=-1.0, LRA=7.0),    # podcasts / spoken social video (-14 squashes a quiet source)
 }
 
 def chain(model):
+    # the exciter rebuilds lost highs by adding harmonics: kept mild, it turns harsh when pushed
     return ','.join([
         'aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono',
-        'highpass=f=80:poles=2',
-        f"arnndn=m='{model}':mix=1",                     # AI noise removal
-        'equalizer=f=250:t=q:w=1.0:g=-3',                # mud / boxiness
-        'equalizer=f=1150:t=q:w=4:g=-2',                 # the narrow room ring around 1.1-1.2 kHz
-        'equalizer=f=3000:t=q:w=0.9:g=5',                # presence: intelligibility
-        'highshelf=f=6000:g=4',                          # air
-        'aexciter=amount=1.5:drive=6:blend=0:freq=2500:ceil=12000',
-        'deesser=i=0.4:m=0.5:f=0.5',
-        'speechnorm=e=6:r=0.0005:l=1',                   # evens out loud and quiet sentences
-        'acompressor=threshold=-22dB:ratio=3:attack=8:release=180:makeup=2',
-        # levelling lifts the floor in the pauses too: clean it again and close the gaps gently
-        'afftdn=nr=14:nf=-50:tn=1',
-        'agate=threshold=0.012:ratio=2.5:range=0.12:attack=10:release=250:knee=4',
+        'highpass=f=90:poles=2',
+        'afftdn=nr=8:nf=-60:tn=1',                       # light broadband clean first
+        f"arnndn=m='{model}':mix=0.8",                   # AI denoise, not fully wet (fewer watery artefacts)
+        'equalizer=f=180:t=q:w=1.2:g=-2',
+        'equalizer=f=320:t=q:w=1.0:g=-4',                # mud / boxiness
+        'equalizer=f=1150:t=q:w=4:g=-2',                 # room ring around 1.1-1.2 kHz
+        'equalizer=f=2200:t=q:w=1.2:g=4',                # where this voice still has energy
+        'equalizer=f=3600:t=q:w=1.0:g=6',                # presence
+        'highshelf=f=7000:g=2',
+        'aexciter=amount=1:drive=3.5:blend=0:freq=3000:ceil=11000',
+        'deesser=i=0.3:m=0.5:f=0.5',
+        'speechnorm=e=4:r=0.0005:l=1',
+        'acompressor=threshold=-24dB:ratio=2.5:attack=12:release=200:knee=4:makeup=1',
+        'afftdn=nr=10:nf=-55:tn=1',
+        'agate=threshold=0.01:ratio=2:range=0.18:attack=15:release=300:knee=6',
     ])
 
 def run(cmd):
@@ -62,7 +65,9 @@ def main():
     limit = f"alimiter=limit={10 ** ((tg['TP'] - 0.3) / 20):.4f}:attack=5:release=50:level=false"
 
     def post(g):
-        return f"{pre},volume={g:.2f}dB,{limit},aformat=sample_rates=48000:channel_layouts=stereo"
+        # a soft peak compressor takes the edge off before the limiter, so it never has to clip hard
+        return (f"{pre},volume={g:.2f}dB,acompressor=threshold=-10dB:ratio=3:attack=3:release=80:knee=6,"
+                f"{limit},aformat=sample_rates=48000:channel_layouts=stereo")
 
     def render(g):
         if a.out.lower().endswith(('.mp4', '.mov', '.mxf')):     # picture copied, audio replaced
@@ -76,12 +81,15 @@ def main():
     r = render(gain)
     if r.returncode:
         sys.exit(r.stderr)
-    # pass 2: the limiter can shave a little off; correct once if we missed by more than 0.3 LU
-    miss = tg['I'] - loudness(['-i', a.out], None)
-    if abs(miss) > 0.3:
-        r = render(gain + miss)
-    if r.returncode:
-        sys.exit(r.stderr)
+    # the peak compressor and limiter shave a little off: re-measure and correct until within 0.3 LU
+    for _ in range(3):
+        miss = tg['I'] - loudness(['-i', a.out], None)
+        if abs(miss) <= 0.3:
+            break
+        gain += miss
+        r = render(gain)
+        if r.returncode:
+            sys.exit(r.stderr)
     print(f"done -> {a.out}  (target {a.target}: {tg['I']} LUFS, TP {tg['TP']} dBTP)")
 
 if __name__ == '__main__':
