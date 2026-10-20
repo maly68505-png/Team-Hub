@@ -252,6 +252,8 @@ function renderSettings() {
   const sel = $("cfgLong");
   sel.replaceChildren(...cams.map((c) => h("option", { value: c, selected: c === cfg.long_camera }, c)));
   $("cfgSpeakers").value = cfg.diarization.num_speakers ?? "";
+  $("cfgMedia").value = cfg.media || "originals";
+  show($("mediaBox"), !isXml());
   $("cfgMinShot").value = cfg.cut.min_shot;
   $("cfgOverlap").value = cfg.cut.overlap_min;
   $("cfgMinSeg").value = cfg.cut.min_segment;
@@ -397,6 +399,7 @@ function renderCutCams() {
 
 function readSettings(cfg) {
   cfg.long_camera = $("cfgLong").value || cfg.long_camera;
+  if (!isXml()) cfg.media = $("cfgMedia").value || "originals";
   const n = parseInt($("cfgSpeakers").value, 10);
   cfg.diarization.num_speakers = Number.isFinite(n) && n > 0 ? n : null;
   const num = (id, d) => { const v = parseFloat($(id).value); return Number.isFinite(v) && v >= 0 ? v : d; };
@@ -972,6 +975,10 @@ $("btnSaveCfg").onclick = async () => {
 };
 $("cfgNoSilence").onchange = () => show($("silenceOpts"), $("cfgNoSilence").checked);
 $("cfgSpkMethod").onchange = audioInfo;
+$("cfgMedia").onchange = async () => {  // the camera files change: save and read the folders again
+  try { await saveConfig(); await loadProject(S.path); flash($("cfgSaved"), L("تم الحفظ ✓", "Saved ✓")); }
+  catch (e) { flash($("cfgSaved"), L("خطأ: ", "Error: ") + e.message); }
+};
 $("cfgChannel").onchange = audioInfo;
 $("btnAudio").onclick = async () => {
   const p = await choose("folder", L("اختر مجلد الصوت النظيف", "Choose the clean audio folder"));

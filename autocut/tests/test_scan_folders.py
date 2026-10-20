@@ -73,3 +73,18 @@ def test_one_mic_per_person_in_two_parts(tmp_path):
     assert len(takes) == 2
     assert [len(t.files) for t in takes] == [5, 5]
     assert [round(t.duration) for t in takes] == [40, 31]
+
+
+def test_proxies_when_chosen(tmp_path):
+    cam = tmp_path / "CAM01"
+    touch(cam, "A001.MXF", "Proxy/A001_Proxy.mov")
+    assert names(camera_files(cam, "proxies")) == ["A001_Proxy.mov"]
+    assert names(camera_files(cam, "originals")) == ["A001.MXF"]
+    raw_only = tmp_path / "CAM02"
+    touch(raw_only, "B001.MXF")
+    assert names(camera_files(raw_only, "proxies")) == ["B001.MXF"]     # no proxy: the original
+    tree = tmp_path / "ep"
+    touch(tree, "1_RAW_Footage/CAM01/A.MXF", "1_RAW_Footage/CAM02/B.MXF",
+          "3_Proxy/CAM01/A.mp4", "3_Proxy/CAM02/B.mp4")
+    root, cams = discover_cameras(tree, None, "proxies")
+    assert root == tree / "3_Proxy" and [f.suffix for f in cams["CAM01"]] == [".mp4"]

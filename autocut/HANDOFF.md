@@ -196,6 +196,10 @@ needs the user's MOGRT files + Premiere version; **4** = 22 proxies.
   Config `cut.wide_on_interrupt`, `cut.interrupt_shot` (3 s), `cut.interrupt_min` (0.7 s). Step 5 UI has
   its own wide line. `restrict_cameras` never leaves the wide out of the cut cameras.
 
+### Originals or proxies: the user's choice (v0.9.5)
+- Config `media: originals | proxies` (step 2 "Camera files"); `scan.camera_files` / `discover_cameras`
+  take it. A camera with only the other kind uses what it has. Changing it saves and re-reads the folders.
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.

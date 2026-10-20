@@ -13,6 +13,7 @@ DEFAULTS = {
     "audio_mode": "auto",  # auto | tracks (simultaneous, mixed) | takes (one after another)
     "audio_channel": None,  # clean audio: use only this channel (1-based, e.g. the recorder's mix); None = all
     "cameras": None,
+    "media": "originals",  # originals | proxies: which camera files to use when both are there
     "exclude_cameras": [],  # camera folders to ignore (a promo folder that cannot be moved, ...)
     "speakers": {},
     "sync": {
@@ -120,6 +121,8 @@ def load(path: Path, require_long: bool = True) -> dict:
         cfg["cut"]["cameras"] = [str(c) for c in cfg["cut"]["cameras"]] or None
     if require_long and not cfg["long_camera"]:
         raise ConfigError("config: 'long_camera' is required (folder name of the wide shot)")
+    if cfg["media"] not in ("originals", "proxies"):
+        raise ConfigError("config: media must be originals or proxies")
     if cfg["sync"]["method"] not in ("audio", "timecode", "timecode+audio"):
         raise ConfigError("config: sync.method must be audio, timecode or timecode+audio")
     if cfg["diarization"]["method"] not in ("ai", "mics"):

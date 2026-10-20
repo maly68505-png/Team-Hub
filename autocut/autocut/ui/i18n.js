@@ -22,6 +22,10 @@ const STATIC = {
   "فحص الصورة: سوداء، متجمدة، محروقة، مش واضحة، فريمات ناقصة، كاميرا وقفت":
     "Picture check: black, frozen, burnt, out of focus, missing frames, camera stopped",
   "أضف للطابور": "Add to queue",
+  "ملفات الكاميرات": "Camera files",
+  "الأصلية (Raw)": "Originals (Raw)",
+  "البروكسي": "Proxies",
+  "لو الاتنين موجودين: تختار إنت الأداة تشتغل على أنهي": "When both are there: you choose which ones the tool uses",
   "الكاميرا الواسعة": "Wide camera",
   "(مش مربوطة بمتحدث): لما حد يقاطع، القطع يروح لها لمدة": "(not tied to a speaker): when someone cuts in, cut to it for",
   "ث": "s",

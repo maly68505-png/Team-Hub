@@ -295,7 +295,7 @@ def project_state(path: Path) -> dict:
         cams = [str(c) for c in cfg["cameras"]]
     else:
         try:
-            cams = list(discover_cameras(path, ad)[1])
+            cams = list(discover_cameras(path, ad, str(cfg.get("media") or "originals"))[1])
         except ScanError:
             cams = [d for d in subdirs if not AUDIO_NAME.search(d)]
     out["all_cameras"] = cams

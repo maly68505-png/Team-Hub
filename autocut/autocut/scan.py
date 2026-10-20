@@ -85,14 +85,18 @@ def is_proxy(path: Path, base: Path) -> bool:
     return any(PROXY_NAME.search(d) for d in parts[:-1]) or bool(PROXY_FILE.search(path.stem))
 
 
-def camera_files(folder: Path) -> list[Path]:
-    """Video files of one camera folder; proxies are left out when the originals
-    are there (a folder of proxies only is used as it is)."""
+def camera_files(folder: Path, media: str = "originals") -> list[Path]:
+    """Video files of one camera folder. media "originals": proxies left out when the
+    originals are there; "proxies": the proxies when there are any. A camera that has
+    only the other kind uses what it has."""
     files = _files(folder, VIDEO_EXT, recursive=True)
-    raw = [f for f in files if not is_proxy(f, folder)]
-    if raw and len(raw) < len(files):
-        log.info("  %s: %d proxy file(s) left out (the originals are used)", folder.name, len(files) - len(raw))
-    return raw or files
+    prox = [f for f in files if is_proxy(f, folder)]
+    raw = [f for f in files if f not in prox]
+    want, other = (prox, raw) if media == "proxies" else (raw, prox)
+    if want and other:
+        log.info("  %s: %d %s file(s) left out", folder.name, len(other),
+                 "original" if media == "proxies" else "proxy")
+    return want or other
 
 
 def find_audio_dir(root: Path, name: str) -> Path:
@@ -139,12 +143,12 @@ def _order_clips(cam: Camera, rate: Rate) -> None:
         log.info("  %s: clips ordered by filename (timecode missing or duplicated)", cam.name)
 
 
-def _video_subdirs(folder: Path, audio_dir: Path | None) -> dict[str, list[Path]]:
+def _video_subdirs(folder: Path, audio_dir: Path | None, media: str = "originals") -> dict[str, list[Path]]:
     out = {}
     for p in sorted(folder.iterdir(), key=lambda p: natural_key(p.name)):
         if (p.is_dir() and p.name != WORK_DIR and not p.name.startswith(".")
                 and (audio_dir is None or p.resolve() != audio_dir)):
-            files = camera_files(p)
+            files = camera_files(p, media)
             if files:
                 out[p.name] = files
             else:
@@ -198,19 +202,21 @@ def clean_audio_files(audio_dir: Path) -> list[Path]:
     return [f for g in keep for f in groups[g]]
 
 
-def discover_cameras(root: Path, audio_dir: Path | None) -> tuple[Path, dict[str, list[Path]]]:
+def discover_cameras(root: Path, audio_dir: Path | None, media: str = "originals") -> tuple[Path, dict[str, list[Path]]]:
     """Camera folders with their video files. If the chosen folder holds just one
     folder that itself holds several camera folders (e.g. 0000/3_Proxy/CAM 01..),
     the cameras are taken from there."""
-    found = _video_subdirs(root, audio_dir)
-    originals = {k: v for k, v in found.items() if not PROXY_NAME.search(k)}
-    if originals and len(originals) < len(found):
-        # e.g. 1_RAW_Footage next to 3_Proxy: the originals, not the proxies
-        log.info("Proxy folder(s) left out: %s", ", ".join(k for k in found if k not in originals))
-        found = originals
+    found = _video_subdirs(root, audio_dir, media)
+    proxy_dirs = {k: v for k, v in found.items() if PROXY_NAME.search(k)}
+    originals = {k: v for k, v in found.items() if k not in proxy_dirs}
+    want = proxy_dirs if media == "proxies" else originals
+    if want and len(want) < len(found):
+        # e.g. 1_RAW_Footage next to 3_Proxy: the kind chosen in the settings
+        log.info("Folder(s) left out (%s chosen): %s", media, ", ".join(k for k in found if k not in want))
+        found = want
     if len(found) == 1:
         (only,) = found
-        inner = _video_subdirs(root / only, audio_dir)
+        inner = _video_subdirs(root / only, audio_dir, media)
         if len(inner) >= 2:
             return root / only, inner
     if not found:
@@ -224,6 +230,7 @@ def scan(root: Path, cfg: dict) -> Project:
         raise ScanError(f"project folder not found: {root}")
     audio_dir = find_audio_dir(root, str(cfg["audio_folder"] or "audio"))
 
+    media = str(cfg.get("media") or "originals")
     explicit = bool(cfg["cameras"])
     if explicit:
         cam_root = root
@@ -231,12 +238,12 @@ def scan(root: Path, cfg: dict) -> Project:
         for n in cam_names:
             if not (root / n).is_dir():
                 raise ScanError(f"camera folder listed in config not found: {root / n}")
-        videos = {n: camera_files(root / n) for n in cam_names}
+        videos = {n: camera_files(root / n, media) for n in cam_names}
         for n, v in videos.items():
             if not v:
                 raise ScanError(f"camera folder '{n}' has no video files ({', '.join(sorted(VIDEO_EXT))})")
     else:
-        cam_root, videos = discover_cameras(root, audio_dir)
+        cam_root, videos = discover_cameras(root, audio_dir, media)
         cam_names = [n for n in videos if n not in set(cfg.get("exclude_cameras") or [])]
         skipped = [n for n in videos if n not in cam_names]
         if skipped:
