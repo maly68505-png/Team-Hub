@@ -72,6 +72,27 @@ def _files(folder: Path, exts: set[str], recursive: bool = False) -> list[Path]:
 
 
 AUDIO_NAME = re.compile(r"audio|sound|صوت|wav", re.IGNORECASE)
+PROXY_NAME = re.compile(r"prox(y|ies)|بروكسي", re.IGNORECASE)
+PROXY_FILE = re.compile(r"[_\- ]prox(y)?$", re.IGNORECASE)
+NOT_EPISODE = re.compile(r"promo|برومو|extracted|copy|نسخة|teaser|trailer", re.IGNORECASE)
+PREFERRED = re.compile(r"fix|final|clean|نظيف|مظبوط", re.IGNORECASE)
+
+
+def is_proxy(path: Path, base: Path) -> bool:
+    """A proxy: inside a Proxy/Proxies folder (Premiere's default is next to the
+    original media) or named ..._Proxy."""
+    parts = path.relative_to(base).parts
+    return any(PROXY_NAME.search(d) for d in parts[:-1]) or bool(PROXY_FILE.search(path.stem))
+
+
+def camera_files(folder: Path) -> list[Path]:
+    """Video files of one camera folder; proxies are left out when the originals
+    are there (a folder of proxies only is used as it is)."""
+    files = _files(folder, VIDEO_EXT, recursive=True)
+    raw = [f for f in files if not is_proxy(f, folder)]
+    if raw and len(raw) < len(files):
+        log.info("  %s: %d proxy file(s) left out (the originals are used)", folder.name, len(files) - len(raw))
+    return raw or files
 
 
 def find_audio_dir(root: Path, name: str) -> Path:
@@ -123,7 +144,7 @@ def _video_subdirs(folder: Path, audio_dir: Path | None) -> dict[str, list[Path]
     for p in sorted(folder.iterdir(), key=lambda p: natural_key(p.name)):
         if (p.is_dir() and p.name != WORK_DIR and not p.name.startswith(".")
                 and (audio_dir is None or p.resolve() != audio_dir)):
-            files = _files(p, VIDEO_EXT, recursive=True)
+            files = camera_files(p)
             if files:
                 out[p.name] = files
             else:
@@ -142,9 +163,11 @@ def _describe(folder: Path) -> str:
 
 
 def clean_audio_files(audio_dir: Path) -> list[Path]:
-    """Audio files of ONE recording: directly in the folder, or in its only
-    sub-folder that has audio (recorders like Zoom write ZOOM0001/...WAV).
-    Several sub-folders with audio are separate takes: the user must choose."""
+    """Audio files of the episode: directly in the folder, or in its sub-folders
+    (recorders like Zoom write ZOOM0001/...WAV; an episode recorded in parts can
+    be EP/1, EP/2, ...). Sub-folders that are not this episode are left out:
+    a promo / copy, and raw recordings when a fixed (cleaned) version is there.
+    The rest are takes, in folder then file-name order."""
     flat = _files(audio_dir, AUDIO_EXT)
     if flat:
         return flat
@@ -159,16 +182,20 @@ def clean_audio_files(audio_dir: Path) -> list[Path]:
     groups: dict[Path, list[Path]] = {}
     for f in deep:
         groups.setdefault(f.parent, []).append(f)
-    if len(groups) == 1:
-        (folder, files), = groups.items()
-        log.info("Clean audio is in the sub-folder %s", folder.relative_to(audio_dir))
-        return files
-    listing = ", ".join(f"{g.relative_to(audio_dir)} ({len(fs)})" for g, fs in groups.items())
-    raise ScanError(
-        f"audio files are in several sub-folders of {audio_dir}: {listing} — these look like "
-        f"separate takes; choose the one sub-folder of this recording as the clean-audio folder",
-        ar=f"ملفات الصوت موزّعة على أكثر من مجلد فرعي داخل «{audio_dir.name}»: {listing}. "
-           f"غالباً هذه تسجيلات منفصلة — اختر المجلد الفرعي الخاص بهذا التصوير من «مجلد الصوت النظيف».")
+    rel = {g: g.relative_to(audio_dir).as_posix() for g in groups}
+    keep = [g for g in groups if not NOT_EPISODE.search(rel[g])] or list(groups)
+    preferred = [g for g in keep if PREFERRED.search(rel[g])]
+    if preferred and len(preferred) < len(keep):
+        keep = preferred      # e.g. 1_On_Set_Audio next to 2_Fixed_Audio: the fixed one
+    left = [g for g in groups if g not in keep]
+    if left:
+        log.info("Clean audio: left out %s", ", ".join(f"{rel[g]} ({len(groups[g])})" for g in left))
+    if len(keep) > 1:
+        log.info("Clean audio in %d sub-folders, used in this order: %s", len(keep),
+                 ", ".join(f"{rel[g]} ({len(groups[g])})" for g in keep))
+    elif keep[0] != audio_dir:
+        log.info("Clean audio is in the sub-folder %s", rel[keep[0]])
+    return [f for g in keep for f in groups[g]]
 
 
 def discover_cameras(root: Path, audio_dir: Path | None) -> tuple[Path, dict[str, list[Path]]]:
@@ -176,6 +203,11 @@ def discover_cameras(root: Path, audio_dir: Path | None) -> tuple[Path, dict[str
     folder that itself holds several camera folders (e.g. 0000/3_Proxy/CAM 01..),
     the cameras are taken from there."""
     found = _video_subdirs(root, audio_dir)
+    originals = {k: v for k, v in found.items() if not PROXY_NAME.search(k)}
+    if originals and len(originals) < len(found):
+        # e.g. 1_RAW_Footage next to 3_Proxy: the originals, not the proxies
+        log.info("Proxy folder(s) left out: %s", ", ".join(k for k in found if k not in originals))
+        found = originals
     if len(found) == 1:
         (only,) = found
         inner = _video_subdirs(root / only, audio_dir)
@@ -199,7 +231,7 @@ def scan(root: Path, cfg: dict) -> Project:
         for n in cam_names:
             if not (root / n).is_dir():
                 raise ScanError(f"camera folder listed in config not found: {root / n}")
-        videos = {n: _files(root / n, VIDEO_EXT, recursive=True) for n in cam_names}
+        videos = {n: camera_files(root / n) for n in cam_names}
         for n, v in videos.items():
             if not v:
                 raise ScanError(f"camera folder '{n}' has no video files ({', '.join(sorted(VIDEO_EXT))})")

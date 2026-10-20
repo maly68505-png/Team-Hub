@@ -188,7 +188,16 @@ function renderScan() {
   const ok = !!st.scan;
   ["secSettings", "secAnalyze", "secSpeakers", "secCut"].forEach((id) => show($(id), false));
   show($("secSettings"), (st.folders || []).length > 0);
-  if (!ok) return;
+  if (!ok) {  // audio not found yet: still show the camera folders, to tick / untick them
+    for (const name of st.all_cameras || []) {
+      const on = (st.cameras || []).includes(name);
+      box.append(h("div", { class: "cam" + (on ? "" : " off") },
+        h("label", { class: "camtoggle", title: L("شيل العلامة عشان الأداة تتجاهل الفولدر ده", "Untick to ignore this folder") },
+          h("input", { type: "checkbox", checked: on, onchange: () => toggleCamera(name, !on) }), h("b", {}, name)),
+        on ? null : h("span", { class: "muted" }, L("متجاهَل", "ignored"))));
+    }
+    return;
+  }
   show($("secAnalyze"), true);
   const seqFps = Number(st.scan.fps);
   for (const cam of st.scan.cameras) {

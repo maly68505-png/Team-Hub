@@ -92,15 +92,14 @@ def test_audio_in_the_recorders_subfolder(tmp_path, clip):
     assert [a.path.name for a in p.audio] == ["ZOOM0001_Tr1.WAV"]
 
 
-def test_several_takes_must_be_chosen(tmp_path, clip):
+def test_takes_in_several_sub_folders_are_all_used(tmp_path, clip):
     proxy, audio = shoot(tmp_path, clip)
     for take in ("ZOOM0001", "ZOOM0002"):
         (audio / take).mkdir()
         shutil.copy(audio / "TR1.WAV", audio / take / f"{take}_Tr1.WAV")
     (audio / "TR1.WAV").unlink()
-    with pytest.raises(ScanError, match="several sub-folders") as e:
-        scan(proxy.parent, cfg())
-    assert "ZOOM0001" in e.value.ar and "ZOOM0002" in e.value.ar
+    p = scan(proxy.parent, cfg())
+    assert [a.path.name for a in p.audio] == ["ZOOM0001_Tr1.WAV", "ZOOM0002_Tr1.WAV"]
     p = scan(proxy.parent, cfg(audio_folder="2_AUDIO/ZOOM0002"))
     assert [a.path.name for a in p.audio] == ["ZOOM0002_Tr1.WAV"]
 

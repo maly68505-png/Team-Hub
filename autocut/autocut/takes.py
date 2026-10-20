@@ -104,7 +104,10 @@ def group_takes(audio: list[MediaInfo], mode: str = "auto", similar=None) -> lis
             last.files.append(a)       # another track of the same take
             last.duration = max(last.duration, a.duration)
         else:
-            takes.append(Take(a.path.stem, [a], a.duration))
+            name = a.path.stem
+            if any(t.name == name for t in takes):  # same file name in another part folder
+                name = f"{a.path.parent.name}/{name}"
+            takes.append(Take(name, [a], a.duration))
     if mode == "auto" and len(takes) == 1:
         takes[0].name = "clean audio"
     return takes

@@ -171,6 +171,16 @@ needs the user's MOGRT files + Premiere version; **4** = 22 proxies.
   near their timecode, `place()` warns and re-syncs everything by audio (`place_takes`). The tc-guided pass
   caches in `takes_tc.json` (audio sync keeps `takes.json`).
 
+### Audio in several sub-folders, proxies next to originals (v0.9.2)
+- The user's episode audio is split over `2_Fixed_Audio/EP/1` and `EP/2` (takes in a row) and they want
+  the tool to work it out whatever the folder count. `scan.clean_audio_files` now uses every sub-folder,
+  leaving out promo/copy folders (`NOT_EPISODE`) and raw folders when a fixed/clean one exists
+  (`PREFERRED`); order = folder then file name. Same file name in two parts -> take "1/T002".
+- Sync went to Premiere proxies: they live in `CAMxx/Proxy/*_Proxy.mov` next to the originals and the
+  camera scan is recursive. `scan.camera_files` drops proxies when originals exist; `discover_cameras`
+  prefers `1_RAW_Footage` over a sibling `3_Proxy` tree (pointing at the proxy tree still works).
+- UI: camera folder ticks show even when the clean audio folder has an error.
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.
