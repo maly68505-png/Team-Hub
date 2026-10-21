@@ -187,6 +187,9 @@ needs the user's MOGRT files + Premiere version; **4** = 22 proxies.
   "Guest 1" as take 1 (the `t` of "Guest"), and separate lavs fail `same_recording`. Now TAKE_NO needs a
   non-letter before t/tk/take, and same folder + same start TC (±1 s) or same length (±0.1 s) = tracks.
 - Mics diarization names one-file-per-person speakers after the files (`mics.file_labels`: Host, Guest 1).
+- v0.9.8: the files of one part had different date numbers ("..281015_Guest 1", "..271015_Host"), so the
+  common-prefix names differed per part ("81015_Guest 1") and one guest became several speakers. Names are
+  now the part after the last "_" when that names everyone distinctly.
 
 ### Wide camera on interruptions (v0.9.4)
 - User: the wide camera (not tied to a speaker) never appeared in the cut. Chosen behaviour: when someone

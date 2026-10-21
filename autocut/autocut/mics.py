@@ -183,6 +183,11 @@ def file_labels(files) -> list[str | None]:
     stems = [f.path.stem for f in files]
     if len(stems) < 2:
         return [None] * len(stems)
+    # "aja.aljanoub.261015_Guest 1", "...2111015_Host": the part after the last "_" names the
+    # person, whatever comes before (dates differ between files of one recording)
+    tails = [s.rsplit("_", 1)[1].strip(" -.") if "_" in s else "" for s in stems]
+    if all(t and any(c.isalpha() for c in t) for t in tails) and len(set(tails)) == len(tails):
+        return tails
     pre = len(os.path.commonprefix(stems))
     while pre and stems[0][pre - 1].isalnum() and not all(s[pre - 1:pre].isdigit() for s in stems):
         pre -= 1                                # never cut a word in half

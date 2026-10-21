@@ -88,3 +88,18 @@ def test_proxies_when_chosen(tmp_path):
           "3_Proxy/CAM01/A.mp4", "3_Proxy/CAM02/B.mp4")
     root, cams = discover_cameras(tree, None, "proxies")
     assert root == tree / "3_Proxy" and [f.suffix for f in cams["CAM01"]] == [".mp4"]
+
+
+def test_person_names_from_files_with_different_dates():
+    """One recording whose files carry different date numbers before the "_":
+    every part must give the same names, or one guest becomes several speakers."""
+    from autocut.mics import file_labels
+
+    class F:
+        def __init__(self, n):
+            self.path = Path(n + ".wav")
+    part1 = ["aja.aljanoub.281015_Guest 1", "aja.aljanoub.261015_Guest 2", "aja.aljanoub.271015_Host"]
+    part2 = ["aja.aljanoub.2111015_Guest 1", "aja.aljanoub.261015_Guest 2", "aja.aljanoub.71015_Host"]
+    assert file_labels([F(n) for n in part1]) == ["Guest 1", "Guest 2", "Host"]
+    assert file_labels([F(n) for n in part2]) == ["Guest 1", "Guest 2", "Host"]
+    assert file_labels([F(n) for n in ["ZOOM0001_Tr1", "ZOOM0001_Tr2"]]) == ["Tr1", "Tr2"]
