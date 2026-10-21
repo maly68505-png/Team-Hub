@@ -202,6 +202,14 @@ needs the user's MOGRT files + Premiere version; **4** = 22 proxies.
 - v0.9.6: the select had the same id as the picture-check box ("mediaBox"): drawing the check wiped it and
   every save failed ("null is not an object $(cfgMedia)"). Now `mediaSel`; test_server checks ids are unique.
 
+### Faster sync on big shoots (v0.9.7)
+- 59 x 2 h 4K MXF on the server took ~1 h. Two causes fixed: (1) camera audio windows are cached on disk
+  (`takes.cached_windows`, `<work>/windows/*.npz`, float16) — a re-sync or the timecode->audio switch reads
+  nothing again; (2) timecode+audio stops after `TC_PROBE_CLIPS` (4) clips with sound when fewer than 25%
+  are confirmed near their timecode (`TimecodeMismatch`, remembered in takes_tc.json) and syncs by audio.
+  The read pool is shut down with cancel_futures. Test: no window is decoded twice.
+- UI: mics hint for one file per person; clean-audio length = sum of takes (`scan.audio_seconds`).
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.

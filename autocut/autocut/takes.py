@@ -78,6 +78,30 @@ def same_recording(a: MediaInfo, b: MediaInfo, seconds: float = 30.0) -> bool:
     return float(np.max(np.abs(c))) / den > 0.2
 
 
+def cached_windows(info: MediaInfo, rate: int, starts: list[float], length: float,
+                   cache_dir: Path) -> list[np.ndarray]:
+    """decode_windows, kept on disk (<work>/windows/): camera files on a network drive
+    are read once — a second sync (other settings, timecode -> audio) reads nothing."""
+    tag = hashlib.sha1(np.round(np.asarray(starts, np.float64), 3).tobytes()).hexdigest()[:12]
+    f = cache_dir / f"{fingerprint([info.path], f'win-{rate}-{length:.3f}-{tag}')}.npz"
+    try:
+        with np.load(f) as z:
+            xs = [z[f"arr_{i}"].astype(np.float32) for i in range(len(z.files))]
+        if len(xs) == len(starts):
+            return xs
+    except (OSError, ValueError, KeyError):
+        pass
+    xs = decode_windows(info, rate, starts, length)
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp = f.with_name(f.stem + ".part.npz")
+        np.savez(tmp, *[np.asarray(x, np.float16) for x in xs])   # half the size, ample for matching
+        tmp.replace(f)
+    except OSError as e:  # a full or read-only disk: just no cache
+        log.debug("window cache not written: %s", e)
+    return xs
+
+
 def group_takes(audio: list[MediaInfo], mode: str = "auto", similar=None) -> list[Take]:
     """Simultaneous tracks form one take; separate recordings are separate takes,
     in filename order. `similar(a, b)` confirms that two same-length files are
@@ -392,7 +416,7 @@ def place_takes(project: Project, takes: list[Take], cfg: dict) -> dict[str, Syn
     def read(clip, shift=0.0, step=None):
         starts = window_starts(clip.info.duration, win, step or every, shift)
         length = min(win, clip.info.duration)
-        return starts, decode_windows(clip.info, rate, starts, length)
+        return starts, cached_windows(clip.info, rate, starts, length, project.workdir / "windows")
 
     edges: dict = {}
     started = time.time()
@@ -507,16 +531,19 @@ def place(project: Project, takes: list[Take], cfg: dict) -> dict[str, SyncResul
     if method == "timecode+audio":
         tt, _ = _tc_values(project, takes)
         if all(v is not None for v in tt):
-            results = place_tc_guided(project, takes, cfg)
-            heard = [results[c.rel] for c in project.all_clips() if c.info.has_audio]
-            confirmed = [r for r in heard if r.method in ("audio", "override") and not r.low]
-            if len(confirmed) * 2 >= len(heard):
-                return results
-            # most clips found nothing near their timecode: cameras and recorder were not
-            # on the same timecode (not jammed) — the timecode cannot be trusted here
-            log.warning("timecode+audio: only %d of %d clip(s) match the clean audio near their "
-                        "timecode — the cameras and the recorder are not on the same timecode. "
-                        "Syncing by audio instead.", len(confirmed), len(heard))
+            try:
+                results = place_tc_guided(project, takes, cfg)
+                heard = [results[c.rel] for c in project.all_clips() if c.info.has_audio]
+                confirmed = [r for r in heard if r.method in ("audio", "override") and not r.low]
+                if len(confirmed) * 2 >= len(heard):
+                    return results
+                why = f"only {len(confirmed)} of {len(heard)} clip(s) match the clean audio near their timecode"
+            except TimecodeMismatch as e:
+                why = str(e)
+            # cameras and recorder were not on the same timecode (not jammed): the timecode
+            # cannot be trusted here. The camera audio already read is reused (window cache).
+            log.warning("timecode+audio: %s — the cameras and the recorder are not on the same "
+                        "timecode. Syncing by audio instead (choose \"By audio\" for this shoot).", why)
             results = place_takes(project, takes, cfg)
             for r in results.values():
                 r.notes.append("timecode not matching the recorder — synced by audio")
@@ -530,6 +557,12 @@ def place(project: Project, takes: list[Take], cfg: dict) -> dict[str, SyncResul
 
 
 TC_SEARCH_S = 2.0   # timecode+audio: audio searched this far either side of the timecode position
+TC_PROBE_CLIPS = 4  # ... after this many clips with timecode,
+TC_PROBE_SHARE = 0.25  # ... fewer confirmed than this share = the timecode is not usable
+
+
+class TimecodeMismatch(Exception):
+    """Cameras and recorder are not on the same timecode."""
 
 
 def _near(prep: _Prepared, x8: np.ndarray, tau0: float, rate: int, search: float):
@@ -568,6 +601,8 @@ def place_tc_guided(project: Project, takes: list[Take], cfg: dict) -> dict[str,
     cache_p = project.workdir / "takes_tc.json"
     try:
         data = json.loads(cache_p.read_text())
+        if data.get("key") == key and data.get("mismatch"):
+            raise TimecodeMismatch(data["mismatch"])
         if data.get("key") == key:
             log.info("Take placement (timecode + audio): cached")
             return _apply_overrides({r["rel"]: SyncResult.from_dict(r) for r in data["clips"]}, clips, scfg)
@@ -582,11 +617,14 @@ def place_tc_guided(project: Project, takes: list[Take], cfg: dict) -> dict[str,
 
     def read(clip):
         starts = window_starts(clip.info.duration, win, every)
-        return starts, decode_windows(clip.info, rate, starts, min(win, clip.info.duration))
+        return starts, cached_windows(clip.info, rate, starts, min(win, clip.info.duration),
+                                      project.workdir / "windows")
 
     results: dict[str, SyncResult] = {}
     started = time.time()
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    tried = matched = 0   # clips with timecode / of those, confirmed by audio near it
+    pool = ThreadPoolExecutor(max_workers=3)
+    try:
         futures = {c.rel: pool.submit(read, c) for c in todo}
         for n, clip in enumerate(todo, 1):
             starts, xs = futures[clip.rel].result()
@@ -640,6 +678,19 @@ def place_tc_guided(project: Project, takes: list[Take], cfg: dict) -> dict[str,
             results[clip.rel] = r
             log.info("  [%d/%d] %-34s %2d samples -> %s", n, len(todo), clip.rel, len(starts),
                      "LOW" if r.low else f"{r.method} ({kept} match)")
+            if v_tc is not None and any(len(x) >= 2 * rate and float(np.std(x)) >= 1e-5 for x in xs):
+                tried += 1  # a clip with sound (a silent cutaway proves nothing)
+                matched += r.method == "audio" and not r.low
+                if tried >= TC_PROBE_CLIPS and matched < TC_PROBE_SHARE * tried:
+                    # the first clips hear nothing where their timecode says: cameras and
+                    # recorder are not on the same timecode — stop here, sync by audio
+                    msg = (f"only {matched} of the first {tried} clips match the clean audio near "
+                           f"their timecode")
+                    cache_p.parent.mkdir(parents=True, exist_ok=True)
+                    cache_p.write_text(json.dumps({"key": key, "mismatch": msg}))
+                    raise TimecodeMismatch(msg)
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)   # stopping early: unread clips are not read
     for clip in clips:
         if clip.rel not in results:
             r = SyncResult(clip.rel, clip.info.duration)

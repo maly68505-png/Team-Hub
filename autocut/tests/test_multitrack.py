@@ -246,3 +246,42 @@ def test_timecode_plus_audio_when_not_jammed(tmp_path, monkeypatch):
         assert rows[clip]["status"] == "ok", (clip, rows[clip])
         assert float(rows[clip]["offset_s"]) == pytest.approx(pos, abs=0.01), clip
     assert "not on the same timecode" in (root / "_autocut" / "autocut.log").read_text()
+
+
+def test_not_jammed_stops_early_and_reads_each_window_once(tmp_path, monkeypatch):
+    """Timecode not matching: the timecode pass stops after the first clips, and the
+    audio sync reuses what was read — no camera window is decoded twice."""
+    from autocut import takes as takes_mod
+    monkeypatch.setattr(synth, "REC_TC", 15 * 3600.0)
+    monkeypatch.setattr(takes_mod, "TC_PROBE_CLIPS", 2)
+    root = synth.make_multitrack_project(tmp_path / "p")
+    cfg(root, sync="  method: timecode+audio\n")
+    reads = []
+    real = takes_mod.decode_windows
+
+    def counting(info, rate, starts, length, channel=None):
+        reads.append((info.path.name, tuple(round(s, 3) for s in starts), round(length, 3)))
+        return real(info, rate, starts, length, channel)
+    monkeypatch.setattr(takes_mod, "decode_windows", counting)
+    assert run(root, until="sync") == EXIT_OK
+    assert len(reads) == len(set(reads)), "a camera window was decoded twice"
+    log = (root / "_autocut" / "autocut.log").read_text()
+    assert "of the first 2 clips" in log and "not on the same timecode" in log
+    rows = sync_rows(root)
+    assert float(rows["CAM_A/C0001.MP4"]["offset_s"]) == pytest.approx(3.0, abs=0.01)
+    assert float(rows["CAM_B/B_001.MP4"]["offset_s"]) == pytest.approx(10.3, abs=0.01)
+    # a second run (another stage, same settings) decodes nothing at all
+    reads.clear()
+    (root / "_autocut" / "takes.json").unlink()      # even the audio placement redone: windows cached
+    assert run(root, until="sync") == EXIT_OK
+    assert reads == []
+
+
+def test_window_cache_roundtrip(tmp_path):
+    from autocut.takes import cached_windows
+    info = probe(synth.make_multitrack_project(tmp_path / "q") / "CAM_A" / "C0001.MP4")
+    a = cached_windows(info, 8000, [5.0, 30.0], 4.0, tmp_path / "win")
+    b = cached_windows(info, 8000, [5.0, 30.0], 4.0, tmp_path / "win")
+    assert len(a) == len(b) == 2 and all(x.dtype == np.float32 for x in b)
+    assert all(np.allclose(x, y, atol=2e-3) for x, y in zip(a, b))
+    assert len(list((tmp_path / "win").glob("*.npz"))) == 1

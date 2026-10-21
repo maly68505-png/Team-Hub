@@ -219,7 +219,7 @@ function renderScan() {
   }
   const aud = st.scan.audio;
   const nt = st.scan.takes || 1;
-  const audTotal = nt > 1 ? aud.reduce((x, a) => x + a.duration, 0) : Math.max(0, ...aud.map((a) => a.duration));
+  const audTotal = st.scan.audio_seconds ?? (nt > 1 ? aud.reduce((x, a) => x + a.duration, 0) : Math.max(0, ...aud.map((a) => a.duration)));
   box.append(h("div", { class: "cam" },
     h("b", {}, L("الصوت النظيف", "Clean audio")),
     h("span", { class: "muted" }, nt > 1 ? L(`${nt} تيك متتالية · ${fmtDur(audTotal)}`, `${nt} takes in a row · ${fmtDur(audTotal)}`)
@@ -366,8 +366,12 @@ function audioInfo() {
   const nch = isXml() ? (st.xml && st.xml.channels) || 0
     : Math.max(0, ...((st.scan && st.scan.audio) || []).map((a) => a.channels || 0));
   const ch = parseInt($("cfgChannel").value, 10);
+  const files = isXml() ? 0 : ((st.scan && st.scan.audio) || []).length;
+  const takes = (st.scan && st.scan.takes) || 1;
   $("spkMethodInfo").textContent = $("cfgSpkMethod").value === "mics"
-    ? (nch > 1 ? L(`المايكات: القنوات ${[...Array(nch).keys()].map((i) => i + 1).filter((c) => c !== ch).join("، ")} — بلا نموذج وأسرع`,
+    ? (nch <= 1 && files > takes ? L(`المايكات: كل ملف صوت = شخص (${files} ملف) — بلا نموذج وأسرع`,
+        `Mics: each audio file = one person (${files} files) — no model, faster`)
+      : nch > 1 ? L(`المايكات: القنوات ${[...Array(nch).keys()].map((i) => i + 1).filter((c) => c !== ch).join("، ")} — بلا نموذج وأسرع`,
         `Mics: channels ${[...Array(nch).keys()].map((i) => i + 1).filter((c) => c !== ch).join(", ")} — no model, faster`)
       : L("⚠ الصوت النظيف قناة واحدة — هذا الخيار يحتاج قناة لكل مايك", "⚠ the clean audio has one channel — this needs one channel per mic"))
     : "";

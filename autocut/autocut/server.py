@@ -311,6 +311,7 @@ def project_state(path: Path) -> dict:
     if cfg.get("long_camera"):
         try:
             p = scan(path, cfg)
+            shown_takes = group_takes(p.audio, str(cfg.get("audio_mode") or "auto"), similar=lambda a, b: True)
             out["scan"] = {
                 "fps": str(p.rate),
                 "cameras": [{"name": c.name, "clips": [
@@ -323,8 +324,8 @@ def project_state(path: Path) -> dict:
                            "channels": a.audio_channels, "has_tc": a.tc_seconds is not None}
                           for a in p.audio],
                 # display only: no audio decoding here (same-length files count as tracks)
-                "takes": len(group_takes(p.audio, str(cfg.get("audio_mode") or "auto"),
-                                         similar=lambda a, b: True)),
+                "takes": len(shown_takes),
+                "audio_seconds": round(sum(t.duration for t in shown_takes), 2),
             }
         except (ScanError, Exception) as e:  # noqa: BLE001 — report any scan problem to the UI
             out["scan_error"] = str(e)
