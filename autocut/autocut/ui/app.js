@@ -253,7 +253,7 @@ function renderSettings() {
   sel.replaceChildren(...cams.map((c) => h("option", { value: c, selected: c === cfg.long_camera }, c)));
   $("cfgSpeakers").value = cfg.diarization.num_speakers ?? "";
   $("cfgMedia").value = cfg.media || "originals";
-  show($("mediaBox"), !isXml());
+  show($("mediaSel"), !isXml());
   $("cfgMinShot").value = cfg.cut.min_shot;
   $("cfgOverlap").value = cfg.cut.overlap_min;
   $("cfgMinSeg").value = cfg.cut.min_segment;

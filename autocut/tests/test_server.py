@@ -174,3 +174,16 @@ def test_synced_xml_as_project(srv, tmp_path):
     assert st["has_config"] and not st.get("long_camera_guessed")
     assert call(base, "/api/config/reset", {"path": str(x)})[0] == 200
     assert not f.exists()
+
+
+def test_page_ids_are_unique():
+    """Two elements with one id: the app script finds the wrong one (v0.9.5 settings error)."""
+    import re
+    from pathlib import Path
+    import autocut
+    html = (Path(autocut.__file__).parent / "ui" / "index.html").read_text(encoding="utf-8")
+    ids = re.findall(r'\bid="([^"]+)"', html)
+    assert sorted({i for i in ids if ids.count(i) > 1}) == []
+    js = (Path(autocut.__file__).parent / "ui" / "app.js").read_text(encoding="utf-8")
+    missing = sorted({i for i in re.findall(r'\$\("([A-Za-z0-9_]+)"\)', js)} - set(ids))
+    assert missing == [], missing

@@ -199,6 +199,8 @@ needs the user's MOGRT files + Premiere version; **4** = 22 proxies.
 ### Originals or proxies: the user's choice (v0.9.5)
 - Config `media: originals | proxies` (step 2 "Camera files"); `scan.camera_files` / `discover_cameras`
   take it. A camera with only the other kind uses what it has. Changing it saves and re-reads the folders.
+- v0.9.6: the select had the same id as the picture-check box ("mediaBox"): drawing the check wiped it and
+  every save failed ("null is not an object $(cfgMedia)"). Now `mediaSel`; test_server checks ids are unique.
 
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
