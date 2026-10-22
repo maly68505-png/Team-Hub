@@ -17,6 +17,7 @@ ap.add_argument('--ref', nargs=2, type=float, required=True)
 ap.add_argument('--fix', nargs=2, type=float, required=True)
 ap.add_argument('--fade', type=float, default=0.08)
 ap.add_argument('--max-db', type=float, default=10.0)
+ap.add_argument('--smooth', type=float, default=1/3, help='EQ smoothing width in octaves')
 a = ap.parse_args()
 
 x, sr = sf.read(a.inp, always_2d=True)
@@ -36,13 +37,13 @@ def active_spectrum(t0, t1):
 f, Pref, sref = active_spectrum(*a.ref)
 _, Pfix, sfix = active_spectrum(*a.fix)
 
-# EQ curve = ref / fix, smoothed over 1/3 octave, only where there is speech energy
+# EQ curve = ref / fix, smoothed (1/3 octave by default), only where there is speech energy
 diff = 10 * np.log10((Pref + 1e-20) / (Pfix + 1e-20))
 smooth = np.zeros_like(diff)
 for i, fc in enumerate(f):
     if fc < 20:
         continue
-    band = (f >= fc / 2 ** (1 / 6)) & (f <= fc * 2 ** (1 / 6))
+    band = (f >= fc / 2 ** (a.smooth / 2)) & (f <= fc * 2 ** (a.smooth / 2))
     smooth[i] = diff[band].mean()
 smooth[f < 60] = smooth[np.argmin(abs(f - 60))]
 smooth[f > 14000] = smooth[np.argmin(abs(f - 14000))]
