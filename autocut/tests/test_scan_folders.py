@@ -103,3 +103,33 @@ def test_person_names_from_files_with_different_dates():
     assert file_labels([F(n) for n in part1]) == ["Guest 1", "Guest 2", "Host"]
     assert file_labels([F(n) for n in part2]) == ["Guest 1", "Guest 2", "Host"]
     assert file_labels([F(n) for n in ["ZOOM0001_Tr1", "ZOOM0001_Tr2"]]) == ["Tr1", "Tr2"]
+
+
+def test_sony_sub_proxies_are_recognised(tmp_path):
+    cam = tmp_path / "CAM_08"
+    touch(cam, "XDROOT/Clip/MF-080001.MXF", "XDROOT/Sub/MF-080001S03.MP4",
+          "C0002.MP4", "C0002S03.MP4", "LONGS03.MP4")
+    # LONGS03 has no "LONG" next to it: an original whose name just ends like that
+    assert sorted(names(camera_files(cam, "originals"))) == ["C0002.MP4", "LONGS03.MP4", "MF-080001.MXF"]
+    assert sorted(names(camera_files(cam, "proxies"))) == ["C0002S03.MP4", "MF-080001S03.MP4"]
+
+
+def test_original_and_proxy_with_any_names_become_one_clip(tmp_path):
+    """Same timecode, same length, different picture size: one shot in two qualities."""
+    import subprocess
+    import shutil as sh
+    import pytest
+    if sh.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not installed")
+    from autocut.probe import probe
+    from autocut.scan import Clip, _one_copy_per_shot
+    files = {}
+    for name, size in (("BIG.MOV", "640x360"), ("small.mp4", "160x90"), ("OTHER.MOV", "640x360")):
+        f = tmp_path / name
+        tc = "10:00:00:00" if name != "OTHER.MOV" else "11:00:00:00"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=size={size}:rate=25:duration=3",
+                        "-timecode", tc, "-c:v", "libx264", "-preset", "ultrafast", str(f)], check=True)
+        files[name] = Clip("CAM", probe(f), f"CAM/{name}")
+    clips = list(files.values())
+    assert [c.rel for c in _one_copy_per_shot(clips, "originals")] == ["CAM/BIG.MOV", "CAM/OTHER.MOV"]
+    assert [c.rel for c in _one_copy_per_shot(clips, "proxies")] == ["CAM/small.mp4", "CAM/OTHER.MOV"]

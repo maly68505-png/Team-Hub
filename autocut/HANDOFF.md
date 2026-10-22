@@ -213,6 +213,12 @@ needs the user's MOGRT files + Premiere version; **4** = 22 proxies.
   The read pool is shut down with cancel_futures. Test: no window is decoded twice.
 - UI: mics hint for one file per person; clean-audio length = sum of takes (`scan.audio_seconds`).
 
+### Sony proxies (v0.9.9)
+- Al-Morafaa (Sony): "Originals" still gave proxies — Sony keeps proxies as `XDROOT/Sub/...S03.MP4` next to
+  `Clip/...MXF`; both were taken, same TC, the proxy won the overlap. `is_proxy` now also knows a "Sub"
+  folder and `<name>S0n` beside `<name>`, and `scan._one_copy_per_shot` keeps one file per shot whatever
+  the names: same start TC and length (±1.5 s), different picture size -> the bigger for originals.
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.

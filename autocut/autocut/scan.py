@@ -78,11 +78,20 @@ NOT_EPISODE = re.compile(r"promo|برومو|extracted|copy|نسخة|teaser|trail
 PREFERRED = re.compile(r"fix|final|clean|نظيف|مظبوط", re.IGNORECASE)
 
 
-def is_proxy(path: Path, base: Path) -> bool:
+SONY_SUB = re.compile(r"^(.+?)S0\d$")   # Sony XAVC / XDCAM proxy: C0001S03.MP4 next to C0001.MXF
+
+
+def is_proxy(path: Path, base: Path, stems: set[str] | None = None) -> bool:
     """A proxy: inside a Proxy/Proxies folder (Premiere's default is next to the
-    original media) or named ..._Proxy."""
+    original media) or Sony's "Sub" folder, named ..._Proxy, or a Sony ...S03 file
+    whose original (same name without S03) is there too."""
     parts = path.relative_to(base).parts
-    return any(PROXY_NAME.search(d) for d in parts[:-1]) or bool(PROXY_FILE.search(path.stem))
+    if any(PROXY_NAME.search(d) or d.lower() == "sub" for d in parts[:-1]):
+        return True
+    if PROXY_FILE.search(path.stem):
+        return True
+    m = SONY_SUB.match(path.stem)
+    return bool(m and stems and m.group(1) in stems)
 
 
 def camera_files(folder: Path, media: str = "originals") -> list[Path]:
@@ -90,7 +99,8 @@ def camera_files(folder: Path, media: str = "originals") -> list[Path]:
     originals are there; "proxies": the proxies when there are any. A camera that has
     only the other kind uses what it has."""
     files = _files(folder, VIDEO_EXT, recursive=True)
-    prox = [f for f in files if is_proxy(f, folder)]
+    stems = {f.stem for f in files}
+    prox = [f for f in files if is_proxy(f, folder, stems)]
     raw = [f for f in files if f not in prox]
     want, other = (prox, raw) if media == "proxies" else (raw, prox)
     if want and other:
@@ -202,6 +212,34 @@ def clean_audio_files(audio_dir: Path) -> list[Path]:
     return [f for g in keep for f in groups[g]]
 
 
+def _one_copy_per_shot(clips: list[Clip], media: str) -> list[Clip]:
+    """Two files of one camera with the same start timecode and length are one shot
+    in two qualities (an original and its proxy, whatever the folder names): keep the
+    bigger picture for "originals", the smaller for "proxies"."""
+    groups: list[list[Clip]] = []
+    for c in clips:
+        g = next((g for g in groups if c.info.start_tc and g[0].info.start_tc == c.info.start_tc
+                  and abs(g[0].info.duration - c.info.duration) <= 1.5), None)
+        if g is None:
+            groups.append([c])
+        else:
+            g.append(c)
+    keep = []
+    for g in groups:
+        if len(g) == 1:
+            keep += g
+            continue
+        size = lambda c: (c.info.width or 0) * (c.info.height or 0)
+        best = (min if media == "proxies" else max)(g, key=size)
+        if len({size(c) for c in g}) == 1:     # same size: not original + proxy, keep all
+            keep += g
+            continue
+        keep.append(best)
+        log.info("  %s: same shot in %d files (tc %s) — using %s (%dx%d)", best.camera, len(g),
+                 best.info.start_tc, best.rel, best.info.width or 0, best.info.height or 0)
+    return [c for c in clips if c in keep]
+
+
 def discover_cameras(root: Path, audio_dir: Path | None, media: str = "originals") -> tuple[Path, dict[str, list[Path]]]:
     """Camera folders with their video files. If the chosen folder holds just one
     folder that itself holds several camera folders (e.g. 0000/3_Proxy/CAM 01..),
@@ -269,8 +307,10 @@ def scan(root: Path, cfg: dict) -> Project:
                 log.warning("  skip %s: no video stream", rel)
                 continue
             cam.clips.append(Clip(name, info, rel))
-            if info.fps:
-                fps_votes[info.fps] += 1
+        cam.clips = _one_copy_per_shot(cam.clips, media)
+        for c in cam.clips:
+            if c.info.fps:
+                fps_votes[c.info.fps] += 1
         cameras[name] = cam
 
     if not fps_votes:
