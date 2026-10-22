@@ -605,7 +605,8 @@ function renderSummary() {
 function outputTag(name) {
   const tags = [/_\d{6}_\d+s/.test(name) ? L("تجربة", "test") : L("كامل", "full")];
   const mc = name.match(/^multicam_(.+?)(_\d{6}_\d+s)?\.xml$/);
-  if (mc) tags.unshift(L(`مالتي كام: ${mc[1]}`, `multicam: ${mc[1]}`));
+  if (mc && mc[1] === "ALL") tags.unshift(L("مالتي كام: كل الكاميرات", "multicam: all cameras"));
+  else if (mc) tags.unshift(L(`مالتي كام: ${mc[1]}`, `multicam: ${mc[1]}`));
   if (name.startsWith("synced")) tags.unshift(L("مزامنة فقط", "sync only"));
   if (name.startsWith("transcript")) tags.unshift(name.endsWith(".srt") ? L("ترجمة SRT", "SRT subtitles") : L("نص الحلقة", "transcript"));
   if (name.includes("_tight")) tags.push(L("بدون سكتات", "no silences"));
@@ -617,8 +618,9 @@ function renderOutputs() {
   renderSummary();
   const all = (S.project.outputs || []).filter((o) => o.name.endsWith(".xml") || o.name.startsWith("cuts")
     || (o.name.startsWith("transcript") && /\.(srt|txt)$/.test(o.name)));
-  fileList($("syncOutputs"), all.filter((o) => o.name.startsWith("synced")), L("ملفات المزامنة", "Synced timelines"));
-  fileList($("outputs"), all.filter((o) => !o.name.startsWith("synced")), L("الملفات الناتجة", "Output files"));
+  const syncOut = (o) => o.name.startsWith("synced") || (o.name.startsWith("multicam_ALL") && !S.project.summary);
+  fileList($("syncOutputs"), all.filter(syncOut), L("ملفات المزامنة", "Synced timelines"));
+  fileList($("outputs"), all.filter((o) => !syncOut(o)), L("الملفات الناتجة", "Output files"));
 }
 
 function fileList(box, outs, title) {

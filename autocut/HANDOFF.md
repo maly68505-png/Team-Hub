@@ -221,6 +221,13 @@ needs the user's MOGRT files + Premiere version; **4** = 22 proxies.
 - v0.9.10 (user rule): a camera folder with MXF files -> the MXF are the originals, every other format a
   proxy, folder names ignored (`camera_files`). Without MXF the name rules above apply.
 
+### Multicam of all cameras (v0.9.11)
+- User wants the editor to get a multicam on the timeline from the XML. Research: Premiere does not reliably
+  import FCP7 multiclips as multicam (and Adobe says 4 angles max; the shows have 8). So `xmeml.write_multicam`
+  writes `multicam_ALL.xml`: V1 = one clip that is a NESTED sequence (every camera on its own track, all
+  enabled, no audio), clean audio below. Editor: right-click > Multi-Camera > Enable. Written with sync-only
+  and with every cut. NOT yet confirmed in the user's Premiere; next step if it fails: the Premiere panel.
+
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
   "ماذا حدث في آخر قطع" box in the UI, FULL/TEST sequence names. CI green, release updated.

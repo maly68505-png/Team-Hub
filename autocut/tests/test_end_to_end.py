@@ -309,3 +309,27 @@ def test_transcript_subtitles_and_markers(project, tmp_path, monkeypatch):
     import json
     sm = json.loads((out / "summary.json").read_text(encoding="utf-8"))
     assert sm["transcript"] is True and sm["topics"] == 3
+
+
+def test_multicam_all_cameras_nested(project, tmp_path):
+    """multicam_ALL.xml: V1 is ONE clip holding every camera (a nest, one camera per
+    track), the clean audio is below; every file it points at is defined once."""
+    root = tmp_path / "m"
+    shutil.copytree(project, root, ignore=shutil.ignore_patterns("_autocut"))
+    from autocut.pipeline import EXIT_LOW_SYNC
+    assert run(root, until="sync") in (EXIT_OK, EXIT_LOW_SYNC)
+    x = ET.parse(root / "_autocut" / "output" / "multicam_ALL.xml").getroot()
+    seq = x.find("sequence")
+    vt = seq.findall("media/video/track")
+    assert len(vt) == 1 and len(vt[0].findall("clipitem")) == 1
+    nest = vt[0].find("clipitem/sequence")
+    assert nest is not None and nest.get("id") != seq.get("id")
+    angles = nest.findall("media/video/track")
+    assert len(angles) == 4                                   # every camera = one angle
+    assert all(c.findtext("enabled") == "TRUE" for t in angles for c in t.findall("clipitem"))
+    assert nest.find("media/audio") is None                   # angles only: no doubled audio
+    assert len(seq.findall("media/audio/track")) == 2         # the clean audio, outside
+    defined = [f.get("id") for f in x.iter("file") if f.find("pathurl") is not None]
+    used = {f.get("id") for f in x.iter("file")}
+    assert len(defined) == len(set(defined)) and used <= set(defined)
+    assert int(vt[0].find("clipitem/end").text) == int(seq.findtext("duration"))

@@ -85,6 +85,8 @@ def write_synced(project, syncs, window, is_test: bool, cfg: dict, out_dir: Path
     name = "autocut synced" + (_test_name(t0, t1) if is_test else "") + time.strftime(" %H.%M")
     prepare_split(project, cfg)
     xmeml.write(xml_p, project, tl, None, cfg, name)
+    xmeml.write_multicam(out_dir / f"multicam_ALL{suffix}.xml", project, tl, cfg,
+                         "autocut multicam" + (_test_name(t0, t1) if is_test else "") + time.strftime(" %H.%M"))
     lows = [r.rel for r in syncs.values() if r.low and r.method not in ("failed", "parked")]
     if lows:  # test segments keep their guesses (no parking there)
         log.warning("%d clip(s) with LOW sync confidence are on their tracks with a red label: %s",
@@ -383,6 +385,9 @@ def run(project_dir: Path, until: str = "run", config_path: Path | None = None,
     xmeml.write(xml_p, project, tl, shots, cfg, name, tm, markers)
     write_cuts_csv(csv_p, shots, tl, project.rate, tm)
     write_person_multicams(project, syncs, window, cfg, out_dir, _test_suffix(t0, t1) if is_test else "")
+    xmeml.write_multicam(out_dir / f"multicam_ALL{_test_suffix(t0, t1) if is_test else ''}.xml", project,
+                         Timeline(project, syncs, window, use_low=False), cfg,
+                         "autocut multicam" + (_test_name(t0, t1) if is_test else "") + time.strftime(" %H.%M"))
     summary = dict(breakdown(shots, project.rate), full=not is_test, sequence=name, xml=xml_p.name,
                    length=round(tm.total / project.rate.float, 1),
                    removed=round(tm.removed / project.rate.float, 1),

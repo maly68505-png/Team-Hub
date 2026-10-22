@@ -160,7 +160,7 @@ class Writer:
         _sub(st, "trackindex", channel)
 
     # --- document --------------------------------------------------------
-    def build(self, shots: list[Shot] | None, name: str) -> ET.Element:
+    def build(self, shots: list[Shot] | None, name: str, audio: bool = True) -> ET.Element:
         tl, rate = self.tl, self.rate
         ocfg = self.cfg["output"]
         root = ET.Element("xmeml", version="4")
@@ -190,6 +190,8 @@ class Writer:
             self._layers(video, shots)
         else:
             self._v1_and_cameras(video, shots)
+        if not audio:          # the cameras only (a multicam's angles)
+            return root
         audio = self._audio(media)
         if shots is None:
             self._camera_audio(audio)
@@ -324,6 +326,48 @@ class _OneTake:
 
     def __init__(self, files):
         self.files, self.position = list(files), 0.0
+
+
+def write_multicam(path: Path, project: Project, tl: Timeline, cfg: dict, name: str) -> None:
+    """One clip on V1 holding every camera (a nested sequence: one camera per
+    track = one angle each), the clean audio below. In Premiere: right-click the
+    clip > Multi-Camera > Enable, then switch angles in the Multi-Camera view.
+    (FCP XML multiclips do not reach Premiere as multicam, above 4 angles never:
+    a nest enabled as multicam works with any number of cameras.)"""
+    w = Writer(project, tl, cfg)
+    inner = w.build(None, f"{name} — cameras", audio=False).find("sequence")
+    inner.set("id", "sequence-2")
+    for tr in inner.findall("media/video/track"):   # every angle visible inside the nest
+        for ci in tr.findall("clipitem"):
+            ci.find("enabled").text = "TRUE"
+    root = ET.Element("xmeml", version="4")
+    seq = _sub(root, "sequence", id="sequence-1")
+    _sub(seq, "name", name)
+    _sub(seq, "duration", tl.n)
+    _rate(seq, w.rate)
+    _timecode(seq, w.rate, w.rate.frames(tl.t0))
+    _sub(seq, "in", -1)
+    _sub(seq, "out", -1)
+    media = _sub(seq, "media")
+    video = _sub(media, "video")
+    video.append(inner.find("media/video/format"))
+    tr = _sub(video, "track")
+    w.clip_n += 1
+    ci = _sub(tr, "clipitem", id=f"clipitem-{w.clip_n}")
+    _sub(ci, "name", f"{name} — cameras")
+    _sub(ci, "enabled", "TRUE")
+    _sub(ci, "duration", tl.n)
+    _rate(ci, w.rate)
+    for tag, v in (("start", 0), ("end", tl.n), ("in", 0), ("out", tl.n)):
+        _sub(ci, tag, v)
+    ci.append(inner)
+    _sub(tr, "enabled", "TRUE")
+    _sub(tr, "locked", "FALSE")
+    w._audio(media)
+    ET.indent(root, space="  ")
+    Path(path).write_text('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE xmeml>\n'
+                          + ET.tostring(root, encoding="unicode") + "\n", encoding="utf-8")
+    log.info("Multicam (all %d cameras, nested): %s", len(project.cameras), Path(path).name)
 
 
 def add_markers(seq: ET.Element, markers: list[tuple[int, str, str]] | None) -> None:
