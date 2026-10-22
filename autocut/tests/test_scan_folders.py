@@ -107,11 +107,14 @@ def test_person_names_from_files_with_different_dates():
 
 def test_sony_sub_proxies_are_recognised(tmp_path):
     cam = tmp_path / "CAM_08"
-    touch(cam, "XDROOT/Clip/MF-080001.MXF", "XDROOT/Sub/MF-080001S03.MP4",
-          "C0002.MP4", "C0002S03.MP4", "LONGS03.MP4")
-    # LONGS03 has no "LONG" next to it: an original whose name just ends like that
-    assert sorted(names(camera_files(cam, "originals"))) == ["C0002.MP4", "LONGS03.MP4", "MF-080001.MXF"]
-    assert sorted(names(camera_files(cam, "proxies"))) == ["C0002S03.MP4", "MF-080001S03.MP4"]
+    touch(cam, "XDROOT/Clip/MF-080001.MXF", "XDROOT/Sub/MF-080001S03.MP4")
+    assert names(camera_files(cam, "originals")) == ["MF-080001.MXF"]
+    assert names(camera_files(cam, "proxies")) == ["MF-080001S03.MP4"]
+    # no MXF: a Sony S03 file is a proxy only when its original is there
+    mp4 = tmp_path / "CAM_09"
+    touch(mp4, "C0002.MP4", "C0002S03.MP4", "LONGS03.MP4", "Sub/C0003S03.MP4")
+    assert sorted(names(camera_files(mp4, "originals"))) == ["C0002.MP4", "LONGS03.MP4"]
+    assert sorted(names(camera_files(mp4, "proxies"))) == ["C0002S03.MP4", "C0003S03.MP4"]
 
 
 def test_original_and_proxy_with_any_names_become_one_clip(tmp_path):
@@ -133,3 +136,13 @@ def test_original_and_proxy_with_any_names_become_one_clip(tmp_path):
     clips = list(files.values())
     assert [c.rel for c in _one_copy_per_shot(clips, "originals")] == ["CAM/BIG.MOV", "CAM/OTHER.MOV"]
     assert [c.rel for c in _one_copy_per_shot(clips, "proxies")] == ["CAM/small.mp4", "CAM/OTHER.MOV"]
+
+
+def test_mxf_is_the_original_whatever_the_folders(tmp_path):
+    cam = tmp_path / "CAM_05"
+    touch(cam, "A/MF-050001.MXF", "A/MF-050002.MXF", "B/anything.mp4", "C/other_name.mov")
+    assert names(camera_files(cam, "originals")) == ["MF-050001.MXF", "MF-050002.MXF"]
+    assert names(camera_files(cam, "proxies")) == ["anything.mp4", "other_name.mov"]
+    mp4_only = tmp_path / "CAM_06"
+    touch(mp4_only, "C0001.MP4", "Proxy/C0001_Proxy.mov")
+    assert names(camera_files(mp4_only, "originals")) == ["C0001.MP4"]      # no MXF: the other rules

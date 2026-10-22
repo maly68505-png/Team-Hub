@@ -97,10 +97,16 @@ def is_proxy(path: Path, base: Path, stems: set[str] | None = None) -> bool:
 def camera_files(folder: Path, media: str = "originals") -> list[Path]:
     """Video files of one camera folder. media "originals": proxies left out when the
     originals are there; "proxies": the proxies when there are any. A camera that has
-    only the other kind uses what it has."""
+    only the other kind uses what it has. MXF files present = they are the originals,
+    every other format a proxy (folder names do not matter)."""
     files = _files(folder, VIDEO_EXT, recursive=True)
-    stems = {f.stem for f in files}
-    prox = [f for f in files if is_proxy(f, folder, stems)]
+    mxf = [f for f in files if f.suffix.lower() == ".mxf"]
+    if mxf and len(mxf) < len(files):
+        # broadcast cameras record the originals as MXF: anything else next to them is a proxy
+        prox = [f for f in files if f.suffix.lower() != ".mxf"]
+    else:
+        stems = {f.stem for f in files}
+        prox = [f for f in files if is_proxy(f, folder, stems)]
     raw = [f for f in files if f not in prox]
     want, other = (prox, raw) if media == "proxies" else (raw, prox)
     if want and other:

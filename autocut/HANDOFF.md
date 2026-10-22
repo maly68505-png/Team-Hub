@@ -218,6 +218,8 @@ needs the user's MOGRT files + Premiere version; **4** = 22 proxies.
   `Clip/...MXF`; both were taken, same TC, the proxy won the overlap. `is_proxy` now also knows a "Sub"
   folder and `<name>S0n` beside `<name>`, and `scan._one_copy_per_shot` keeps one file per shot whatever
   the names: same start TC and length (±1.5 s), different picture size -> the bigger for originals.
+- v0.9.10 (user rule): a camera folder with MXF files -> the MXF are the originals, every other format a
+  proxy, folder names ignored (`camera_files`). Without MXF the name rules above apply.
 
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
