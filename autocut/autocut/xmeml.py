@@ -330,13 +330,17 @@ class _OneTake:
 
 def write_multicam(path: Path, project: Project, tl: Timeline, cfg: dict, name: str) -> None:
     """One clip on V1 holding every camera (a nested sequence: one camera per
-    track = one angle each), the clean audio below. In Premiere: right-click the
+    track = one angle each, plus the clean audio), the clean audio below. In Premiere: right-click the
     clip > Multi-Camera > Enable, then switch angles in the Multi-Camera view.
     (FCP XML multiclips do not reach Premiere as multicam, above 4 angles never:
     a nest enabled as multicam works with any number of cameras.)"""
     w = Writer(project, tl, cfg)
     inner = w.build(None, f"{name} — cameras", audio=False).find("sequence")
     inner.set("id", "sequence-2")
+    # Premiere also lists the nest as a sequence of its own: with the clean audio
+    # there too it plays with sound when opened. The nest clip outside sits on a
+    # video track only, so this audio is not heard twice.
+    w._audio(inner.find("media"))
     for tr in inner.findall("media/video/track"):   # every angle visible inside the nest
         for ci in tr.findall("clipitem"):
             ci.find("enabled").text = "TRUE"

@@ -227,6 +227,9 @@ needs the user's MOGRT files + Premiere version; **4** = 22 proxies.
   writes `multicam_ALL.xml`: V1 = one clip that is a NESTED sequence (every camera on its own track, all
   enabled, no audio), clean audio below. Editor: right-click > Multi-Camera > Enable. Written with sync-only
   and with every cut. NOT yet confirmed in the user's Premiere; next step if it fails: the Premiere panel.
+- v0.9.12: the user opened the nest itself (Premiere lists it as its own sequence, "… — cameras") and
+  got cameras with no sound. The nest now carries the clean audio too; the outer nest clip sits on a
+  video track only, so that audio is not heard twice.
 
 ### Status at handoff
 - Latest pushed: silence removal, rotation-to-rolling-cameras fix, `summary.json` + the
