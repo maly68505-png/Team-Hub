@@ -40,7 +40,9 @@ with the same people. Reply to the user in their language (Egyptian Arabic in ch
 
 ## Workflow
 
-1. Write the character, location and time cards and show them to the user.
+1. Write the character, location and time cards from [CARDS-TEMPLATE.md](CARDS-TEMPLATE.md),
+   fill them from the user's brief/references, show them to the user and save them
+   with the project so every later prompt reuses them.
 2. Build every shot prompt from those cards + the shot's own action and camera.
 3. Review each generated shot against the cards before it goes to the edit.
 
